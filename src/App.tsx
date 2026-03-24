@@ -535,19 +535,23 @@ export default function App() {
               minWidth: 0,
               ml: !isTabletOrMobile ? `${SIDEBAR_WIDTH}px` : 0,
               px: { xs: 2, sm: 2.5, lg: 3 },
-              pt: 0,
+              pt: { xs: 12.5, sm: 13.5, lg: 14 },
               pb: { xs: 11.5, lg: 4 },
             }}
           >
             <Box
               component="header"
               sx={{
-                position: "sticky",
+                position: "fixed",
                 top: 0,
+                left: !isTabletOrMobile ? `${SIDEBAR_WIDTH}px` : 0,
+                right: 0,
                 zIndex: muiTheme.zIndex.appBar,
                 mb: { xs: 2, lg: 2.5 },
                 pt: { xs: 1.5, sm: 2, lg: 2.5 },
                 pb: { xs: 0.75, lg: 0.5 },
+                px: { xs: 2, sm: 2.5, lg: 3 },
+                bgcolor: muiTheme.palette.background.default,
               }}
             >
               <Stack
