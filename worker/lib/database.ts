@@ -221,6 +221,17 @@ async function execute(
   await db.prepare(sql).bind(...bindings).run();
 }
 
+async function executeScript(db: D1Database, script: string): Promise<void> {
+  const statements = script
+    .split(";")
+    .map((statement) => statement.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+
+  for (const statement of statements) {
+    await execute(db, statement);
+  }
+}
+
 async function first<T>(
   db: D1Database,
   sql: string,
@@ -416,7 +427,9 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
   }
 
   if (!(await tableExists(db, "user_sessions"))) {
-    await db.exec(`
+    await executeScript(
+      db,
+      `
       CREATE TABLE IF NOT EXISTS user_sessions (
         id TEXT PRIMARY KEY,
         sequence_no INTEGER NOT NULL UNIQUE,
@@ -427,11 +440,14 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
         updated_at TEXT NOT NULL,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       ) STRICT;
-    `);
+    `,
+    );
   }
 
   if (!(await tableExists(db, "stock_batches"))) {
-    await db.exec(`
+    await executeScript(
+      db,
+      `
       CREATE TABLE IF NOT EXISTS stock_batches (
         id TEXT PRIMARY KEY,
         sequence_no INTEGER NOT NULL UNIQUE,
@@ -445,7 +461,8 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
         FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
         FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE
       ) STRICT;
-    `);
+    `,
+    );
   }
 
   if (!(await columnExists(db, "inventory_request_lines", "lot_code"))) {
@@ -485,7 +502,9 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
     );
   }
   if (!(await tableExists(db, "market_price_entries"))) {
-    await db.exec(`
+    await executeScript(
+      db,
+      `
       CREATE TABLE IF NOT EXISTS market_price_entries (
         id TEXT PRIMARY KEY,
         sequence_no INTEGER NOT NULL UNIQUE,
@@ -507,10 +526,13 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
         FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
         FOREIGN KEY (captured_by) REFERENCES users(id)
       ) STRICT;
-    `);
+    `,
+    );
   }
   if (!(await tableExists(db, "waste_entries"))) {
-    await db.exec(`
+    await executeScript(
+      db,
+      `
       CREATE TABLE IF NOT EXISTS waste_entries (
         id TEXT PRIMARY KEY,
         sequence_no INTEGER NOT NULL UNIQUE,
@@ -533,7 +555,8 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
         FOREIGN KEY (location_id) REFERENCES locations(id),
         FOREIGN KEY (reported_by) REFERENCES users(id)
       ) STRICT;
-    `);
+    `,
+    );
   }
 
   await execute(
@@ -587,7 +610,7 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
 async function initializeDatabase(db: D1Database): Promise<void> {
   const usersTableExists = await tableExists(db, "users");
   if (!usersTableExists) {
-    await db.exec(OMNISTOCK_D1_SCHEMA_SQL);
+    await executeScript(db, OMNISTOCK_D1_SCHEMA_SQL);
   }
 
   await ensureLatestSchema(db);
