@@ -15,12 +15,9 @@ import {
 import {
   dashboardMetrics,
   expiredAlerts,
-  inventoryAlerts,
   lowStockAlerts,
   nearExpiryAlerts,
-  openRequests,
   recentLedger,
-  visibleModuleCount,
 } from "../../shared/selectors";
 import type { InventoryAlert, InventorySnapshot, User } from "../../shared/types";
 import { formatDateTime } from "../lib/format";
@@ -87,23 +84,6 @@ function alertListForTab(snapshot: InventorySnapshot, tab: AlertTab): InventoryA
   return expiredAlerts(snapshot);
 }
 
-function locationCoverage(snapshot: InventorySnapshot, locationId: string): number {
-  const stocks = snapshot.items
-    .flatMap((item) =>
-      item.stocks
-        .filter((stock) => stock.locationId === locationId)
-        .map((stock) => ({ onHand: stock.onHand, minLevel: stock.minLevel })),
-    )
-    .filter((stock) => stock.onHand > 0 || stock.minLevel > 0);
-
-  if (stocks.length === 0) {
-    return 100;
-  }
-
-  const healthy = stocks.filter((stock) => stock.onHand > stock.minLevel).length;
-  return Math.round((healthy / stocks.length) * 100);
-}
-
 function statIcon(label: string) {
   if (label.includes("Value")) {
     return CurrencyIcon;
@@ -134,14 +114,10 @@ export function DashboardPage({ snapshot, currentUser, syncState }: Props) {
   const theme = useTheme();
   const [alertTab, setAlertTab] = useState<AlertTab>("low-stock");
   const [showGuide, setShowGuide] = useState(false);
+  const showGuideSection = false;
   const metricCards = dashboardMetrics(snapshot);
-  const pendingRequests = openRequests(snapshot).slice(0, 5);
   const recentMovements = recentLedger(snapshot, 5);
   const activeAlerts = alertListForTab(snapshot, alertTab).slice(0, 6);
-  const assignedLocations = snapshot.locations.filter((location) =>
-    currentUser.assignedLocationIds.includes(location.id),
-  );
-  const alertBacklog = inventoryAlerts(snapshot).length;
   const alertCounts = {
     "low-stock": lowStockAlerts(snapshot).length,
     "near-expiry": nearExpiryAlerts(snapshot).length,
@@ -160,17 +136,7 @@ export function DashboardPage({ snapshot, currentUser, syncState }: Props) {
 
   return (
     <Stack spacing={2.5}>
-      <Paper
-        sx={{
-          p: { xs: 2.5, md: 3 },
-          borderRadius: 4,
-          background:
-            theme.palette.mode === "dark"
-              ? alpha(theme.palette.background.paper, 0.88)
-              : alpha(theme.palette.background.paper, 0.92),
-        }}
-      >
-        <Stack direction={{ xs: "column", xl: "row" }} justifyContent="space-between" spacing={2}>
+      <Stack direction={{ xs: "column", xl: "row" }} justifyContent="space-between" spacing={2} sx={{ px: { xs: 0.25, md: 0.5 }, py: { xs: 0.5, md: 0.75 } }}>
           <Box>
             <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
               Dashboard Overview
@@ -178,31 +144,46 @@ export function DashboardPage({ snapshot, currentUser, syncState }: Props) {
             <Typography variant="h3" sx={{ mt: 0.5 }}>
               Welcome back, {currentUser.name.split(" ")[0]}
             </Typography>
-            <Typography variant="body1" color="text.secondary" sx={{ mt: 1.25, maxWidth: 820 }}>
-              {snapshot.settings.companyName} is running across {assignedLocations.length} assigned
-              locations. You currently have access to {visibleModuleCount(snapshot, currentUser.id)} modules,
-              with {alertBacklog} active stock alerts and {syncState.online ? "healthy" : "offline"} sync posture.
-            </Typography>
           </Box>
 
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}>
-            <Button component={Link} to="/reports/analytics" variant="outlined" startIcon={<ReportsIcon size={16} />}>
+          <Stack
+            direction="row"
+            spacing={1}
+            useFlexGap
+            flexWrap="wrap"
+            justifyContent={{ xs: "flex-start", xl: "flex-end" }}
+            alignItems="center"
+          >
+            <Button
+              component={Link}
+              to="/reports/analytics"
+              variant="outlined"
+              size="medium"
+              startIcon={<ReportsIcon size={16} />}
+              sx={{ minHeight: 38, px: 2 }}
+            >
               Reports
             </Button>
-            <Button component={Link} to="/inventory/grn" variant="contained" startIcon={<PlusIcon size={16} />}>
+            <Button
+              component={Link}
+              to="/inventory/grn"
+              variant="contained"
+              size="medium"
+              startIcon={<PlusIcon size={16} />}
+              sx={{ minHeight: 38, px: 2 }}
+            >
               Inventory OPS
             </Button>
           </Stack>
-        </Stack>
-      </Paper>
+      </Stack>
 
       <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))", xl: "repeat(4, minmax(0, 1fr))" } }}>
         {metricCards.map((metric) => {
           const Icon = statIcon(metric.label);
           const tone = statTone(metric.label);
           return (
-            <Paper key={metric.label} sx={{ p: 2.25, borderRadius: 4 }}>
-              <Stack spacing={1.5}>
+            <Paper key={metric.label} sx={{ p: { xs: 2.25, md: 2.75 }, borderRadius: 3 }}>
+              <Stack spacing={2} sx={{ minHeight: 156, justifyContent: "space-between" }}>
                 <Stack direction="row" justifyContent="space-between" alignItems="center">
                   <Box
                     sx={{
@@ -223,9 +204,6 @@ export function DashboardPage({ snapshot, currentUser, syncState }: Props) {
                   {metric.label}
                 </Typography>
                 <Typography variant="h5">{metric.value}</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {metric.detail}
-                </Typography>
               </Stack>
             </Paper>
           );
@@ -233,7 +211,7 @@ export function DashboardPage({ snapshot, currentUser, syncState }: Props) {
       </Box>
 
       <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", xl: "minmax(0, 1.45fr) minmax(320px, 0.9fr)" } }}>
-        <Paper sx={{ p: 2.5, borderRadius: 4 }}>
+        <Paper sx={{ p: 2.75, borderRadius: 3 }}>
           <Stack spacing={2}>
             <Stack direction="row" justifyContent="space-between" alignItems="center">
               <Box>
@@ -299,54 +277,7 @@ export function DashboardPage({ snapshot, currentUser, syncState }: Props) {
           </Stack>
         </Paper>
 
-        <Paper sx={{ p: 2.5, borderRadius: 4 }}>
-          <Stack spacing={2}>
-            <Box>
-              <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
-                Warehouse Status
-              </Typography>
-              <Typography variant="h6" sx={{ mt: 0.5 }}>
-                Assigned Locations
-              </Typography>
-            </Box>
-
-            <Stack spacing={1.25}>
-              {assignedLocations.length > 0 ? (
-                assignedLocations.map((location) => {
-                  const coverage = locationCoverage(snapshot, location.id);
-                  return (
-                    <Paper key={location.id} variant="outlined" sx={{ p: 1.5, borderRadius: 3 }}>
-                      <Stack spacing={1}>
-                        <Stack direction="row" justifyContent="space-between" alignItems="center">
-                          <Box>
-                            <Typography variant="subtitle2" fontWeight={800}>
-                              {location.name}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                              {location.code}
-                            </Typography>
-                          </Box>
-                          <Chip label={`${coverage}% ready`} color={coverage >= 80 ? "success" : coverage >= 50 ? "warning" : "error"} size="small" />
-                        </Stack>
-                        <Box sx={{ height: 10, borderRadius: 999, bgcolor: alpha(theme.palette.primary.main, 0.1), overflow: "hidden" }}>
-                          <Box sx={{ width: `${coverage}%`, height: "100%", bgcolor: coverage >= 80 ? "success.main" : coverage >= 50 ? "warning.main" : "error.main" }} />
-                        </Box>
-                      </Stack>
-                    </Paper>
-                  );
-                })
-              ) : (
-                <Typography variant="body2" color="text.secondary">
-                  No locations are assigned to this user yet.
-                </Typography>
-              )}
-            </Stack>
-          </Stack>
-        </Paper>
-      </Box>
-
-      <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", xl: "minmax(0, 1fr) minmax(320px, 0.9fr)" } }}>
-        <Paper sx={{ p: 2.5, borderRadius: 4 }}>
+        <Paper sx={{ p: 2.75, borderRadius: 3 }}>
           <Stack spacing={2}>
             <Stack direction="row" justifyContent="space-between" alignItems="center">
               <Box>
@@ -415,51 +346,60 @@ export function DashboardPage({ snapshot, currentUser, syncState }: Props) {
             </Stack>
           </Stack>
         </Paper>
-
-        <Paper sx={{ p: 2.5, borderRadius: 4 }}>
-          <Stack spacing={2}>
-            <Box>
-              <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
-                Request Flow
-              </Typography>
-              <Typography variant="h6" sx={{ mt: 0.5 }}>
-                Pending Submissions
-              </Typography>
-            </Box>
-
-            <Stack spacing={1.25}>
-              {pendingRequests.length > 0 ? (
-                pendingRequests.map((request) => (
-                  <Paper key={request.id} variant="outlined" sx={{ p: 1.5, borderRadius: 3 }}>
-                    <Stack direction="row" justifyContent="space-between" spacing={1.25}>
-                      <Box minWidth={0}>
-                        <Typography variant="subtitle2" fontWeight={800}>
-                          {request.reference}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.4 }}>
-                          {request.itemName} - {request.quantity} {request.unit}
-                        </Typography>
-                        {request.allocationSummary ? (
-                          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
-                            {request.allocationSummary}
-                          </Typography>
-                        ) : null}
-                      </Box>
-                      <Chip size="small" variant="outlined" label={request.kind} />
-                    </Stack>
-                  </Paper>
-                ))
-              ) : (
-                <Typography variant="body2" color="text.secondary">
-                  All requests are currently posted.
-                </Typography>
-              )}
-            </Stack>
-          </Stack>
-        </Paper>
       </Box>
 
-      <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", xl: "minmax(0, 1fr) minmax(360px, 0.92fr)" } }}>
+      <Paper sx={{ p: 2.75, borderRadius: 3 }}>
+        <Stack spacing={2}>
+          <Stack direction="row" justifyContent="space-between" alignItems="center">
+            <Box>
+              <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                Activity Feed
+              </Typography>
+              <Typography variant="h6" sx={{ mt: 0.5 }}>
+                Audit Highlights
+              </Typography>
+            </Box>
+            <Chip variant="outlined" label={syncState.online ? "Live sync" : "Queued sync"} />
+          </Stack>
+
+          <Stack spacing={1.25}>
+            {snapshot.activity.slice(0, 6).map((event) => (
+              <Paper key={event.id} variant="outlined" sx={{ p: 1.5, borderRadius: 2.5 }}>
+                <Stack direction="row" spacing={1.25} alignItems="flex-start">
+                  <Box
+                    sx={{
+                      width: 12,
+                      height: 12,
+                      borderRadius: 999,
+                      mt: 0.6,
+                      bgcolor:
+                        event.severity === "warning"
+                          ? "warning.main"
+                          : event.severity === "success"
+                            ? "success.main"
+                            : "primary.main",
+                      flex: "0 0 auto",
+                    }}
+                  />
+                  <Box minWidth={0}>
+                    <Typography variant="subtitle2" fontWeight={800}>
+                      {event.title}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.4 }}>
+                      {event.detail}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+                      {event.actorName} - {formatDateTime(event.createdAt)}
+                    </Typography>
+                  </Box>
+                </Stack>
+              </Paper>
+            ))}
+          </Stack>
+        </Stack>
+      </Paper>
+
+      {showGuideSection ? (
         <Paper sx={{ p: 2.5, borderRadius: 4 }}>
           <Stack spacing={2}>
             <Stack direction="row" justifyContent="space-between" alignItems="center">
@@ -508,58 +448,7 @@ export function DashboardPage({ snapshot, currentUser, syncState }: Props) {
             )}
           </Stack>
         </Paper>
-
-        <Paper sx={{ p: 2.5, borderRadius: 4 }}>
-          <Stack spacing={2}>
-            <Stack direction="row" justifyContent="space-between" alignItems="center">
-              <Box>
-                <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
-                  Activity Feed
-                </Typography>
-                <Typography variant="h6" sx={{ mt: 0.5 }}>
-                  Audit Highlights
-                </Typography>
-              </Box>
-              <Chip variant="outlined" label={syncState.online ? "Live sync" : "Queued sync"} />
-            </Stack>
-
-            <Stack spacing={1.25}>
-              {snapshot.activity.slice(0, 6).map((event) => (
-                <Paper key={event.id} variant="outlined" sx={{ p: 1.5, borderRadius: 3 }}>
-                  <Stack direction="row" spacing={1.25} alignItems="flex-start">
-                    <Box
-                      sx={{
-                        width: 12,
-                        height: 12,
-                        borderRadius: 999,
-                        mt: 0.6,
-                        bgcolor:
-                          event.severity === "warning"
-                            ? "warning.main"
-                            : event.severity === "success"
-                              ? "success.main"
-                              : "primary.main",
-                        flex: "0 0 auto",
-                      }}
-                    />
-                    <Box minWidth={0}>
-                      <Typography variant="subtitle2" fontWeight={800}>
-                        {event.title}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.4 }}>
-                        {event.detail}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
-                        {event.actorName} - {formatDateTime(event.createdAt)}
-                      </Typography>
-                    </Box>
-                  </Stack>
-                </Paper>
-              ))}
-            </Stack>
-          </Stack>
-        </Paper>
-      </Box>
+      ) : null}
     </Stack>
   );
 }
