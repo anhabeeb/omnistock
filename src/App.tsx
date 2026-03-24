@@ -63,6 +63,106 @@ const MODULE_ENTRY_PATHS: Record<(typeof MODULES)[number]["key"], string> = {
   administration: "/administration/users",
 };
 
+const MODULE_SUBPAGES: Partial<
+  Record<
+    (typeof MODULES)[number]["key"],
+    Array<{
+      label: string;
+      path: string;
+      description: string;
+    }>
+  >
+> = {
+  inventoryOps: [
+    {
+      label: "GRN",
+      path: "/inventory/grn",
+      description: "Receive supplier stock and inbound batches.",
+    },
+    {
+      label: "GIN",
+      path: "/inventory/gin",
+      description: "Issue stock to outlets, kitchens, and requests.",
+    },
+    {
+      label: "Transfer",
+      path: "/inventory/transfer",
+      description: "Move stock between warehouses and outlets.",
+    },
+    {
+      label: "Adjustments",
+      path: "/inventory/adjustments",
+      description: "Correct stock variances with audit notes.",
+    },
+    {
+      label: "Stock Count",
+      path: "/inventory/stock-count",
+      description: "Count and reconcile physical inventory.",
+    },
+    {
+      label: "Wastage",
+      path: "/inventory/wastage",
+      description: "Capture spoilage, expiry, and waste control.",
+    },
+  ],
+  masterData: [
+    {
+      label: "Items",
+      path: "/master-data/items",
+      description: "Manage the item catalog and barcode details.",
+    },
+    {
+      label: "Suppliers",
+      path: "/master-data/suppliers",
+      description: "Review supplier contacts and lead times.",
+    },
+    {
+      label: "Warehouse & Outlets",
+      path: "/master-data/locations",
+      description: "Maintain operational facilities and outlets.",
+    },
+    {
+      label: "Market Prices",
+      path: "/master-data/market-prices",
+      description: "Track daily purchasing rates for restaurant items.",
+    },
+  ],
+  reports: [
+    {
+      label: "Analytics",
+      path: "/reports/analytics",
+      description: "Review KPI and report summaries.",
+    },
+    {
+      label: "Waste Tracker",
+      path: "/reports/waste-tracker",
+      description: "Inspect detailed waste history and costs.",
+    },
+    {
+      label: "Movement Ledger",
+      path: "/reports/movement-ledger",
+      description: "Audit stock movements and balance changes.",
+    },
+  ],
+  administration: [
+    {
+      label: "Users",
+      path: "/administration/users",
+      description: "Manage system users and account access.",
+    },
+    {
+      label: "Settings",
+      path: "/administration/settings",
+      description: "Review environment controls and permissions.",
+    },
+    {
+      label: "Activity",
+      path: "/administration/activity",
+      description: "Inspect recent audit and admin events.",
+    },
+  ],
+};
+
 const OPERATION_SHORTCUTS = [
   {
     slug: "grn",
@@ -139,6 +239,10 @@ function moduleEntryPath(moduleKey: (typeof MODULES)[number]["key"]) {
   return MODULE_ENTRY_PATHS[moduleKey];
 }
 
+function moduleIsActive(pathname: string, modulePath: string) {
+  return modulePath === "/" ? pathname === "/" : pathname.startsWith(modulePath);
+}
+
 export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -208,9 +312,18 @@ export default function App() {
   const viewingProfile = location.pathname.startsWith("/profile");
   const activeModule =
     visibleModules.find((module) =>
-      module.path === "/" ? location.pathname === "/" : location.pathname.startsWith(module.path),
+      moduleIsActive(location.pathname, module.path),
     ) ?? visibleModules[0];
+  const activeSubpage = Object.values(MODULE_SUBPAGES)
+    .flat()
+    .find((subpage) => subpage.path === location.pathname);
   const activeView = viewingProfile ? PROFILE_VIEW : activeModule;
+  const resolvedActiveView =
+    viewingProfile
+      ? PROFILE_VIEW
+      : activeSubpage
+        ? { label: activeSubpage.label, description: activeSubpage.description }
+        : activeView;
   const themeToggleLabel = themeMode === "dark" ? "Switch to light mode" : "Switch to dark mode";
   const assignedCodes = snapshot.locations
     .filter((locationEntry) => currentUser.assignedLocationIds.includes(locationEntry.id))
@@ -342,20 +455,41 @@ export default function App() {
             return (
               <div key={group.label} className="sidebar-group">
                 <p className="sidebar-group-label">{group.label}</p>
-                <div className="sidebar-group-links">
+              <div className="sidebar-group-links">
                   {groupModules.map((module) => {
                     const Icon = MODULE_ICONS[module.key];
+                    const subpages = MODULE_SUBPAGES[module.key] ?? [];
+                    const isModuleCurrent = moduleIsActive(location.pathname, module.path);
                     return (
-                      <NavLink
-                        key={module.key}
-                        to={moduleEntryPath(module.key)}
-                        className={({ isActive }) => (isActive ? "sidebar-link active" : "sidebar-link")}
-                        end={module.path === "/"}
-                      >
-                        <Icon size={20} className="sidebar-link-icon" />
-                        <span className="sidebar-link-label">{module.label}</span>
-                        <span className="sidebar-link-indicator" />
-                      </NavLink>
+                      <div key={module.key} className="sidebar-module">
+                        <NavLink
+                          to={moduleEntryPath(module.key)}
+                          className={isModuleCurrent ? "sidebar-link active" : "sidebar-link"}
+                          end={module.path === "/"}
+                        >
+                          <Icon size={20} className="sidebar-link-icon" />
+                          <span className="sidebar-link-label">{module.label}</span>
+                          <span className="sidebar-link-indicator" />
+                        </NavLink>
+
+                        {!sidebarCollapsed && subpages.length > 0 ? (
+                          <div className="sidebar-sub-links">
+                            {subpages.map((subpage) => (
+                              <NavLink
+                                key={subpage.path}
+                                to={subpage.path}
+                                className={({ isActive }) =>
+                                  isActive ? "sidebar-sub-link active" : "sidebar-sub-link"
+                                }
+                                end
+                              >
+                                <span className="sidebar-sub-link-dot" />
+                                <span>{subpage.label}</span>
+                              </NavLink>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
                     );
                   })}
                 </div>
@@ -480,19 +614,41 @@ export default function App() {
               <div className="mobile-drawer-list">
                 {visibleModules.map((module) => {
                   const Icon = MODULE_ICONS[module.key];
+                  const subpages = MODULE_SUBPAGES[module.key] ?? [];
+                  const isModuleCurrent = moduleIsActive(location.pathname, module.path);
                   return (
-                    <NavLink
-                      key={module.key}
-                      to={moduleEntryPath(module.key)}
-                      className={({ isActive }) =>
-                        isActive ? "mobile-drawer-link active" : "mobile-drawer-link"
-                      }
-                      end={module.path === "/"}
-                      onClick={() => setMobileMenuOpen(false)}
-                    >
-                      <Icon size={18} />
-                      <span>{module.label}</span>
-                    </NavLink>
+                    <div key={module.key} className="mobile-drawer-module">
+                      <NavLink
+                        to={moduleEntryPath(module.key)}
+                        className={isModuleCurrent ? "mobile-drawer-link active" : "mobile-drawer-link"}
+                        end={module.path === "/"}
+                        onClick={() => setMobileMenuOpen(false)}
+                      >
+                        <Icon size={18} />
+                        <span>{module.label}</span>
+                      </NavLink>
+
+                      {subpages.length > 0 ? (
+                        <div className="mobile-drawer-sub-links">
+                          {subpages.map((subpage) => (
+                            <NavLink
+                              key={subpage.path}
+                              to={subpage.path}
+                              className={({ isActive }) =>
+                                isActive
+                                  ? "mobile-drawer-sub-link active"
+                                  : "mobile-drawer-sub-link"
+                              }
+                              end
+                              onClick={() => setMobileMenuOpen(false)}
+                            >
+                              <span className="mobile-drawer-sub-dot" />
+                              <span>{subpage.label}</span>
+                            </NavLink>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
                   );
                 })}
 
@@ -630,8 +786,8 @@ export default function App() {
 
             <div>
               <p className="eyebrow">Live Workspace</p>
-              <h1 className="workspace-title">{activeView?.label ?? "OmniStock"}</h1>
-              <p className="workspace-copy">{activeView?.description}</p>
+              <h1 className="workspace-title">{resolvedActiveView?.label ?? "OmniStock"}</h1>
+              <p className="workspace-copy">{resolvedActiveView?.description}</p>
             </div>
           </div>
 
