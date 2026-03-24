@@ -1,4 +1,18 @@
 import { useState } from "react";
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  Paper,
+  Stack,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+  Typography,
+  alpha,
+  useTheme,
+} from "@mui/material";
 import type { SyncState } from "../lib/useOmniStockApp";
 
 interface Props {
@@ -24,6 +38,7 @@ const MODE_COPY: Record<AuthMode, { title: string; button: string; helper: strin
 };
 
 export function LoginPage({ syncState, onLogin, onActivateSuperadmin }: Props) {
+  const theme = useTheme();
   const [mode, setMode] = useState<AuthMode>("login");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -53,132 +68,146 @@ export function LoginPage({ syncState, onLogin, onActivateSuperadmin }: Props) {
   }
 
   return (
-    <div className="loading-screen">
-      <div className="page-stack" style={{ width: "min(1040px, 100%)" }}>
-        <section className="hero-panel">
-          <div>
-            <p className="eyebrow">Access Control</p>
-            <h1>{MODE_COPY[mode].title}</h1>
-            <p className="hero-copy">
-              OmniStock now uses session-based sign-in. Passwords are protected in D1 with salted
-              PBKDF2 hashing, and superadmin user management is handled from Administration after
-              login.
-            </p>
-          </div>
+    <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", p: { xs: 2, md: 3 } }}>
+      <Stack spacing={2.5} sx={{ width: "min(1120px, 100%)" }}>
+        <Paper
+          sx={{
+            p: { xs: 2.5, md: 3 },
+            borderRadius: 4,
+            background:
+              theme.palette.mode === "dark"
+                ? alpha(theme.palette.background.paper, 0.88)
+                : alpha(theme.palette.background.paper, 0.92),
+          }}
+        >
+          <Stack direction={{ xs: "column", lg: "row" }} justifyContent="space-between" spacing={2}>
+            <Box>
+              <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                Access Control
+              </Typography>
+              <Typography variant="h4" sx={{ mt: 0.5 }}>
+                {MODE_COPY[mode].title}
+              </Typography>
+              <Typography variant="body1" color="text.secondary" sx={{ mt: 1.25, maxWidth: 760 }}>
+                OmniStock now uses session-based sign-in. Passwords are protected in D1 with salted
+                PBKDF2 hashing, and superadmin user management is handled from Administration after
+                login.
+              </Typography>
+            </Box>
 
-          <div className="hero-meta">
-            <div className="meta-card">
-              <span>Connection</span>
-              <strong>{syncState.online ? "Online" : "Offline"}</strong>
-              <small>Login needs an online connection so the worker can validate your session.</small>
-            </div>
-            <div className="meta-card">
-              <span>Realtime status</span>
-              <strong>{syncState.websocket}</strong>
-              <small>The websocket will reconnect automatically after authentication succeeds.</small>
-            </div>
-          </div>
-        </section>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25} useFlexGap flexWrap="wrap">
+              <Chip label={syncState.online ? "Online" : "Offline"} color={syncState.online ? "success" : "warning"} />
+              <Chip variant="outlined" label={`Realtime ${syncState.websocket}`} />
+            </Stack>
+          </Stack>
+        </Paper>
 
-        <section className="split-grid">
-          <article className="panel">
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">Authentication</p>
-                <h2>Enter your credentials</h2>
-              </div>
-            </div>
+        <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", xl: "minmax(0, 1fr) minmax(360px, 0.9fr)" } }}>
+          <Paper sx={{ p: { xs: 2.25, md: 3 }, borderRadius: 4 }}>
+            <Stack spacing={2}>
+              <Box>
+                <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                  Authentication
+                </Typography>
+                <Typography variant="h6" sx={{ mt: 0.5 }}>
+                  Enter your credentials
+                </Typography>
+              </Box>
 
-            <div className="chip-row">
-              {(["login", "activate"] as AuthMode[]).map((entry) => (
-                <button
-                  key={entry}
-                  type="button"
-                  className={mode === entry ? "chip-button active" : "chip-button"}
-                  onClick={() => {
-                    setMode(entry);
-                    setFeedback(undefined);
-                  }}
-                >
-                  {entry === "login" ? "Sign in" : "Activate superadmin"}
-                </button>
-              ))}
-            </div>
+              <ToggleButtonGroup
+                exclusive
+                color="primary"
+                value={mode}
+                onChange={(_, value: AuthMode | null) => {
+                  if (!value) {
+                    return;
+                  }
+                  setMode(value);
+                  setFeedback(undefined);
+                }}
+                sx={{ flexWrap: "wrap", gap: 1, "& .MuiToggleButtonGroup-grouped": { borderRadius: "14px !important", border: "1px solid", borderColor: "divider" } }}
+              >
+                <ToggleButton value="login">Sign in</ToggleButton>
+                <ToggleButton value="activate">Activate superadmin</ToggleButton>
+              </ToggleButtonGroup>
 
-            <form className="page-stack" onSubmit={handleSubmit}>
-              <p className="helper-text">{MODE_COPY[mode].helper}</p>
+              <Typography variant="body2" color="text.secondary">
+                {MODE_COPY[mode].helper}
+              </Typography>
 
-              <div className="form-grid">
-                <label className="field field-wide">
-                  <span>Username or email</span>
-                  <input
+              {feedback ? <Alert severity="error">{feedback}</Alert> : null}
+
+              <Box component="form" onSubmit={handleSubmit}>
+                <Stack spacing={2}>
+                  <TextField
+                    label="Username or email"
                     value={identifier}
                     onChange={(event) => setIdentifier(event.target.value)}
                     placeholder="username or you@company.com"
                     autoComplete="username"
+                    fullWidth
                   />
-                </label>
-
-                <label className="field field-wide">
-                  <span>Password</span>
-                  <input
+                  <TextField
+                    label="Password"
                     type="password"
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
                     placeholder="Minimum 8 characters"
                     autoComplete={mode === "login" ? "current-password" : "new-password"}
+                    fullWidth
                   />
-                </label>
-              </div>
 
-              <div className="button-row">
-                <button
-                  type="submit"
-                  className="primary-button"
-                  disabled={submitting || !syncState.online}
-                >
-                  {submitting ? "Checking..." : MODE_COPY[mode].button}
-                </button>
-              </div>
+                  <Stack direction="row" justifyContent="flex-start">
+                    <Button type="submit" variant="contained" disabled={submitting || !syncState.online}>
+                      {submitting ? "Checking..." : MODE_COPY[mode].button}
+                    </Button>
+                  </Stack>
+                </Stack>
+              </Box>
+            </Stack>
+          </Paper>
 
-              {feedback ? <p className="feedback-copy">{feedback}</p> : null}
-            </form>
-          </article>
+          <Paper sx={{ p: { xs: 2.25, md: 3 }, borderRadius: 4 }}>
+            <Stack spacing={2}>
+              <Box>
+                <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                  What Changed
+                </Typography>
+                <Typography variant="h6" sx={{ mt: 0.5 }}>
+                  Security and user access
+                </Typography>
+              </Box>
 
-          <article className="panel">
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">What Changed</p>
-                <h2>Security and user access</h2>
-              </div>
-            </div>
-
-            <div className="timeline">
-              <div className="timeline-item">
-                <div className="timeline-dot tone-success" />
-                <div>
-                  <strong>Passwords are no longer plain text</strong>
-                  <p>Each account now stores a salted PBKDF2 hash and iteration count in D1.</p>
-                </div>
-              </div>
-              <div className="timeline-item">
-                <div className="timeline-dot tone-success" />
-                <div>
-                  <strong>Superadmins can manage user access</strong>
-                  <p>Edit user details, reset passwords, and remove accounts from Administration.</p>
-                </div>
-              </div>
-              <div className="timeline-item">
-                <div className="timeline-dot tone-info" />
-                <div>
-                  <strong>Sessions are cookie-based</strong>
-                  <p>The worker keeps the browser session signed in without exposing tokens in the UI.</p>
-                </div>
-              </div>
-            </div>
-          </article>
-        </section>
-      </div>
-    </div>
+              <Stack spacing={1.5}>
+                <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 3 }}>
+                  <Typography variant="subtitle2" fontWeight={800}>
+                    Passwords are no longer plain text
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                    Each account now stores a salted PBKDF2 hash and iteration count in D1.
+                  </Typography>
+                </Paper>
+                <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 3 }}>
+                  <Typography variant="subtitle2" fontWeight={800}>
+                    Superadmins can manage user access
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                    Edit user details, reset passwords, and remove accounts from Administration.
+                  </Typography>
+                </Paper>
+                <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 3 }}>
+                  <Typography variant="subtitle2" fontWeight={800}>
+                    Sessions are cookie-based
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                    The worker keeps the browser session signed in without exposing tokens in the UI.
+                  </Typography>
+                </Paper>
+              </Stack>
+            </Stack>
+          </Paper>
+        </Box>
+      </Stack>
+    </Box>
   );
 }

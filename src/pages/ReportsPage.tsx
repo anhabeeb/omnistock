@@ -1,4 +1,17 @@
 import { useDeferredValue, useState } from "react";
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  MenuItem,
+  Paper,
+  Stack,
+  TextField,
+  Typography,
+  alpha,
+  useTheme,
+} from "@mui/material";
 import { useLocation } from "react-router-dom";
 import { lowStockItems, openRequests, totalInventoryValue } from "../../shared/selectors";
 import type { InventorySnapshot, User, WasteEntry } from "../../shared/types";
@@ -48,6 +61,7 @@ function topWasteReason(entries: WasteEntry[]): string {
 }
 
 export function ReportsPage({ snapshot, currentUser }: Props) {
+  const theme = useTheme();
   const location = useLocation();
   const activeSlug = location.pathname.split("/")[2] ?? REPORT_SECTIONS[0].slug;
   const activeSection = REPORT_SECTIONS.find((section) => section.slug === activeSlug) ?? REPORT_SECTIONS[0];
@@ -70,7 +84,6 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
         : `${entry.reference} ${entry.itemName} ${entry.locationName} ${entry.actorName}`
             .toLowerCase()
             .includes(deferredSearch.toLowerCase());
-
     return matchesLocation && matchesSearch;
   });
 
@@ -82,7 +95,6 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
         : `${entry.itemName} ${entry.locationName} ${entry.reason} ${entry.station} ${entry.reportedByName}`
             .toLowerCase()
             .includes(deferredSearch.toLowerCase());
-
     return matchesLocation && matchesSearch;
   });
 
@@ -92,7 +104,6 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
   async function handleExportLedger() {
     setExportingLedger(true);
     setFeedback(undefined);
-
     try {
       await exportMovementLedger(filteredLedger);
       setFeedback("Movement ledger exported to Excel.");
@@ -106,7 +117,6 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
   async function handleExportWaste() {
     setExportingWaste(true);
     setFeedback(undefined);
-
     try {
       await exportWasteEntries(filteredWaste);
       setFeedback("Waste tracker exported to Excel.");
@@ -118,253 +128,255 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
   }
 
   return (
-    <div className="page-stack">
+    <Stack spacing={2.5}>
       <ModuleSubnav items={subnavItems} />
 
-      <section className="hero-panel">
-        <div>
-          <p className="eyebrow">Reports & Analytics</p>
-          <h1>{activeSection.title}</h1>
-          <p className="hero-copy">{activeSection.description}</p>
-        </div>
+      <Paper
+        sx={{
+          p: { xs: 2.5, md: 3 },
+          borderRadius: 4,
+          background:
+            theme.palette.mode === "dark"
+              ? alpha(theme.palette.background.paper, 0.88)
+              : alpha(theme.palette.background.paper, 0.92),
+        }}
+      >
+        <Stack direction={{ xs: "column", lg: "row" }} justifyContent="space-between" spacing={2}>
+          <Box>
+            <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+              Reports & Analytics
+            </Typography>
+            <Typography variant="h4" sx={{ mt: 0.5 }}>
+              {activeSection.title}
+            </Typography>
+            <Typography variant="body1" color="text.secondary" sx={{ mt: 1.25, maxWidth: 760 }}>
+              {activeSection.description}
+            </Typography>
+          </Box>
 
-        <div className="hero-meta">
-          <div className="meta-card">
-            <span>Inventory Value</span>
-            <strong>{formatCurrency(totalInventoryValue(snapshot), snapshot.settings.currency)}</strong>
-            <small>Calculated from cost price against current on-hand quantity.</small>
-          </div>
-          <div className="meta-card">
-            <span>Prepared For</span>
-            <strong>{currentUser.name}</strong>
-            <small>Reports filtered and exported inside the live workspace.</small>
-          </div>
-        </div>
-      </section>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25} useFlexGap flexWrap="wrap">
+            <Chip label={`Prepared for ${currentUser.name}`} color="primary" />
+            <Chip variant="outlined" label={formatCurrency(totalInventoryValue(snapshot), snapshot.settings.currency)} />
+          </Stack>
+        </Stack>
+      </Paper>
 
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">Filters</p>
-            <h2>Report Controls</h2>
-          </div>
-        </div>
+      <Paper sx={{ p: { xs: 2.25, md: 3 }, borderRadius: 4 }}>
+        <Stack spacing={2}>
+          <Box>
+            <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+              Filters
+            </Typography>
+            <Typography variant="h6" sx={{ mt: 0.5 }}>
+              Report Controls
+            </Typography>
+          </Box>
 
-        <div className="form-grid compact-form">
-          <label className="field">
-            <span>Search</span>
-            <input
+          <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: "1.35fr 0.95fr" } }}>
+            <TextField
+              label="Search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Reference, item, actor, reason, or location"
+              fullWidth
             />
-          </label>
-
-          <label className="field">
-            <span>Filter by location</span>
-            <select value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}>
-              <option value="all">All locations</option>
+            <TextField
+              select
+              label="Filter by location"
+              value={locationFilter}
+              onChange={(event) => setLocationFilter(event.target.value)}
+              fullWidth
+            >
+              <MenuItem value="all">All locations</MenuItem>
               {snapshot.locations.map((locationEntry) => (
-                <option key={locationEntry.id} value={locationEntry.id}>
+                <MenuItem key={locationEntry.id} value={locationEntry.id}>
                   {locationEntry.name}
-                </option>
+                </MenuItem>
               ))}
-            </select>
-          </label>
-        </div>
+            </TextField>
+          </Box>
 
-        <div className="button-row">
-          <button type="button" className="primary-button" onClick={() => void handleExportLedger()}>
-            {exportingLedger ? "Exporting..." : "Export Ledger"}
-          </button>
-          <button type="button" className="secondary-button" onClick={() => void handleExportWaste()}>
-            {exportingWaste ? "Exporting..." : "Export Waste"}
-          </button>
-          <button type="button" className="secondary-button" onClick={printCurrentPage}>
-            Print report
-          </button>
-        </div>
-        {feedback ? <p className="feedback-copy">{feedback}</p> : null}
-      </section>
+          <Stack direction="row" spacing={1.25} useFlexGap flexWrap="wrap">
+            <Button variant="contained" onClick={() => void handleExportLedger()}>
+              {exportingLedger ? "Exporting..." : "Export Ledger"}
+            </Button>
+            <Button variant="outlined" onClick={() => void handleExportWaste()}>
+              {exportingWaste ? "Exporting..." : "Export Waste"}
+            </Button>
+            <Button variant="text" onClick={printCurrentPage}>
+              Print report
+            </Button>
+          </Stack>
+
+          {feedback ? <Alert severity="info">{feedback}</Alert> : null}
+        </Stack>
+      </Paper>
 
       {activeSection.slug === "analytics" ? (
         <>
-          <section className="metric-grid">
-            <article className="metric-card tone-positive">
-              <p>Waste Cost</p>
-              <strong>{formatCurrency(wasteCost, snapshot.settings.currency)}</strong>
-              <small>Estimated cost of filtered waste entries in the current view.</small>
-            </article>
-            <article className="metric-card tone-warning">
-              <p>Waste Entries</p>
-              <strong>{filteredWaste.length}</strong>
-              <small>Restaurant waste records matched by the current filters.</small>
-            </article>
-            <article className="metric-card tone-neutral">
-              <p>Low Stock Items</p>
-              <strong>{lowStockItems(snapshot).length}</strong>
-              <small>Items below minimum threshold across the network.</small>
-            </article>
-            <article className="metric-card tone-neutral">
-              <p>Open Requests</p>
-              <strong>{openRequests(snapshot).length}</strong>
-              <small>Requests still waiting for operational follow-up.</small>
-            </article>
-          </section>
+          <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))", xl: "repeat(4, minmax(0, 1fr))" } }}>
+            {[
+              {
+                label: "Waste Cost",
+                value: formatCurrency(wasteCost, snapshot.settings.currency),
+                detail: "Estimated cost of filtered waste entries in the current view.",
+              },
+              {
+                label: "Waste Entries",
+                value: String(filteredWaste.length),
+                detail: "Restaurant waste records matched by the current filters.",
+              },
+              {
+                label: "Low Stock Items",
+                value: String(lowStockItems(snapshot).length),
+                detail: "Items below minimum threshold across the network.",
+              },
+              {
+                label: "Open Requests",
+                value: String(openRequests(snapshot).length),
+                detail: "Requests still waiting for operational follow-up.",
+              },
+            ].map((card) => (
+              <Paper key={card.label} sx={{ p: 2.25, borderRadius: 4 }}>
+                <Stack spacing={1}>
+                  <Typography variant="body2" color="text.secondary">
+                    {card.label}
+                  </Typography>
+                  <Typography variant="h5">{card.value}</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {card.detail}
+                  </Typography>
+                </Stack>
+              </Paper>
+            ))}
+          </Box>
 
-          <section className="split-grid">
-            <article className="panel print-card">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Waste Analytics</p>
-                  <h2>Restaurant Waste Summary</h2>
-                </div>
-              </div>
+          <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", xl: "minmax(0, 1fr) minmax(340px, 0.92fr)" } }}>
+            <Paper sx={{ p: 2.5, borderRadius: 4 }}>
+              <Stack spacing={1.25}>
+                <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                  Waste Analytics
+                </Typography>
+                <Typography variant="h6">Restaurant Waste Summary</Typography>
+                <Chip variant="outlined" label={`Top reason - ${topWasteReason(filteredWaste)}`} />
+                <Chip variant="outlined" label={`Expiry write-offs - ${expiryWaste.length}`} />
+                <Chip variant="outlined" label={`Low-stock items - ${lowStockItems(snapshot).length}`} />
+              </Stack>
+            </Paper>
 
-              <div className="stack-list">
-                <div className="list-row">
-                  <div>
-                    <strong>Top reason</strong>
-                    <p>Most frequent write-off driver in the filtered report.</p>
-                  </div>
-                  <span className="status-chip warning">{topWasteReason(filteredWaste)}</span>
-                </div>
-                <div className="list-row">
-                  <div>
-                    <strong>Expiry write-offs</strong>
-                    <p>Entries already linked to expired or near-expiry product removal.</p>
-                  </div>
-                  <span className="status-chip neutral">{expiryWaste.length}</span>
-                </div>
-                <div className="list-row">
-                  <div>
-                    <strong>Open requests</strong>
-                    <p>Operational requests still waiting for follow-up.</p>
-                  </div>
-                  <span className="status-chip neutral">{openRequests(snapshot).length}</span>
-                </div>
-              </div>
-            </article>
-
-            <article className="panel">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Highlighted Entry</p>
-                  <h2>Latest Waste Record</h2>
-                </div>
-              </div>
-
-              {filteredWaste[0] ? (
-                <div className="document-preview">
-                  <h3>{filteredWaste[0].itemName}</h3>
-                  <p>
-                    {filteredWaste[0].quantity} {filteredWaste[0].unit} at {filteredWaste[0].locationName}
-                  </p>
-                  <p>
-                    {filteredWaste[0].reason} during {filteredWaste[0].shift} shift at{" "}
-                    {filteredWaste[0].station}
-                  </p>
-                  <small>
-                    Logged by {filteredWaste[0].reportedByName} on{" "}
-                    {formatDateTime(filteredWaste[0].createdAt)}
-                  </small>
-                </div>
-              ) : (
-                <p className="empty-copy">No waste entries match the current filters.</p>
-              )}
-            </article>
-          </section>
+            <Paper sx={{ p: 2.5, borderRadius: 4 }}>
+              <Stack spacing={1.25}>
+                <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                  Exposure
+                </Typography>
+                <Typography variant="h6">At-a-glance controls</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Use the filters above to narrow by location, export ledger or waste files, and print the
+                  current report for daily reviews.
+                </Typography>
+              </Stack>
+            </Paper>
+          </Box>
         </>
       ) : null}
 
       {activeSection.slug === "waste-tracker" ? (
-        <section className="panel">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">Waste Tracker</p>
-              <h2>Detailed Waste Log</h2>
-            </div>
-          </div>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Item</th>
-                  <th>Location</th>
-                  <th>Reason</th>
-                  <th>Shift / Station</th>
-                  <th>Cost</th>
-                  <th>When</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredWaste.map((entry) => (
-                  <tr key={entry.id}>
-                    <td>
-                      {entry.itemName}
-                      <small>
-                        {entry.quantity} {entry.unit}
-                        {entry.batchLotCode ? ` - ${entry.batchLotCode}` : ""}
-                      </small>
-                    </td>
-                    <td>{entry.locationName}</td>
-                    <td>{entry.reason}</td>
-                    <td>
-                      {entry.shift}
-                      <small>{entry.station}</small>
-                    </td>
-                    <td>{formatCurrency(entry.estimatedCost, snapshot.settings.currency)}</td>
-                    <td>{formatDateTime(entry.createdAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+        <Paper sx={{ p: { xs: 2.25, md: 3 }, borderRadius: 4 }}>
+          <Stack spacing={2}>
+            <Box>
+              <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                Waste Tracker
+              </Typography>
+              <Typography variant="h6" sx={{ mt: 0.5 }}>
+                Filtered waste entries
+              </Typography>
+            </Box>
+
+            <Stack spacing={1.25}>
+              {filteredWaste.length > 0 ? (
+                filteredWaste.map((entry) => (
+                  <Paper key={entry.id} variant="outlined" sx={{ p: 1.5, borderRadius: 3 }}>
+                    <Stack direction="row" justifyContent="space-between" spacing={1.5}>
+                      <Box minWidth={0}>
+                        <Typography variant="subtitle2" fontWeight={800}>
+                          {entry.itemName}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.4 }}>
+                          {entry.locationName} - {entry.station || "No station"} - {entry.shift}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+                          {entry.reason} - {entry.reportedByName} - {formatDateTime(entry.createdAt)}
+                        </Typography>
+                      </Box>
+                      <Box textAlign="right">
+                        <Chip size="small" color="warning" label={`${entry.quantity} ${entry.unit}`} />
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: "block" }}>
+                          {formatCurrency(entry.estimatedCost, snapshot.settings.currency)}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  </Paper>
+                ))
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  No waste entries matched the current filters.
+                </Typography>
+              )}
+            </Stack>
+          </Stack>
+        </Paper>
       ) : null}
 
       {activeSection.slug === "movement-ledger" ? (
-        <section className="panel">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">Movement Ledger</p>
-              <h2>Detailed Report</h2>
-            </div>
-            <span className="status-chip neutral">Prepared for {currentUser.name}</span>
-          </div>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Reference</th>
-                  <th>Item</th>
-                  <th>Location</th>
-                  <th>Change</th>
-                  <th>After</th>
-                  <th>Actor</th>
-                  <th>When</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredLedger.map((entry) => (
-                  <tr key={entry.id}>
-                    <td>{entry.reference}</td>
-                    <td>{entry.itemName}</td>
-                    <td>{entry.locationName}</td>
-                    <td className={entry.quantityChange < 0 ? "text-warning" : "text-positive"}>
-                      {entry.quantityChange > 0 ? "+" : ""}
-                      {entry.quantityChange}
-                    </td>
-                    <td>{entry.quantityAfter}</td>
-                    <td>{entry.actorName}</td>
-                    <td>{formatDateTime(entry.createdAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+        <Paper sx={{ p: { xs: 2.25, md: 3 }, borderRadius: 4 }}>
+          <Stack spacing={2}>
+            <Box>
+              <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                Movement Ledger
+              </Typography>
+              <Typography variant="h6" sx={{ mt: 0.5 }}>
+                Filtered stock movements
+              </Typography>
+            </Box>
+
+            <Stack spacing={1.25}>
+              {filteredLedger.length > 0 ? (
+                filteredLedger.map((entry) => (
+                  <Paper key={entry.id} variant="outlined" sx={{ p: 1.5, borderRadius: 3 }}>
+                    <Stack direction="row" justifyContent="space-between" spacing={1.5}>
+                      <Box minWidth={0}>
+                        <Typography variant="subtitle2" fontWeight={800}>
+                          {entry.reference}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.4 }}>
+                          {entry.itemName} - {entry.locationName}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+                          {entry.actorName} - {formatDateTime(entry.createdAt)}
+                        </Typography>
+                      </Box>
+                      <Box textAlign="right">
+                        <Chip
+                          size="small"
+                          color={entry.quantityChange < 0 ? "warning" : "success"}
+                          label={`${entry.quantityChange > 0 ? "+" : ""}${entry.quantityChange}`}
+                        />
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: "block" }}>
+                          After balance {entry.quantityAfter}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  </Paper>
+                ))
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  No movement ledger entries matched the current filters.
+                </Typography>
+              )}
+            </Stack>
+          </Stack>
+        </Paper>
       ) : null}
-    </div>
+    </Stack>
   );
 }

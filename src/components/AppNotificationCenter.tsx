@@ -1,4 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useMemo, useState } from "react";
+import {
+  Box,
+  Chip,
+  Divider,
+  IconButton,
+  Paper,
+  Popover,
+  Stack,
+  Typography,
+  alpha,
+  useTheme,
+} from "@mui/material";
 import { expiredAlerts, inventoryAlerts, lowStockAlerts, nearExpiryAlerts } from "../../shared/selectors";
 import type { InventorySnapshot } from "../../shared/types";
 import { formatDateTime } from "../lib/format";
@@ -11,10 +23,10 @@ interface Props {
 type AlertFilter = "all" | "low-stock" | "near-expiry" | "expired";
 
 export function AppNotificationCenter({ snapshot }: Props) {
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const [open, setOpen] = useState(false);
+  const theme = useTheme();
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [filter, setFilter] = useState<AlertFilter>("all");
-  const allAlerts = inventoryAlerts(snapshot);
+  const allAlerts = useMemo(() => inventoryAlerts(snapshot), [snapshot]);
   const filteredAlerts =
     filter === "all"
       ? allAlerts
@@ -24,76 +36,147 @@ export function AppNotificationCenter({ snapshot }: Props) {
           ? nearExpiryAlerts(snapshot)
           : expiredAlerts(snapshot);
 
-  useEffect(() => {
-    function handlePointerDown(event: MouseEvent) {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, []);
-
   return (
-    <div className="notification-center" ref={rootRef}>
-      <button
-        type="button"
-        className="toolbar-icon-button"
+    <>
+      <IconButton
         aria-label="Open notifications"
-        onClick={() => setOpen((current) => !current)}
+        onClick={(event) => setAnchorEl(anchorEl ? null : event.currentTarget)}
+        sx={{
+          position: "relative",
+          width: 44,
+          height: 44,
+        }}
       >
         <BellIcon size={18} />
         {allAlerts.length > 0 ? (
-          <span className="notification-badge">{allAlerts.length > 9 ? "9+" : allAlerts.length}</span>
+          <Box
+            sx={{
+              position: "absolute",
+              top: 3,
+              right: 3,
+              minWidth: 18,
+              height: 18,
+              px: 0.5,
+              borderRadius: 999,
+              display: "grid",
+              placeItems: "center",
+              bgcolor: "error.main",
+              color: "common.white",
+              fontSize: "0.65rem",
+              fontWeight: 800,
+              lineHeight: 1,
+            }}
+          >
+            {allAlerts.length > 9 ? "9+" : allAlerts.length}
+          </Box>
         ) : null}
-      </button>
+      </IconButton>
 
-      {open ? (
-        <div className="notification-panel">
-          <div className="notification-header">
-            <div>
-              <strong>Notifications</strong>
-              <p>{allAlerts.length > 0 ? `${allAlerts.length} active inventory alerts` : "No active alerts"}</p>
-            </div>
-          </div>
+      <Popover
+        open={Boolean(anchorEl)}
+        anchorEl={anchorEl}
+        onClose={() => setAnchorEl(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+        slotProps={{
+          paper: {
+            sx: {
+              mt: 1.5,
+              width: { xs: "min(92vw, 360px)", sm: 380 },
+              borderRadius: 3,
+              overflow: "hidden",
+            },
+          },
+        }}
+      >
+        <Paper sx={{ p: 2.25 }}>
+          <Stack spacing={2}>
+            <Box>
+              <Typography variant="subtitle1" fontWeight={800}>
+                Notifications
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {allAlerts.length > 0 ? `${allAlerts.length} active inventory alerts` : "No active alerts"}
+              </Typography>
+            </Box>
 
-          <div className="chip-row">
-            {(["all", "low-stock", "near-expiry", "expired"] as AlertFilter[]).map((option) => (
-              <button
-                key={option}
-                type="button"
-                className={filter === option ? "chip-button active" : "chip-button"}
-                onClick={() => setFilter(option)}
-              >
-                {option === "all" ? "All" : option.replace("-", " ")}
-              </button>
-            ))}
-          </div>
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+              {(["all", "low-stock", "near-expiry", "expired"] as AlertFilter[]).map((option) => (
+                <Chip
+                  key={option}
+                  label={option === "all" ? "All" : option.replace("-", " ")}
+                  clickable
+                  color={filter === option ? "primary" : "default"}
+                  variant={filter === option ? "filled" : "outlined"}
+                  onClick={() => setFilter(option)}
+                />
+              ))}
+            </Stack>
 
-          <div className="notification-list">
-            {filteredAlerts.length > 0 ? (
-              filteredAlerts.slice(0, 8).map((alert) => (
-                <div key={alert.id} className="notification-item">
-                  <div className="notification-icon">
-                    {alert.kind === "low-stock" ? <AlertIcon size={16} /> : <ClockIcon size={16} />}
-                  </div>
-                  <div className="notification-copy">
-                    <strong>{alert.itemName}</strong>
-                    <p>{alert.message}</p>
-                    <small>
-                      {alert.locationName}
-                      {alert.expiryDate ? ` • ${formatDateTime(alert.expiryDate)}` : ""}
-                    </small>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="empty-copy">No alerts match this filter.</p>
-            )}
-          </div>
-        </div>
-      ) : null}
-    </div>
+            <Divider />
+
+            <Stack spacing={1.25}>
+              {filteredAlerts.length > 0 ? (
+                filteredAlerts.slice(0, 8).map((alert) => (
+                  <Paper
+                    key={alert.id}
+                    variant="outlined"
+                    sx={{
+                      p: 1.5,
+                      borderRadius: 2.5,
+                      bgcolor:
+                        theme.palette.mode === "dark"
+                          ? alpha(theme.palette.common.white, 0.03)
+                          : alpha(theme.palette.primary.main, 0.03),
+                    }}
+                  >
+                    <Stack direction="row" spacing={1.5} alignItems="flex-start">
+                      <Box
+                        sx={{
+                          width: 34,
+                          height: 34,
+                          borderRadius: 2,
+                          display: "grid",
+                          placeItems: "center",
+                          bgcolor:
+                            alert.kind === "low-stock"
+                              ? alpha(theme.palette.warning.main, 0.14)
+                              : alpha(theme.palette.error.main, 0.12),
+                          color:
+                            alert.kind === "low-stock"
+                              ? "warning.main"
+                              : "error.main",
+                          flex: "0 0 auto",
+                        }}
+                      >
+                        {alert.kind === "low-stock" ? <AlertIcon size={16} /> : <ClockIcon size={16} />}
+                      </Box>
+
+                      <Box minWidth={0}>
+                        <Typography variant="body2" fontWeight={800}>
+                          {alert.itemName}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.35 }}>
+                          {alert.message}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: "block" }}>
+                          {alert.locationName}
+                          {alert.expiryDate ? ` - ${formatDateTime(alert.expiryDate)}` : ""}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  </Paper>
+                ))
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  No alerts match this filter.
+                </Typography>
+              )}
+            </Stack>
+          </Stack>
+        </Paper>
+      </Popover>
+    </>
   );
 }
+

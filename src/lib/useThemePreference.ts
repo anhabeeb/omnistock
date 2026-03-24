@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 export type ThemeMode = "system" | "light" | "dark";
+export type ResolvedThemeMode = "light" | "dark";
 
 const STORAGE_KEY = "omnistock-theme";
 const DARK_THEME_COLOR = "#081217";
@@ -13,7 +14,7 @@ function isThemeMode(value: string | null): value is ThemeMode {
 function resolveTheme(
   mode: ThemeMode,
   matcher?: Pick<MediaQueryList, "matches">,
-): "light" | "dark" {
+): ResolvedThemeMode {
   if (mode === "light" || mode === "dark") {
     return mode;
   }
@@ -57,6 +58,13 @@ export function initializeThemePreference() {
 
 export function useThemePreference() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readStoredThemeMode());
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedThemeMode>(() => {
+    if (typeof window === "undefined") {
+      return "light";
+    }
+
+    return resolveTheme(readStoredThemeMode(), window.matchMedia("(prefers-color-scheme: dark)"));
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -65,7 +73,9 @@ export function useThemePreference() {
 
     const matcher = window.matchMedia("(prefers-color-scheme: dark)");
     const updateTheme = () => {
-      applyThemeDocument(resolveTheme(themeMode, matcher));
+      const nextTheme = resolveTheme(themeMode, matcher);
+      applyThemeDocument(nextTheme);
+      setResolvedTheme(nextTheme);
     };
 
     updateTheme();
@@ -93,6 +103,7 @@ export function useThemePreference() {
 
   return {
     themeMode,
+    resolvedTheme,
     setThemeMode,
   };
 }

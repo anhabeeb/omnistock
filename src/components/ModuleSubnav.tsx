@@ -1,4 +1,5 @@
-import { NavLink } from "react-router-dom";
+import { Button, Paper, Stack, alpha, useTheme } from "@mui/material";
+import { useLocation, useNavigate } from "react-router-dom";
 
 interface ModuleSubnavItem {
   label: string;
@@ -10,22 +11,45 @@ interface Props {
 }
 
 export function ModuleSubnav({ items }: Props) {
+  const theme = useTheme();
+  const location = useLocation();
+  const navigate = useNavigate();
+
   return (
-    <nav className="module-subnav" aria-label="Section navigation">
-      <div className="module-subnav-track">
-        {items.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={({ isActive }) =>
-              isActive ? "module-subnav-link active" : "module-subnav-link"
-            }
-            end
-          >
-            {item.label}
-          </NavLink>
-        ))}
-      </div>
-    </nav>
+    <Paper
+      sx={{
+        p: 1,
+        borderRadius: 3.5,
+        position: { xs: "sticky", lg: "static" },
+        top: { xs: 88, lg: "auto" },
+        zIndex: 6,
+        bgcolor:
+          theme.palette.mode === "dark"
+            ? alpha(theme.palette.background.paper, 0.86)
+            : alpha(theme.palette.background.paper, 0.88),
+      }}
+    >
+      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+        {items.map((item) => {
+          const active = location.pathname === item.to;
+          return (
+            <Button
+              key={item.to}
+              variant={active ? "contained" : "text"}
+              color={active ? "primary" : "inherit"}
+              onClick={() => navigate(item.to)}
+              sx={{
+                minHeight: 42,
+                borderRadius: 2.5,
+                px: 2,
+                color: active ? "primary.contrastText" : "text.secondary",
+              }}
+            >
+              {item.label}
+            </Button>
+          );
+        })}
+      </Stack>
+    </Paper>
   );
 }

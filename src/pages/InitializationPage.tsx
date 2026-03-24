@@ -1,4 +1,22 @@
 import { useState } from "react";
+import {
+  Alert,
+  Box,
+  Button,
+  Checkbox,
+  Chip,
+  FormControlLabel,
+  MenuItem,
+  Paper,
+  Stack,
+  Step,
+  StepLabel,
+  Stepper,
+  TextField,
+  Typography,
+  alpha,
+  useTheme,
+} from "@mui/material";
 import type { InitializeSystemRequest } from "../../shared/types";
 import type { SyncState } from "../lib/useOmniStockApp";
 
@@ -87,7 +105,17 @@ function hasAnyValue(values: string[]): boolean {
   return values.some((value) => value.trim().length > 0);
 }
 
+function userFields(prefix: "superadmin" | "admin" | "manager" | "worker") {
+  return {
+    name: `${prefix}Name` as const,
+    email: `${prefix}Email` as const,
+    username: `${prefix}Username` as const,
+    password: `${prefix}Password` as const,
+  };
+}
+
 export function InitializationPage({ syncState, onInitialize }: Props) {
+  const theme = useTheme();
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<FormState>(defaultForm);
   const [feedback, setFeedback] = useState<string>();
@@ -129,30 +157,18 @@ export function InitializationPage({ syncState, onInitialize }: Props) {
 
     if (nextStep >= 3) {
       const optionalUsers = [
-        {
-          label: "Admin",
-          values: [form.adminName, form.adminUsername, form.adminEmail, form.adminPassword],
-        },
-        {
-          label: "Manager",
-          values: [form.managerName, form.managerUsername, form.managerEmail, form.managerPassword],
-        },
-        {
-          label: "Worker",
-          values: [form.workerName, form.workerUsername, form.workerEmail, form.workerPassword],
-        },
+        { label: "Admin", values: [form.adminName, form.adminUsername, form.adminEmail, form.adminPassword] },
+        { label: "Manager", values: [form.managerName, form.managerUsername, form.managerEmail, form.managerPassword] },
+        { label: "Worker", values: [form.workerName, form.workerUsername, form.workerEmail, form.workerPassword] },
       ];
 
       for (const entry of optionalUsers) {
         const hasSome = hasAnyValue(entry.values);
         const hasAll = entry.values.every((value) => value.trim().length > 0);
         if (hasSome && !hasAll) {
-          setFeedback(
-            `${entry.label} setup is incomplete. Fill name, username, email, and password or leave it blank.`,
-          );
+          setFeedback(`${entry.label} setup is incomplete. Fill name, username, email, and password or leave it blank.`);
           return false;
         }
-
         if (hasAll && !isStrongEnough(entry.values[3])) {
           setFeedback(`${entry.label} password must be at least 8 characters long.`);
           return false;
@@ -274,499 +290,277 @@ export function InitializationPage({ syncState, onInitialize }: Props) {
     }
   }
 
+  function renderUserFields(label: string, prefix: "superadmin" | "admin" | "manager" | "worker", required = false) {
+    const fields = userFields(prefix);
+    return (
+      <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+        <Stack spacing={2}>
+          <Box>
+            <Typography variant="subtitle2" fontWeight={800}>
+              {label}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {required ? "Required for first launch." : "Optional during setup and can be added later."}
+            </Typography>
+          </Box>
+          <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" } }}>
+            <TextField
+              label={`${label} name`}
+              value={form[fields.name]}
+              onChange={(event) => patch(fields.name, event.target.value)}
+              placeholder={required ? "Amina Shah" : "Optional"}
+              fullWidth
+            />
+            <TextField
+              label={`${label} email`}
+              type="email"
+              value={form[fields.email]}
+              onChange={(event) => patch(fields.email, event.target.value)}
+              placeholder={required ? "amina@company.com" : "Optional"}
+              fullWidth
+            />
+            <TextField
+              label={`${label} username`}
+              value={form[fields.username]}
+              onChange={(event) => patch(fields.username, event.target.value)}
+              placeholder={required ? "amina.shah" : "Optional"}
+              autoComplete="username"
+              fullWidth
+            />
+            <TextField
+              label={`${label} password`}
+              type="password"
+              value={form[fields.password]}
+              onChange={(event) => patch(fields.password, event.target.value)}
+              placeholder={required ? "Minimum 8 characters" : "Optional"}
+              autoComplete="new-password"
+              fullWidth
+            />
+          </Box>
+        </Stack>
+      </Paper>
+    );
+  }
+
   return (
-    <div className="loading-screen">
-      <div className="page-stack" style={{ width: "min(1120px, 100%)" }}>
-        <section className="hero-panel">
-          <div>
-            <p className="eyebrow">First Run Setup</p>
-            <h1>Initialize OmniStock</h1>
-            <p className="hero-copy">
-              Start with the company profile, one warehouse, one outlet, and the first user team.
-              More items, suppliers, branches, and staff can be added later inside the app.
-            </p>
-          </div>
+    <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", p: { xs: 2, md: 3 } }}>
+      <Stack spacing={2.5} sx={{ width: "min(1180px, 100%)" }}>
+        <Paper
+          sx={{
+            p: { xs: 2.5, md: 3 },
+            borderRadius: 4,
+            background:
+              theme.palette.mode === "dark"
+                ? alpha(theme.palette.background.paper, 0.88)
+                : alpha(theme.palette.background.paper, 0.92),
+          }}
+        >
+          <Stack direction={{ xs: "column", lg: "row" }} justifyContent="space-between" spacing={2}>
+            <Box>
+              <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                First Run Setup
+              </Typography>
+              <Typography variant="h4" sx={{ mt: 0.5 }}>
+                Initialize OmniStock
+              </Typography>
+              <Typography variant="body1" color="text.secondary" sx={{ mt: 1.25, maxWidth: 760 }}>
+                Start with the company profile, one warehouse, one outlet, and the first user team.
+                More items, suppliers, branches, and staff can be added later inside the app.
+              </Typography>
+            </Box>
 
-          <div className="hero-meta">
-            <div className="meta-card">
-              <span>Connection</span>
-              <strong>{syncState.online ? "Online" : "Offline"}</strong>
-              <small>Initial setup must save to Cloudflare before operations can begin.</small>
-            </div>
-            <div className="meta-card">
-              <span>Wizard step</span>
-              <strong>{step + 1} / 4</strong>
-              <small>{STEPS[step]}</small>
-            </div>
-          </div>
-        </section>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25} useFlexGap flexWrap="wrap">
+              <Chip label={syncState.online ? "Online" : "Offline"} color={syncState.online ? "success" : "warning"} />
+              <Chip variant="outlined" label={`Step ${step + 1} / 4 - ${STEPS[step]}`} />
+            </Stack>
+          </Stack>
+        </Paper>
 
-        <section className="panel">
-          <div className="chip-row">
-            {STEPS.map((label, index) => (
-              <button
-                key={label}
-                type="button"
-                className={index === step ? "chip-button active" : "chip-button"}
-                onClick={() => {
-                  if (index <= step) {
-                    setStep(index);
-                    return;
-                  }
+        <Paper sx={{ p: { xs: 2.25, md: 3 }, borderRadius: 4 }}>
+          <Stack spacing={2.5}>
+            <Stepper activeStep={step} alternativeLabel sx={{ display: { xs: "none", md: "flex" } }}>
+              {STEPS.map((label) => (
+                <Step key={label}>
+                  <StepLabel>{label}</StepLabel>
+                </Step>
+              ))}
+            </Stepper>
 
-                  if (index === step + 1 && validateStep(index)) {
-                    setStep(index);
-                  }
-                }}
-              >
-                {index + 1}. {label}
-              </button>
-            ))}
-          </div>
-
-          <form className="page-stack" onSubmit={handleSubmit}>
-            {step === 0 ? (
-              <div className="form-grid">
-                <label className="field">
-                  <span>Company name</span>
-                  <input
-                    value={form.companyName}
-                    onChange={(event) => patch("companyName", event.target.value)}
-                    placeholder="OmniStock Restaurants"
-                  />
-                </label>
-
-                <label className="field">
-                  <span>Currency</span>
-                  <select
-                    value={form.currency}
-                    onChange={(event) => patch("currency", event.target.value)}
-                  >
-                    <option value="PKR">PKR</option>
-                    <option value="USD">USD</option>
-                    <option value="AED">AED</option>
-                    <option value="SAR">SAR</option>
-                  </select>
-                </label>
-
-                <label className="field">
-                  <span>Timezone</span>
-                  <input
-                    value={form.timezone}
-                    onChange={(event) => patch("timezone", event.target.value)}
-                    placeholder="Asia/Karachi"
-                  />
-                </label>
-
-                <label className="field">
-                  <span>Low stock threshold</span>
-                  <input
-                    type="number"
-                    min="1"
-                    value={form.lowStockThreshold}
-                    onChange={(event) => patch("lowStockThreshold", event.target.value)}
-                  />
-                </label>
-
-                <label className="field">
-                  <span>Expiry alert days</span>
-                  <input
-                    type="number"
-                    min="1"
-                    value={form.expiryAlertDays}
-                    onChange={(event) => patch("expiryAlertDays", event.target.value)}
-                  />
-                </label>
-
-                <div className="field field-wide">
-                  <span>System behavior</span>
-                  <div className="stack-list">
-                    <label className="list-row">
-                      <div>
-                        <strong>Offline mode</strong>
-                        <p>Allow IndexedDB cache and queue support when connections drop.</p>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={form.enableOffline}
-                        onChange={(event) => patch("enableOffline", event.target.checked)}
-                      />
-                    </label>
-                    <label className="list-row">
-                      <div>
-                        <strong>Realtime sync</strong>
-                        <p>Keep multiple users aligned through websockets and shared refresh.</p>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={form.enableRealtime}
-                        onChange={(event) => patch("enableRealtime", event.target.checked)}
-                      />
-                    </label>
-                    <label className="list-row">
-                      <div>
-                        <strong>Barcode capture</strong>
-                        <p>Enable scanner and camera workflows for mobile and tablet teams.</p>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={form.enableBarcode}
-                        onChange={(event) => patch("enableBarcode", event.target.checked)}
-                      />
-                    </label>
-                    <label className="list-row">
-                      <div>
-                        <strong>Strict FEFO</strong>
-                        <p>Force first-expired-first-out for restaurant stock movements.</p>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={form.strictFefo}
-                        onChange={(event) => patch("strictFefo", event.target.checked)}
-                      />
-                    </label>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            {step === 1 ? (
-              <div className="form-grid">
-                <label className="field">
-                  <span>Primary warehouse name</span>
-                  <input
-                    value={form.warehouseName}
-                    onChange={(event) => patch("warehouseName", event.target.value)}
-                    placeholder="Central Warehouse"
-                  />
-                </label>
-                <label className="field">
-                  <span>Warehouse code</span>
-                  <input
-                    value={form.warehouseCode}
-                    onChange={(event) => patch("warehouseCode", event.target.value)}
-                    placeholder="WH-CENTRAL"
-                  />
-                </label>
-                <label className="field">
-                  <span>Warehouse city</span>
-                  <input
-                    value={form.warehouseCity}
-                    onChange={(event) => patch("warehouseCity", event.target.value)}
-                    placeholder="Karachi"
-                  />
-                </label>
-
-                <label className="field">
-                  <span>First outlet name</span>
-                  <input
-                    value={form.outletName}
-                    onChange={(event) => patch("outletName", event.target.value)}
-                    placeholder="DHA Branch"
-                  />
-                </label>
-                <label className="field">
-                  <span>Outlet code</span>
-                  <input
-                    value={form.outletCode}
-                    onChange={(event) => patch("outletCode", event.target.value)}
-                    placeholder="OUT-DHA"
-                  />
-                </label>
-                <label className="field">
-                  <span>Outlet city</span>
-                  <input
-                    value={form.outletCity}
-                    onChange={(event) => patch("outletCity", event.target.value)}
-                    placeholder="Karachi"
-                  />
-                </label>
-              </div>
-            ) : null}
-
-            {step === 2 ? (
-              <div className="form-grid">
-                <label className="field">
-                  <span>Superadmin name</span>
-                  <input
-                    value={form.superadminName}
-                    onChange={(event) => patch("superadminName", event.target.value)}
-                    placeholder="Amina Shah"
-                  />
-                </label>
-                <label className="field">
-                  <span>Superadmin email</span>
-                  <input
-                    type="email"
-                    value={form.superadminEmail}
-                    onChange={(event) => patch("superadminEmail", event.target.value)}
-                    placeholder="amina@company.com"
-                  />
-                </label>
-                <label className="field">
-                  <span>Superadmin username</span>
-                  <input
-                    value={form.superadminUsername}
-                    onChange={(event) => patch("superadminUsername", event.target.value)}
-                    placeholder="amina.shah"
-                    autoComplete="username"
-                  />
-                </label>
-                <label className="field">
-                  <span>Superadmin password</span>
-                  <input
-                    type="password"
-                    value={form.superadminPassword}
-                    onChange={(event) => patch("superadminPassword", event.target.value)}
-                    placeholder="Minimum 8 characters"
-                    autoComplete="new-password"
-                  />
-                </label>
-
-                <label className="field">
-                  <span>Admin name</span>
-                  <input
-                    value={form.adminName}
-                    onChange={(event) => patch("adminName", event.target.value)}
-                    placeholder="Optional"
-                  />
-                </label>
-                <label className="field">
-                  <span>Admin email</span>
-                  <input
-                    type="email"
-                    value={form.adminEmail}
-                    onChange={(event) => patch("adminEmail", event.target.value)}
-                    placeholder="Optional"
-                  />
-                </label>
-                <label className="field">
-                  <span>Admin username</span>
-                  <input
-                    value={form.adminUsername}
-                    onChange={(event) => patch("adminUsername", event.target.value)}
-                    placeholder="Optional"
-                    autoComplete="username"
-                  />
-                </label>
-                <label className="field">
-                  <span>Admin password</span>
-                  <input
-                    type="password"
-                    value={form.adminPassword}
-                    onChange={(event) => patch("adminPassword", event.target.value)}
-                    placeholder="Optional"
-                    autoComplete="new-password"
-                  />
-                </label>
-
-                <label className="field">
-                  <span>Manager name</span>
-                  <input
-                    value={form.managerName}
-                    onChange={(event) => patch("managerName", event.target.value)}
-                    placeholder="Optional"
-                  />
-                </label>
-                <label className="field">
-                  <span>Manager email</span>
-                  <input
-                    type="email"
-                    value={form.managerEmail}
-                    onChange={(event) => patch("managerEmail", event.target.value)}
-                    placeholder="Optional"
-                  />
-                </label>
-                <label className="field">
-                  <span>Manager username</span>
-                  <input
-                    value={form.managerUsername}
-                    onChange={(event) => patch("managerUsername", event.target.value)}
-                    placeholder="Optional"
-                    autoComplete="username"
-                  />
-                </label>
-                <label className="field">
-                  <span>Manager password</span>
-                  <input
-                    type="password"
-                    value={form.managerPassword}
-                    onChange={(event) => patch("managerPassword", event.target.value)}
-                    placeholder="Optional"
-                    autoComplete="new-password"
-                  />
-                </label>
-
-                <label className="field">
-                  <span>Worker name</span>
-                  <input
-                    value={form.workerName}
-                    onChange={(event) => patch("workerName", event.target.value)}
-                    placeholder="Optional"
-                  />
-                </label>
-                <label className="field">
-                  <span>Worker email</span>
-                  <input
-                    type="email"
-                    value={form.workerEmail}
-                    onChange={(event) => patch("workerEmail", event.target.value)}
-                    placeholder="Optional"
-                  />
-                </label>
-                <label className="field">
-                  <span>Worker username</span>
-                  <input
-                    value={form.workerUsername}
-                    onChange={(event) => patch("workerUsername", event.target.value)}
-                    placeholder="Optional"
-                    autoComplete="username"
-                  />
-                </label>
-                <label className="field">
-                  <span>Worker password</span>
-                  <input
-                    type="password"
-                    value={form.workerPassword}
-                    onChange={(event) => patch("workerPassword", event.target.value)}
-                    placeholder="Optional"
-                    autoComplete="new-password"
-                  />
-                </label>
-              </div>
-            ) : null}
-
-            {step === 3 ? (
-              <div className="split-grid">
-                <article className="panel">
-                  <div className="panel-heading">
-                    <div>
-                      <p className="eyebrow">Launch Summary</p>
-                      <h2>Workspace Overview</h2>
-                    </div>
-                  </div>
-                  <div className="stack-list">
-                    <div className="list-row">
-                      <div>
-                        <strong>{form.companyName || "Company pending"}</strong>
-                        <p>
-                          {form.currency} - {form.timezone}
-                        </p>
-                      </div>
-                      <span className="status-chip neutral">Company</span>
-                    </div>
-                    <div className="list-row">
-                      <div>
-                        <strong>{form.warehouseName || "Warehouse pending"}</strong>
-                        <p>
-                          {form.warehouseCode || "Code"} - {form.warehouseCity || "City"}
-                        </p>
-                      </div>
-                      <span className="status-chip neutral">Warehouse</span>
-                    </div>
-                    <div className="list-row">
-                      <div>
-                        <strong>{form.outletName || "Outlet pending"}</strong>
-                        <p>
-                          {form.outletCode || "Code"} - {form.outletCity || "City"}
-                        </p>
-                      </div>
-                      <span className="status-chip neutral">Outlet</span>
-                    </div>
-                    <div className="list-row">
-                      <div>
-                        <strong>{form.superadminName || "Superadmin pending"}</strong>
-                        <p>
-                          {form.superadminUsername || "Username required"} -{" "}
-                          {form.superadminEmail || "Email required"}
-                        </p>
-                      </div>
-                      <span className="status-chip neutral">First owner</span>
-                    </div>
-                    <div className="list-row">
-                      <div>
-                        <strong>Passwords</strong>
-                        <p>
-                          Superadmin password is {isStrongEnough(form.superadminPassword) ? "ready" : "missing"}.
-                        </p>
-                      </div>
-                      <span className="status-chip neutral">Security</span>
-                    </div>
-                  </div>
-                </article>
-
-                <article className="panel">
-                  <div className="panel-heading">
-                    <div>
-                      <p className="eyebrow">What Happens Next</p>
-                      <h2>After Initialization</h2>
-                    </div>
-                  </div>
-                  <div className="timeline">
-                    <div className="timeline-item">
-                      <div className="timeline-dot tone-success" />
-                      <div>
-                        <strong>Dashboard opens</strong>
-                        <p>Users land in the live workspace with alerts, KPIs, and the quick guide.</p>
-                      </div>
-                    </div>
-                    <div className="timeline-item">
-                      <div className="timeline-dot tone-success" />
-                      <div>
-                        <strong>Master data can expand</strong>
-                        <p>Add items, suppliers, more branches, and market pricing after setup.</p>
-                      </div>
-                    </div>
-                    <div className="timeline-item">
-                      <div className="timeline-dot tone-success" />
-                      <div>
-                        <strong>Operations can start</strong>
-                        <p>GRN, GIN, transfers, counts, wastage, FEFO, and reports are ready.</p>
-                      </div>
-                    </div>
-                  </div>
-                </article>
-              </div>
-            ) : null}
-
-            <div className="button-row">
-              {step > 0 ? (
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => setStep((current) => current - 1)}
-                >
-                  Back
-                </button>
-              ) : null}
-
-              {step < STEPS.length - 1 ? (
-                <button
-                  type="button"
-                  className="primary-button"
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ display: { xs: "flex", md: "none" } }}>
+              {STEPS.map((label, index) => (
+                <Chip
+                  key={label}
+                  label={`${index + 1}. ${label}`}
+                  color={index === step ? "primary" : "default"}
+                  variant={index === step ? "filled" : "outlined"}
                   onClick={() => {
-                    if (validateStep(step + 1)) {
-                      setStep((current) => current + 1);
+                    if (index <= step) {
+                      setStep(index);
+                      return;
+                    }
+                    if (index === step + 1 && validateStep(index)) {
+                      setStep(index);
                     }
                   }}
-                >
-                  Continue
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  className="primary-button"
-                  disabled={submitting || !syncState.online}
-                >
-                  {submitting ? "Launching..." : "Initialize OmniStock"}
-                </button>
-              )}
-            </div>
+                />
+              ))}
+            </Stack>
 
-            {feedback ? <p className="feedback-copy">{feedback}</p> : null}
-          </form>
-        </section>
-      </div>
-    </div>
+            {feedback ? <Alert severity="error">{feedback}</Alert> : null}
+
+            <Box component="form" onSubmit={handleSubmit}>
+              <Stack spacing={2.5}>
+                {step === 0 ? (
+                  <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" } }}>
+                    <TextField
+                      label="Company name"
+                      value={form.companyName}
+                      onChange={(event) => patch("companyName", event.target.value)}
+                      placeholder="OmniStock Restaurants"
+                      fullWidth
+                    />
+                    <TextField
+                      select
+                      label="Currency"
+                      value={form.currency}
+                      onChange={(event) => patch("currency", event.target.value)}
+                      fullWidth
+                    >
+                      {["PKR", "USD", "AED", "SAR"].map((currency) => (
+                        <MenuItem key={currency} value={currency}>
+                          {currency}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                    <TextField
+                      label="Timezone"
+                      value={form.timezone}
+                      onChange={(event) => patch("timezone", event.target.value)}
+                      placeholder="Asia/Karachi"
+                      fullWidth
+                    />
+                    <TextField
+                      label="Low stock threshold"
+                      type="number"
+                      inputProps={{ min: 1 }}
+                      value={form.lowStockThreshold}
+                      onChange={(event) => patch("lowStockThreshold", event.target.value)}
+                      fullWidth
+                    />
+                    <TextField
+                      label="Expiry alert days"
+                      type="number"
+                      inputProps={{ min: 1 }}
+                      value={form.expiryAlertDays}
+                      onChange={(event) => patch("expiryAlertDays", event.target.value)}
+                      fullWidth
+                    />
+                    <Paper variant="outlined" sx={{ p: 2, borderRadius: 3, gridColumn: { xs: "1 / -1", md: "1 / -1" } }}>
+                      <Stack spacing={1.25}>
+                        <Typography variant="subtitle2" fontWeight={800}>
+                          System behavior
+                        </Typography>
+                        <FormControlLabel control={<Checkbox checked={form.enableOffline} onChange={(event) => patch("enableOffline", event.target.checked)} />} label="Offline mode" />
+                        <FormControlLabel control={<Checkbox checked={form.enableRealtime} onChange={(event) => patch("enableRealtime", event.target.checked)} />} label="Realtime sync" />
+                        <FormControlLabel control={<Checkbox checked={form.enableBarcode} onChange={(event) => patch("enableBarcode", event.target.checked)} />} label="Barcode capture" />
+                        <FormControlLabel control={<Checkbox checked={form.strictFefo} onChange={(event) => patch("strictFefo", event.target.checked)} />} label="Strict FEFO" />
+                      </Stack>
+                    </Paper>
+                  </Box>
+                ) : null}
+
+                {step === 1 ? (
+                  <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" } }}>
+                    <TextField label="Primary warehouse name" value={form.warehouseName} onChange={(event) => patch("warehouseName", event.target.value)} placeholder="Central Warehouse" fullWidth />
+                    <TextField label="Warehouse code" value={form.warehouseCode} onChange={(event) => patch("warehouseCode", event.target.value)} placeholder="WH-CENTRAL" fullWidth />
+                    <TextField label="Warehouse city" value={form.warehouseCity} onChange={(event) => patch("warehouseCity", event.target.value)} placeholder="Karachi" fullWidth />
+                    <TextField label="First outlet name" value={form.outletName} onChange={(event) => patch("outletName", event.target.value)} placeholder="DHA Branch" fullWidth />
+                    <TextField label="Outlet code" value={form.outletCode} onChange={(event) => patch("outletCode", event.target.value)} placeholder="OUT-DHA" fullWidth />
+                    <TextField label="Outlet city" value={form.outletCity} onChange={(event) => patch("outletCity", event.target.value)} placeholder="Karachi" fullWidth />
+                  </Box>
+                ) : null}
+
+                {step === 2 ? (
+                  <Stack spacing={2}>
+                    {renderUserFields("Superadmin", "superadmin", true)}
+                    {renderUserFields("Admin", "admin")}
+                    {renderUserFields("Manager", "manager")}
+                    {renderUserFields("Worker", "worker")}
+                  </Stack>
+                ) : null}
+
+                {step === 3 ? (
+                  <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", xl: "minmax(0, 1fr) minmax(360px, 0.92fr)" } }}>
+                    <Paper variant="outlined" sx={{ p: 2.25, borderRadius: 3 }}>
+                      <Stack spacing={1.25}>
+                        <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                          Launch Summary
+                        </Typography>
+                        <Typography variant="h6">Workspace Overview</Typography>
+                        <Chip variant="outlined" label={`${form.companyName || "Company pending"} - ${form.currency} - ${form.timezone}`} />
+                        <Chip variant="outlined" label={`${form.warehouseName || "Warehouse pending"} - ${form.warehouseCode || "Code"} - ${form.warehouseCity || "City"}`} />
+                        <Chip variant="outlined" label={`${form.outletName || "Outlet pending"} - ${form.outletCode || "Code"} - ${form.outletCity || "City"}`} />
+                        <Chip variant="outlined" label={`${form.superadminName || "Superadmin pending"} - ${form.superadminUsername || "Username required"} - ${form.superadminEmail || "Email required"}`} />
+                        <Chip color={isStrongEnough(form.superadminPassword) ? "success" : "warning"} label={`Superadmin password is ${isStrongEnough(form.superadminPassword) ? "ready" : "missing"}`} />
+                      </Stack>
+                    </Paper>
+
+                    <Paper variant="outlined" sx={{ p: 2.25, borderRadius: 3 }}>
+                      <Stack spacing={1.5}>
+                        <Box>
+                          <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                            What Happens Next
+                          </Typography>
+                          <Typography variant="h6" sx={{ mt: 0.5 }}>
+                            After Initialization
+                          </Typography>
+                        </Box>
+                        {[
+                          "Dashboard opens with alerts, KPIs, and the first-login guide.",
+                          "Master data can expand with items, suppliers, branches, and market pricing.",
+                          "Operations can start with GRN, GIN, transfers, counts, wastage, FEFO, and reports.",
+                        ].map((detail) => (
+                          <Paper key={detail} variant="outlined" sx={{ p: 1.5, borderRadius: 3 }}>
+                            <Typography variant="body2" color="text.secondary">
+                              {detail}
+                            </Typography>
+                          </Paper>
+                        ))}
+                      </Stack>
+                    </Paper>
+                  </Box>
+                ) : null}
+
+                <Stack direction="row" spacing={1.25}>
+                  {step > 0 ? (
+                    <Button type="button" variant="outlined" onClick={() => setStep((current) => current - 1)}>
+                      Back
+                    </Button>
+                  ) : null}
+
+                  {step < STEPS.length - 1 ? (
+                    <Button
+                      type="button"
+                      variant="contained"
+                      onClick={() => {
+                        if (validateStep(step + 1)) {
+                          setStep((current) => current + 1);
+                        }
+                      }}
+                    >
+                      Continue
+                    </Button>
+                  ) : (
+                    <Button type="submit" variant="contained" disabled={submitting || !syncState.online}>
+                      {submitting ? "Launching..." : "Initialize OmniStock"}
+                    </Button>
+                  )}
+                </Stack>
+              </Stack>
+            </Box>
+          </Stack>
+        </Paper>
+      </Stack>
+    </Box>
   );
 }

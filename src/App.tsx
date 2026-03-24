@@ -1,29 +1,47 @@
-import { useEffect, useState } from "react";
-import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { MODULES, ROLE_PRESETS, can, canAccessModule } from "../shared/permissions";
-import { expiredAlerts, inventoryAlerts, lowStockAlerts, nearExpiryAlerts } from "../shared/selectors";
-import type { PermissionKey, RequestKind } from "../shared/types";
+import { useEffect, useMemo, useState } from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import {
+  alpha,
+  Avatar,
+  Box,
+  Button,
+  Chip,
+  CssBaseline,
+  Divider,
+  Drawer,
+  IconButton,
+  List,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
+  Paper,
+  Stack,
+  ThemeProvider,
+  Tooltip,
+  Typography,
+  useMediaQuery,
+} from "@mui/material";
+import { MODULES, ROLE_PRESETS, canAccessModule } from "../shared/permissions";
+import { inventoryAlerts } from "../shared/selectors";
 import { AppNotificationCenter } from "./components/AppNotificationCenter";
 import {
-  ActivityIcon,
   AdminIcon,
-  AlertIcon,
-  BellIcon,
   CloseIcon,
-  CollapseIcon,
   DashboardIcon,
   DataIcon,
   InventoryIcon,
   LogoutIcon,
   MenuIcon,
   MoonIcon,
-  PlusIcon,
   ProfileIcon,
   RefreshIcon,
   ReportsIcon,
   SunIcon,
 } from "./components/AppIcons";
 import { formatDateTime } from "./lib/format";
+import { buildMuiTheme } from "./lib/muiTheme";
 import { useOmniStockApp } from "./lib/useOmniStockApp";
 import { useThemePreference } from "./lib/useThemePreference";
 import { AdminPage } from "./pages/AdminPage";
@@ -66,174 +84,34 @@ const MODULE_ENTRY_PATHS: Record<(typeof MODULES)[number]["key"], string> = {
 const MODULE_SUBPAGES: Partial<
   Record<
     (typeof MODULES)[number]["key"],
-    Array<{
-      label: string;
-      path: string;
-      description: string;
-    }>
+    Array<{ label: string; path: string; description: string }>
   >
 > = {
   inventoryOps: [
-    {
-      label: "GRN",
-      path: "/inventory/grn",
-      description: "Receive supplier stock and inbound batches.",
-    },
-    {
-      label: "GIN",
-      path: "/inventory/gin",
-      description: "Issue stock to outlets, kitchens, and requests.",
-    },
-    {
-      label: "Transfer",
-      path: "/inventory/transfer",
-      description: "Move stock between warehouses and outlets.",
-    },
-    {
-      label: "Adjustments",
-      path: "/inventory/adjustments",
-      description: "Correct stock variances with audit notes.",
-    },
-    {
-      label: "Stock Count",
-      path: "/inventory/stock-count",
-      description: "Count and reconcile physical inventory.",
-    },
-    {
-      label: "Wastage",
-      path: "/inventory/wastage",
-      description: "Capture spoilage, expiry, and waste control.",
-    },
+    { label: "GRN", path: "/inventory/grn", description: "Receive supplier stock and inbound batches." },
+    { label: "GIN", path: "/inventory/gin", description: "Issue stock to outlets, kitchens, and requests." },
+    { label: "Transfer", path: "/inventory/transfer", description: "Move stock between warehouses and outlets." },
+    { label: "Adjustments", path: "/inventory/adjustments", description: "Correct stock variances with audit notes." },
+    { label: "Stock Count", path: "/inventory/stock-count", description: "Count and reconcile physical inventory." },
+    { label: "Wastage", path: "/inventory/wastage", description: "Capture spoilage, expiry, and waste control." },
   ],
   masterData: [
-    {
-      label: "Items",
-      path: "/master-data/items",
-      description: "Manage the item catalog and barcode details.",
-    },
-    {
-      label: "Suppliers",
-      path: "/master-data/suppliers",
-      description: "Review supplier contacts and lead times.",
-    },
-    {
-      label: "Warehouse & Outlets",
-      path: "/master-data/locations",
-      description: "Maintain operational facilities and outlets.",
-    },
-    {
-      label: "Market Prices",
-      path: "/master-data/market-prices",
-      description: "Track daily purchasing rates for restaurant items.",
-    },
+    { label: "Items", path: "/master-data/items", description: "Manage the item catalog and barcode details." },
+    { label: "Suppliers", path: "/master-data/suppliers", description: "Review supplier contacts and lead times." },
+    { label: "Warehouse & Outlets", path: "/master-data/locations", description: "Maintain operational facilities and outlets." },
+    { label: "Market Prices", path: "/master-data/market-prices", description: "Track daily purchasing rates for restaurant items." },
   ],
   reports: [
-    {
-      label: "Analytics",
-      path: "/reports/analytics",
-      description: "Review KPI and report summaries.",
-    },
-    {
-      label: "Waste Tracker",
-      path: "/reports/waste-tracker",
-      description: "Inspect detailed waste history and costs.",
-    },
-    {
-      label: "Movement Ledger",
-      path: "/reports/movement-ledger",
-      description: "Audit stock movements and balance changes.",
-    },
+    { label: "Analytics", path: "/reports/analytics", description: "Review KPI and report summaries." },
+    { label: "Waste Tracker", path: "/reports/waste-tracker", description: "Inspect detailed waste history and costs." },
+    { label: "Movement Ledger", path: "/reports/movement-ledger", description: "Audit stock movements and balance changes." },
   ],
   administration: [
-    {
-      label: "Users",
-      path: "/administration/users",
-      description: "Manage system users and account access.",
-    },
-    {
-      label: "Settings",
-      path: "/administration/settings",
-      description: "Review environment controls and permissions.",
-    },
-    {
-      label: "Activity",
-      path: "/administration/activity",
-      description: "Inspect recent audit and admin events.",
-    },
+    { label: "Users", path: "/administration/users", description: "Manage system users and account access." },
+    { label: "Settings", path: "/administration/settings", description: "Review environment controls and permissions." },
+    { label: "Activity", path: "/administration/activity", description: "Inspect recent audit and admin events." },
   ],
 };
-
-const OPERATION_SHORTCUTS = [
-  {
-    slug: "grn",
-    kind: "grn",
-    label: "Receive Stock (GRN)",
-    description: "Post inbound deliveries and supplier receipts.",
-    permission: "inventory.grn",
-    icon: PlusIcon,
-  },
-  {
-    slug: "gin",
-    kind: "gin",
-    label: "Issue Stock (GIN)",
-    description: "Send stock out to outlets, kitchens, or service.",
-    permission: "inventory.gin",
-    icon: InventoryIcon,
-  },
-  {
-    slug: "transfer",
-    kind: "transfer",
-    label: "Transfer Stock",
-    description: "Move inventory between warehouses and outlets.",
-    permission: "inventory.transfer",
-    icon: RefreshIcon,
-  },
-  {
-    slug: "adjustments",
-    kind: "adjustment",
-    label: "Adjust Inventory",
-    description: "Correct discrepancies with full audit notes.",
-    permission: "inventory.adjustment",
-    icon: DataIcon,
-  },
-  {
-    slug: "stock-count",
-    kind: "stock-count",
-    label: "Stock Count",
-    description: "Record blind counts and recount adjustments.",
-    permission: "inventory.count",
-    icon: ActivityIcon,
-  },
-  {
-    slug: "wastage",
-    kind: "wastage",
-    label: "Wastage Entry",
-    description: "Log spoilage, expiry, and kitchen wastage.",
-    permission: "inventory.wastage",
-    icon: AlertIcon,
-  },
-] as const satisfies Array<{
-  kind: RequestKind;
-  label: string;
-  description: string;
-  permission: PermissionKey;
-  icon: typeof PlusIcon;
-  slug: string;
-}>;
-
-type AlertFilter = "all" | "low-stock" | "near-expiry" | "expired";
-
-function LoadingScreen() {
-  return (
-    <div className="loading-screen">
-      <div className="loading-card">
-        <p className="eyebrow">OmniStock</p>
-        <h1>Preparing your warehouse workspace</h1>
-        <p>Loading cached inventory, reconnecting realtime sync, and checking your latest queue.</p>
-      </div>
-    </div>
-  );
-}
 
 function moduleEntryPath(moduleKey: (typeof MODULES)[number]["key"]) {
   return MODULE_ENTRY_PATHS[moduleKey];
@@ -243,13 +121,29 @@ function moduleIsActive(pathname: string, modulePath: string) {
   return modulePath === "/" ? pathname === "/" : pathname.startsWith(modulePath);
 }
 
+function LoadingScreen() {
+  return (
+    <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", p: 3 }}>
+      <Paper sx={{ width: "min(560px, 100%)", p: { xs: 3, sm: 4 }, borderRadius: 4 }}>
+        <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+          OmniStock
+        </Typography>
+        <Typography variant="h4" sx={{ mt: 1 }}>
+          Preparing your warehouse workspace
+        </Typography>
+        <Typography variant="body1" color="text.secondary" sx={{ mt: 1.5 }}>
+          Loading cached inventory, reconnecting realtime sync, and checking your latest queue.
+        </Typography>
+      </Paper>
+    </Box>
+  );
+}
+
 export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [mobileAlertsOpen, setMobileAlertsOpen] = useState(false);
-  const [mobileAlertFilter, setMobileAlertFilter] = useState<AlertFilter>("all");
+  const [profileMenuAnchor, setProfileMenuAnchor] = useState<HTMLElement | null>(null);
   const {
     payload,
     syncState,
@@ -268,713 +162,444 @@ export default function App() {
     resetAccountPassword,
     removeUserAccount,
   } = useOmniStockApp();
-  const { themeMode, setThemeMode } = useThemePreference();
+  const { themeMode, resolvedTheme, setThemeMode } = useThemePreference();
+  const muiTheme = useMemo(() => buildMuiTheme(resolvedTheme), [resolvedTheme]);
+  const isTabletOrMobile = useMediaQuery(muiTheme.breakpoints.down("lg"));
+  const profileMenuOpen = Boolean(profileMenuAnchor);
+  const themeToggleLabel = themeMode === "dark" ? "Switch to light mode" : "Switch to dark mode";
 
   useEffect(() => {
     setMobileMenuOpen(false);
-    setMobileAlertsOpen(false);
+    setProfileMenuAnchor(null);
   }, [location.pathname, location.search]);
 
   useEffect(() => {
-    if (!mobileMenuOpen && !mobileAlertsOpen) {
+    if (!mobileMenuOpen) {
       return undefined;
     }
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [mobileAlertsOpen, mobileMenuOpen]);
+  }, [mobileMenuOpen]);
+
+  let content: React.ReactNode;
 
   if (!payload && authRequired) {
-    return (
+    content = (
       <LoginPage
         syncState={syncState}
         onLogin={loginUser}
         onActivateSuperadmin={activateSuperadminPassword}
       />
     );
-  }
-
-  if (!payload) {
-    return <LoadingScreen />;
-  }
-
-  if (payload.initialization.required) {
-    return <InitializationPage syncState={syncState} onInitialize={initializeApp} />;
-  }
-
-  const { snapshot, currentUser } = payload;
-  const visibleModules = MODULES.filter((module) => canAccessModule(currentUser, module.key));
-  const defaultPath = visibleModules[0] ? moduleEntryPath(visibleModules[0].key) : "/";
-  const viewingProfile = location.pathname.startsWith("/profile");
-  const activeModule =
-    visibleModules.find((module) =>
-      moduleIsActive(location.pathname, module.path),
-    ) ?? visibleModules[0];
-  const activeSubpage = Object.values(MODULE_SUBPAGES)
-    .flat()
-    .find((subpage) => subpage.path === location.pathname);
-  const activeView = viewingProfile ? PROFILE_VIEW : activeModule;
-  const resolvedActiveView =
-    viewingProfile
+  } else if (!payload) {
+    content = <LoadingScreen />;
+  } else if (payload.initialization.required) {
+    content = <InitializationPage syncState={syncState} onInitialize={initializeApp} />;
+  } else {
+    const { snapshot, currentUser } = payload;
+    const visibleModules = MODULES.filter((module) => canAccessModule(currentUser, module.key));
+    const defaultPath = visibleModules[0] ? moduleEntryPath(visibleModules[0].key) : "/";
+    const viewingProfile = location.pathname.startsWith("/profile");
+    const activeModule = visibleModules.find((module) => moduleIsActive(location.pathname, module.path)) ?? visibleModules[0];
+    const activeSubpage = Object.values(MODULE_SUBPAGES).flat().find((subpage) => subpage.path === location.pathname);
+    const resolvedActiveView = viewingProfile
       ? PROFILE_VIEW
       : activeSubpage
         ? { label: activeSubpage.label, description: activeSubpage.description }
-        : activeView;
-  const themeToggleLabel = themeMode === "dark" ? "Switch to light mode" : "Switch to dark mode";
-  const assignedCodes = snapshot.locations
-    .filter((locationEntry) => currentUser.assignedLocationIds.includes(locationEntry.id))
-    .map((locationEntry) => locationEntry.code)
-    .join(", ");
-  const allAlerts = inventoryAlerts(snapshot);
-  const filteredMobileAlerts =
-    mobileAlertFilter === "all"
-      ? allAlerts
-      : mobileAlertFilter === "low-stock"
-        ? lowStockAlerts(snapshot)
-        : mobileAlertFilter === "near-expiry"
-          ? nearExpiryAlerts(snapshot)
-          : expiredAlerts(snapshot);
-  const activeInventorySection = location.pathname.startsWith("/inventory")
-    ? location.pathname.split("/")[2] ?? "grn"
-    : null;
-  const availableOperationShortcuts = OPERATION_SHORTCUTS.filter((shortcut) =>
-    can(currentUser, shortcut.permission),
-  );
+        : activeModule;
+    const assignedCodes = snapshot.locations
+      .filter((locationEntry) => currentUser.assignedLocationIds.includes(locationEntry.id))
+      .map((locationEntry) => locationEntry.code)
+      .join(", ");
+    const activeAlertsCount = inventoryAlerts(snapshot).length;
+    const mobileRoutes = visibleModules
+      .map((module) => ({
+        key: module.key,
+        label: module.key === "inventoryOps" ? "Ops" : module.label,
+        to: moduleEntryPath(module.key),
+        end: module.path === "/",
+        icon: MODULE_ICONS[module.key],
+      }))
+      .filter((entry, index, array) => array.findIndex((candidate) => candidate.to === entry.to) === index)
+      .slice(0, 3);
 
-  if (visibleModules.length === 0) {
-    return (
-      <div className="loading-screen">
-        <div className="loading-card">
-          <p className="eyebrow">Access Required</p>
-          <h1>No modules are assigned to this user</h1>
-          <p>Update the selected role permissions in Administration to continue.</p>
-        </div>
-      </div>
-    );
-  }
+    if (visibleModules.length === 0) {
+      content = (
+        <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", p: 3 }}>
+          <Paper sx={{ width: "min(560px, 100%)", p: { xs: 3, sm: 4 }, borderRadius: 4 }}>
+            <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+              Access Required
+            </Typography>
+            <Typography variant="h4" sx={{ mt: 1 }}>
+              No modules are assigned to this user
+            </Typography>
+            <Typography variant="body1" color="text.secondary" sx={{ mt: 1.5 }}>
+              Update the selected role permissions in Administration to continue.
+            </Typography>
+          </Paper>
+        </Box>
+      );
+    } else {
+      const desktopStatusChips = [
+        { key: "online", label: syncState.online ? "Online" : "Offline mode", color: syncState.online ? "success" : "warning" },
+        { key: "realtime", label: `Realtime ${syncState.websocket}`, color: syncState.websocket === "connected" ? "success" : "default" },
+        { key: "queue", label: `Queue ${syncState.queued}`, color: syncState.queued > 0 ? "primary" : "default" },
+        { key: "sync", label: `Last sync ${syncState.lastSyncedAt ? formatDateTime(syncState.lastSyncedAt) : "Waiting"}`, color: "default" },
+      ] as const;
 
-  const mobileRouteCandidates: Array<{
-    key: string;
-    label: string;
-    to: string;
-    end?: boolean;
-    icon: typeof DashboardIcon;
-  }> = [];
+      const renderAvatarTrigger = (size: number) => (
+        <Tooltip title="Account menu">
+          <IconButton
+            aria-label="Open profile menu"
+            onClick={(event) => setProfileMenuAnchor(event.currentTarget)}
+            sx={{ p: 0.5, borderRadius: 999, borderColor: alpha(muiTheme.palette.primary.main, 0.18) }}
+          >
+            <Avatar
+              sx={{
+                width: size,
+                height: size,
+                bgcolor: alpha(muiTheme.palette.primary.main, 0.14),
+                color: "primary.main",
+                fontWeight: 800,
+              }}
+            >
+              {currentUser.name.charAt(0).toUpperCase()}
+            </Avatar>
+          </IconButton>
+        </Tooltip>
+      );
 
-  if (canAccessModule(currentUser, "dashboard")) {
-    mobileRouteCandidates.push({
-      key: "home",
-      label: "Home",
-      to: moduleEntryPath("dashboard"),
-      end: true,
-      icon: DashboardIcon,
-    });
-  }
+      const renderSidebar = () => (
+        <Stack sx={{ height: "100%", px: 2, py: 2 }} spacing={2}>
+          <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 0.75 }}>
+            <Box
+              sx={{
+                width: 44,
+                height: 44,
+                borderRadius: 2.5,
+                display: "grid",
+                placeItems: "center",
+                background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
+                color: "#ffffff",
+                fontFamily: '"Sora", sans-serif',
+                fontWeight: 800,
+                boxShadow: `0 16px 32px ${alpha(muiTheme.palette.primary.main, 0.28)}`,
+              }}
+            >
+              OS
+            </Box>
+            <Box minWidth={0}>
+              <Typography variant="subtitle1" fontWeight={800}>
+                OmniStock
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Restaurant warehouse system
+              </Typography>
+            </Box>
+          </Stack>
 
-  const stockModule =
-    visibleModules.find((module) => module.key === "masterData") ??
-    visibleModules.find((module) => module.key === "reports") ??
-    visibleModules.find((module) => module.key === "inventoryOps") ??
-    visibleModules.find((module) => module.key === "administration");
+          <Box sx={{ flex: 1, overflowY: "auto", pr: 0.5 }}>
+            <Stack spacing={2}>
+              {NAV_GROUPS.map((group) => {
+                const groupModules = visibleModules.filter((module) => group.moduleKeys.includes(module.key));
+                if (groupModules.length === 0) {
+                  return null;
+                }
 
-  if (stockModule) {
-    mobileRouteCandidates.push({
-      key: "stock",
-      label: "Stock",
-      to: moduleEntryPath(stockModule.key),
-      end: stockModule.path === "/",
-      icon: stockModule.key === "masterData" ? DataIcon : MODULE_ICONS[stockModule.key],
-    });
-  }
+                return (
+                  <Box key={group.label}>
+                    <Typography variant="overline" sx={{ px: 1.5, color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                      {group.label}
+                    </Typography>
+                    <List disablePadding sx={{ mt: 0.5 }}>
+                      {groupModules.map((module) => {
+                        const Icon = MODULE_ICONS[module.key];
+                        const subpages = MODULE_SUBPAGES[module.key] ?? [];
+                        const active = moduleIsActive(location.pathname, module.path);
+                        return (
+                          <Box key={module.key} sx={{ mb: 0.5 }}>
+                            <ListItemButton
+                              selected={active}
+                              onClick={() => {
+                                navigate(moduleEntryPath(module.key));
+                                setMobileMenuOpen(false);
+                              }}
+                              sx={{
+                                minHeight: 50,
+                                px: 1.5,
+                                bgcolor: active ? alpha(muiTheme.palette.primary.main, 0.16) : "transparent",
+                                color: active ? "primary.main" : "text.primary",
+                                "&.Mui-selected": { bgcolor: alpha(muiTheme.palette.primary.main, 0.16) },
+                              }}
+                            >
+                              <ListItemIcon sx={{ minWidth: 38, color: "inherit" }}>
+                                <Icon size={20} />
+                              </ListItemIcon>
+                              <ListItemText primary={module.label} primaryTypographyProps={{ fontWeight: 700 }} />
+                            </ListItemButton>
 
-  if (canAccessModule(currentUser, "inventoryOps")) {
-    mobileRouteCandidates.push({
-      key: "ops",
-      label: "Ops",
-      to: moduleEntryPath("inventoryOps"),
-      icon: InventoryIcon,
-    });
-  }
+                            {subpages.length > 0 ? (
+                              <Stack spacing={0.5} sx={{ ml: 3, mt: 0.5, pl: 1.5, borderLeft: `1px solid ${muiTheme.palette.divider}` }}>
+                                {subpages.map((subpage) => {
+                                  const subpageActive = location.pathname === subpage.path;
+                                  return (
+                                    <Button
+                                      key={subpage.path}
+                                      variant={subpageActive ? "contained" : "text"}
+                                      color={subpageActive ? "primary" : "inherit"}
+                                      onClick={() => {
+                                        navigate(subpage.path);
+                                        setMobileMenuOpen(false);
+                                      }}
+                                      sx={{
+                                        justifyContent: "flex-start",
+                                        minHeight: 36,
+                                        px: 1.25,
+                                        borderRadius: 2.5,
+                                        color: subpageActive ? "primary.contrastText" : "text.secondary",
+                                      }}
+                                    >
+                                      {subpage.label}
+                                    </Button>
+                                  );
+                                })}
+                              </Stack>
+                            ) : null}
+                          </Box>
+                        );
+                      })}
+                    </List>
+                  </Box>
+                );
+              })}
+            </Stack>
+          </Box>
 
-  mobileRouteCandidates.push({
-    key: "profile",
-    label: "Profile",
-    to: "/profile",
-    icon: ProfileIcon,
-  });
+          <Paper sx={{ p: 1.5, borderRadius: 3, bgcolor: muiTheme.palette.mode === "dark" ? alpha(muiTheme.palette.common.white, 0.03) : alpha(muiTheme.palette.primary.main, 0.03) }}>
+            <Stack spacing={1.25}>
+              <Box>
+                <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                  Current Role
+                </Typography>
+                <Typography variant="subtitle2" fontWeight={800}>
+                  {ROLE_PRESETS[currentUser.role].label}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {assignedCodes || "No locations assigned yet."}
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={1}>
+                <Tooltip title={themeToggleLabel}>
+                  <IconButton onClick={() => setThemeMode(resolvedTheme === "dark" ? "light" : "dark")} sx={{ width: 42, height: 42 }}>
+                    {resolvedTheme === "dark" ? <SunIcon size={18} /> : <MoonIcon size={18} />}
+                  </IconButton>
+                </Tooltip>
+                <Button fullWidth color="error" variant="outlined" startIcon={<LogoutIcon size={16} />} onClick={() => void logoutUser()}>
+                  Log out
+                </Button>
+              </Stack>
+            </Stack>
+          </Paper>
+        </Stack>
+      );
 
-  const seenMobileRoutes = new Set<string>();
-  const mobilePrimaryRoutes = mobileRouteCandidates.filter((candidate) => {
-    if (seenMobileRoutes.has(candidate.to)) {
-      return false;
+      content = (
+        <Box sx={{ minHeight: "100vh", display: "flex" }}>
+          {!isTabletOrMobile ? (
+            <Drawer variant="permanent" open PaperProps={{ sx: { width: 320, overflowX: "hidden" } }}>
+              {renderSidebar()}
+            </Drawer>
+          ) : null}
+
+          <Drawer
+            anchor="right"
+            open={mobileMenuOpen}
+            onClose={() => setMobileMenuOpen(false)}
+            PaperProps={{ sx: { width: "min(420px, 92vw)", borderTopLeftRadius: 28, borderBottomLeftRadius: 28, overflow: "hidden" } }}
+          >
+            <Box sx={{ px: 2, pt: 2, display: "flex", justifyContent: "flex-end" }}>
+              <IconButton onClick={() => setMobileMenuOpen(false)}>
+                <CloseIcon size={18} />
+              </IconButton>
+            </Box>
+            {renderSidebar()}
+          </Drawer>
+
+          <Box component="main" sx={{ flex: 1, minWidth: 0, ml: !isTabletOrMobile ? "320px" : 0, px: { xs: 2, sm: 2.5, lg: 3 }, pt: { xs: 2, sm: 2.5, lg: 3 }, pb: { xs: 12, lg: 4 } }}>
+            <Paper component="header" sx={{ position: "sticky", top: { xs: 12, lg: 20 }, zIndex: 10, mb: { xs: 2, lg: 2.5 }, px: 2, py: 1.5, borderRadius: 4, backdropFilter: "blur(18px)", bgcolor: muiTheme.palette.mode === "dark" ? alpha(muiTheme.palette.background.paper, 0.88) : alpha(muiTheme.palette.background.paper, 0.86) }}>
+              <Stack direction={{ xs: "column", lg: "row" }} alignItems={{ xs: "stretch", lg: "center" }} justifyContent="space-between" spacing={1.5}>
+                <Stack direction="row" alignItems="center" spacing={1.5} minWidth={0}>
+                  {isTabletOrMobile ? (
+                    <IconButton aria-label="Open navigation menu" onClick={() => setMobileMenuOpen(true)}>
+                      <MenuIcon size={20} />
+                    </IconButton>
+                  ) : null}
+                  <Box minWidth={0}>
+                    <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                      Live Workspace
+                    </Typography>
+                    <Typography variant="h5" sx={{ mt: 0.25 }} noWrap>
+                      {resolvedActiveView?.label ?? "OmniStock"}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }} noWrap>
+                      {resolvedActiveView?.description}
+                    </Typography>
+                  </Box>
+                </Stack>
+
+                <Stack direction="row" alignItems="center" spacing={1} justifyContent={{ xs: "flex-start", lg: "flex-end" }} flexWrap="wrap" useFlexGap>
+                  <Paper variant="outlined" sx={{ px: 1, py: 0.75, borderRadius: 3, bgcolor: muiTheme.palette.mode === "dark" ? alpha(muiTheme.palette.common.white, 0.02) : alpha(muiTheme.palette.primary.main, 0.03) }}>
+                    <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                      {desktopStatusChips.map((status) => (
+                        <Chip key={status.key} label={status.label} size="small" color={status.color} variant={status.color === "default" ? "outlined" : "filled"} />
+                      ))}
+                      <Chip label={`${activeAlertsCount} alerts`} size="small" color={activeAlertsCount > 0 ? "warning" : "default"} variant={activeAlertsCount > 0 ? "filled" : "outlined"} />
+                      {syncState.error ? <Chip label={syncState.error} size="small" color="error" variant="outlined" /> : null}
+                    </Stack>
+                  </Paper>
+
+                  <AppNotificationCenter snapshot={snapshot} />
+
+                  <Tooltip title={themeToggleLabel}>
+                    <IconButton onClick={() => setThemeMode(resolvedTheme === "dark" ? "light" : "dark")}>
+                      {resolvedTheme === "dark" ? <SunIcon size={18} /> : <MoonIcon size={18} />}
+                    </IconButton>
+                  </Tooltip>
+
+                  <Tooltip title="Sync now">
+                    <IconButton onClick={() => void refresh()}>
+                      <RefreshIcon size={18} />
+                    </IconButton>
+                  </Tooltip>
+
+                  {renderAvatarTrigger(isTabletOrMobile ? 34 : 36)}
+                </Stack>
+              </Stack>
+            </Paper>
+
+            <Menu
+              anchorEl={profileMenuAnchor}
+              open={profileMenuOpen}
+              onClose={() => setProfileMenuAnchor(null)}
+              anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+              transformOrigin={{ vertical: "top", horizontal: "right" }}
+              slotProps={{ paper: { sx: { width: { xs: "min(92vw, 320px)", sm: 320 }, borderRadius: 3.5, mt: 1, p: 0.5 } } }}
+            >
+              <Box sx={{ px: 1.5, py: 1.25 }}>
+                <Stack direction="row" spacing={1.25} alignItems="center">
+                  <Avatar sx={{ width: 44, height: 44, bgcolor: alpha(muiTheme.palette.primary.main, 0.14), color: "primary.main", fontWeight: 800 }}>
+                    {currentUser.name.charAt(0).toUpperCase()}
+                  </Avatar>
+                  <Box minWidth={0}>
+                    <Typography variant="subtitle2" fontWeight={800} noWrap>
+                      {currentUser.name}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" noWrap>
+                      @{currentUser.username} - {ROLE_PRESETS[currentUser.role].label}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" noWrap>
+                      {currentUser.email}
+                    </Typography>
+                  </Box>
+                </Stack>
+                <Stack spacing={0.5} sx={{ mt: 1.5 }}>
+                  <Chip size="small" variant="outlined" label={assignedCodes || "No assigned locations"} sx={{ justifyContent: "flex-start" }} />
+                  <Chip size="small" variant="outlined" label={`Last active ${formatDateTime(currentUser.lastSeenAt)}`} sx={{ justifyContent: "flex-start" }} />
+                </Stack>
+              </Box>
+
+              <Divider />
+
+              <MenuItem onClick={() => { setProfileMenuAnchor(null); navigate("/profile"); }}>
+                <ListItemIcon sx={{ minWidth: 34 }}>
+                  <ProfileIcon size={16} />
+                </ListItemIcon>
+                <ListItemText primary="Edit profile" />
+              </MenuItem>
+              <MenuItem onClick={() => { setProfileMenuAnchor(null); void refresh(); }}>
+                <ListItemIcon sx={{ minWidth: 34 }}>
+                  <RefreshIcon size={16} />
+                </ListItemIcon>
+                <ListItemText primary="Sync now" />
+              </MenuItem>
+              <MenuItem onClick={() => { setProfileMenuAnchor(null); void logoutUser(); }} sx={{ color: "error.main" }}>
+                <ListItemIcon sx={{ minWidth: 34, color: "inherit" }}>
+                  <LogoutIcon size={16} />
+                </ListItemIcon>
+                <ListItemText primary="Log out" />
+              </MenuItem>
+            </Menu>
+
+            <Box sx={{ mt: 0.5 }}>
+              <Routes>
+                {canAccessModule(currentUser, "dashboard") ? <Route path="/" element={<DashboardPage snapshot={snapshot} currentUser={currentUser} syncState={syncState} />} /> : null}
+                {canAccessModule(currentUser, "inventoryOps") ? (
+                  <>
+                    <Route path="/inventory" element={<Navigate to="/inventory/grn" replace />} />
+                    <Route path="/inventory/*" element={<InventoryOpsPage snapshot={snapshot} currentUser={currentUser} syncState={syncState} onCreateOperation={createOperation} />} />
+                  </>
+                ) : null}
+                {canAccessModule(currentUser, "masterData") ? (
+                  <>
+                    <Route path="/master-data" element={<Navigate to="/master-data/items" replace />} />
+                    <Route path="/master-data/*" element={<MasterDataPage snapshot={snapshot} currentUser={currentUser} onCreateMarketPrice={createMarketPrice} />} />
+                  </>
+                ) : null}
+                {canAccessModule(currentUser, "reports") ? (
+                  <>
+                    <Route path="/reports" element={<Navigate to="/reports/analytics" replace />} />
+                    <Route path="/reports/*" element={<ReportsPage snapshot={snapshot} currentUser={currentUser} />} />
+                  </>
+                ) : null}
+                {canAccessModule(currentUser, "administration") ? (
+                  <>
+                    <Route path="/administration" element={<Navigate to="/administration/users" replace />} />
+                    <Route path="/administration/*" element={<AdminPage snapshot={snapshot} currentUser={currentUser} onCreateUser={createUserAccount} onUpdateUser={updateUserAccount} onResetUserPassword={resetAccountPassword} onRemoveUser={removeUserAccount} />} />
+                  </>
+                ) : null}
+                <Route path="/profile" element={<ProfilePage snapshot={snapshot} currentUser={currentUser} onUpdateProfile={updateProfile} onChangePassword={changeProfilePassword} />} />
+                <Route path="*" element={<Navigate to={defaultPath} replace />} />
+              </Routes>
+            </Box>
+          </Box>
+
+          {isTabletOrMobile ? (
+            <Paper sx={{ position: "fixed", left: 16, right: 16, bottom: 16, zIndex: 20, borderRadius: 3.5, p: 0.75, backdropFilter: "blur(18px)", bgcolor: muiTheme.palette.mode === "dark" ? alpha(muiTheme.palette.background.paper, 0.9) : alpha(muiTheme.palette.background.paper, 0.9) }}>
+              <Stack direction="row" spacing={0.75}>
+                {mobileRoutes.map((item) => {
+                  const Icon = item.icon;
+                  const active = item.end ? location.pathname === item.to : moduleIsActive(location.pathname, item.to);
+                  return (
+                    <Button key={item.key} fullWidth variant={active ? "contained" : "text"} color={active ? "primary" : "inherit"} onClick={() => navigate(item.to)} sx={{ minHeight: 52, display: "flex", flexDirection: "column", gap: 0.5, borderRadius: 2.5, color: active ? "primary.contrastText" : "text.secondary" }}>
+                      <Icon size={18} />
+                      <Typography variant="caption" sx={{ fontWeight: 800 }}>
+                        {item.label}
+                      </Typography>
+                    </Button>
+                  );
+                })}
+                <Button fullWidth variant={viewingProfile ? "contained" : "text"} color={viewingProfile ? "primary" : "inherit"} onClick={() => navigate("/profile")} sx={{ minHeight: 52, display: "flex", flexDirection: "column", gap: 0.5, borderRadius: 2.5, color: viewingProfile ? "primary.contrastText" : "text.secondary" }}>
+                  <ProfileIcon size={18} />
+                  <Typography variant="caption" sx={{ fontWeight: 800 }}>
+                    Profile
+                  </Typography>
+                </Button>
+              </Stack>
+            </Paper>
+          ) : null}
+        </Box>
+      );
     }
-
-    seenMobileRoutes.add(candidate.to);
-    return true;
-  });
-
-  const mobileNavRoutes = mobilePrimaryRoutes.slice(0, 3);
-
-  function openMobileMenu() {
-    setMobileAlertsOpen(false);
-    setMobileMenuOpen(true);
-  }
-
-  function toggleMobileAlerts() {
-    setMobileMenuOpen(false);
-    setMobileAlertsOpen((current) => !current);
-  }
-
-  function handleOperationShortcut(slug: string) {
-    navigate(`/inventory/${slug}`);
-    setMobileMenuOpen(false);
   }
 
   return (
-    <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
-      <aside className="app-sidebar">
-        <div className="app-brand">
-          <div className="app-brand-mark">OS</div>
-          <div className="app-brand-copy">
-            <span className="app-brand-name">OmniStock</span>
-            <small>Warehouse Management</small>
-          </div>
-        </div>
-
-        <div className="sidebar-groups">
-          {NAV_GROUPS.map((group) => {
-            const groupModules = visibleModules.filter((module) => group.moduleKeys.includes(module.key));
-            if (groupModules.length === 0) {
-              return null;
-            }
-
-            return (
-              <div key={group.label} className="sidebar-group">
-                <p className="sidebar-group-label">{group.label}</p>
-              <div className="sidebar-group-links">
-                  {groupModules.map((module) => {
-                    const Icon = MODULE_ICONS[module.key];
-                    const subpages = MODULE_SUBPAGES[module.key] ?? [];
-                    const isModuleCurrent = moduleIsActive(location.pathname, module.path);
-                    return (
-                      <div key={module.key} className="sidebar-module">
-                        <NavLink
-                          to={moduleEntryPath(module.key)}
-                          className={isModuleCurrent ? "sidebar-link active" : "sidebar-link"}
-                          end={module.path === "/"}
-                        >
-                          <Icon size={20} className="sidebar-link-icon" />
-                          <span className="sidebar-link-label">{module.label}</span>
-                          <span className="sidebar-link-indicator" />
-                        </NavLink>
-
-                        {!sidebarCollapsed && subpages.length > 0 ? (
-                          <div className="sidebar-sub-links">
-                            {subpages.map((subpage) => (
-                              <NavLink
-                                key={subpage.path}
-                                to={subpage.path}
-                                className={({ isActive }) =>
-                                  isActive ? "sidebar-sub-link active" : "sidebar-sub-link"
-                                }
-                                end
-                              >
-                                <span className="sidebar-sub-link-dot" />
-                                <span>{subpage.label}</span>
-                              </NavLink>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="sidebar-footer">
-          <div className="sidebar-role-card">
-            <span className="sidebar-role-title">Current Role</span>
-            <strong>{ROLE_PRESETS[currentUser.role].label}</strong>
-            <p>{assignedCodes || "No locations assigned yet."}</p>
-          </div>
-
-          <div className="sidebar-footer-actions">
-            <button
-              type="button"
-              className="sidebar-footer-button"
-              onClick={() => setThemeMode(themeMode === "dark" ? "light" : "dark")}
-              aria-label={themeToggleLabel}
-              title={themeToggleLabel}
-            >
-              {themeMode === "dark" ? <SunIcon size={18} /> : <MoonIcon size={18} />}
-            </button>
-
-            <button
-              type="button"
-              className="sidebar-footer-button sidebar-footer-button-danger"
-              onClick={() => void logoutUser()}
-            >
-              <LogoutIcon size={18} />
-              <span>Log out</span>
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      <div className="workspace">
-        <header className="mobile-header">
-          <div className="mobile-header-brand">
-            <div className="app-brand-mark mobile-brand-mark">OS</div>
-            <div className="mobile-header-copy">
-              <strong>OmniStock</strong>
-              <small>{activeView?.label ?? "Workspace"}</small>
-            </div>
-          </div>
-
-          <div className="mobile-header-actions">
-            <button
-              type="button"
-              className={`mobile-sync-chip ${syncState.online ? "is-online" : "is-offline"}`}
-              onClick={() => void refresh()}
-            >
-              <span className="mobile-sync-dot" />
-              <span>{syncState.online ? "Live" : "Offline"}</span>
-              <small>{syncState.queued}</small>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-header-button"
-              onClick={openMobileMenu}
-              aria-expanded={mobileMenuOpen}
-              aria-label="Open navigation menu"
-            >
-              <MenuIcon size={20} />
-            </button>
-          </div>
-        </header>
-
-        {mobileMenuOpen ? (
-          <button
-            type="button"
-            className="mobile-scrim"
-            aria-label="Close menu"
-            onClick={() => setMobileMenuOpen(false)}
-          />
-        ) : null}
-
-        {mobileAlertsOpen ? (
-          <button
-            type="button"
-            className="mobile-scrim"
-            aria-label="Close alerts"
-            onClick={() => setMobileAlertsOpen(false)}
-          />
-        ) : null}
-
-        <aside className={`mobile-drawer${mobileMenuOpen ? " open" : ""}`} aria-hidden={!mobileMenuOpen}>
-          <div className="mobile-drawer-header">
-            <div className="mobile-drawer-user">
-              <div className="workspace-avatar">{currentUser.name.charAt(0).toUpperCase()}</div>
-              <div>
-                <strong>{currentUser.name}</strong>
-                <small>
-                  @{currentUser.username} - {ROLE_PRESETS[currentUser.role].label}
-                </small>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              className="mobile-header-button"
-              aria-label="Close menu"
-              onClick={() => setMobileMenuOpen(false)}
-            >
-              <CloseIcon size={20} />
-            </button>
-          </div>
-
-          <div className="mobile-drawer-meta">
-            <span className="status-chip neutral">{assignedCodes || "No locations assigned yet."}</span>
-            <span className="status-chip neutral">
-              Last sync: {syncState.lastSyncedAt ? formatDateTime(syncState.lastSyncedAt) : "Waiting"}
-            </span>
-          </div>
-
-          <div className="mobile-drawer-body">
-            <section className="mobile-drawer-section">
-              <p className="mobile-drawer-label">Navigation</p>
-              <div className="mobile-drawer-list">
-                {visibleModules.map((module) => {
-                  const Icon = MODULE_ICONS[module.key];
-                  const subpages = MODULE_SUBPAGES[module.key] ?? [];
-                  const isModuleCurrent = moduleIsActive(location.pathname, module.path);
-                  return (
-                    <div key={module.key} className="mobile-drawer-module">
-                      <NavLink
-                        to={moduleEntryPath(module.key)}
-                        className={isModuleCurrent ? "mobile-drawer-link active" : "mobile-drawer-link"}
-                        end={module.path === "/"}
-                        onClick={() => setMobileMenuOpen(false)}
-                      >
-                        <Icon size={18} />
-                        <span>{module.label}</span>
-                      </NavLink>
-
-                      {subpages.length > 0 ? (
-                        <div className="mobile-drawer-sub-links">
-                          {subpages.map((subpage) => (
-                            <NavLink
-                              key={subpage.path}
-                              to={subpage.path}
-                              className={({ isActive }) =>
-                                isActive
-                                  ? "mobile-drawer-sub-link active"
-                                  : "mobile-drawer-sub-link"
-                              }
-                              end
-                              onClick={() => setMobileMenuOpen(false)}
-                            >
-                              <span className="mobile-drawer-sub-dot" />
-                              <span>{subpage.label}</span>
-                            </NavLink>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-
-                <NavLink
-                  to="/profile"
-                  className={({ isActive }) =>
-                    isActive ? "mobile-drawer-link active" : "mobile-drawer-link"
-                  }
-                  onClick={() => setMobileMenuOpen(false)}
-                >
-                  <ProfileIcon size={18} />
-                  <span>My Profile</span>
-                </NavLink>
-              </div>
-            </section>
-
-            {availableOperationShortcuts.length > 0 ? (
-              <section className="mobile-drawer-section">
-                <p className="mobile-drawer-label">Operations</p>
-                <div className="mobile-drawer-list">
-                  {availableOperationShortcuts.map((shortcut) => {
-                    const Icon = shortcut.icon;
-                    const isActive =
-                      location.pathname.startsWith("/inventory") &&
-                      activeInventorySection === shortcut.slug;
-
-                    return (
-                      <button
-                        key={shortcut.kind}
-                        type="button"
-                        className={isActive ? "mobile-drawer-link active" : "mobile-drawer-link"}
-                        onClick={() => handleOperationShortcut(shortcut.slug)}
-                      >
-                        <Icon size={18} />
-                        <div className="mobile-drawer-copy">
-                          <span>{shortcut.label}</span>
-                          <small>{shortcut.description}</small>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-            ) : null}
-          </div>
-
-          <div className="mobile-drawer-footer">
-            <button type="button" className="mobile-drawer-action" onClick={() => void refresh()}>
-              <RefreshIcon size={18} />
-              <span>Sync now</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-drawer-action"
-              onClick={() => setThemeMode(themeMode === "dark" ? "light" : "dark")}
-            >
-              {themeMode === "dark" ? <SunIcon size={18} /> : <MoonIcon size={18} />}
-              <span>{themeMode === "dark" ? "Light mode" : "Dark mode"}</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-drawer-action mobile-drawer-action-danger"
-              onClick={() => void logoutUser()}
-            >
-              <LogoutIcon size={18} />
-              <span>Logout</span>
-            </button>
-          </div>
-        </aside>
-
-        <section className={`mobile-alert-sheet${mobileAlertsOpen ? " open" : ""}`}>
-          <div className="mobile-alert-sheet-header">
-            <div>
-              <p className="eyebrow">Alerts</p>
-              <h2>Inventory Notifications</h2>
-            </div>
-            <button
-              type="button"
-              className="mobile-header-button"
-              aria-label="Close alerts"
-              onClick={() => setMobileAlertsOpen(false)}
-            >
-              <CloseIcon size={20} />
-            </button>
-          </div>
-
-          <div className="chip-row">
-            {(["all", "low-stock", "near-expiry", "expired"] as AlertFilter[]).map((option) => (
-              <button
-                key={option}
-                type="button"
-                className={mobileAlertFilter === option ? "chip-button active" : "chip-button"}
-                onClick={() => setMobileAlertFilter(option)}
-              >
-                {option === "all" ? "All" : option.replace("-", " ")}
-              </button>
-            ))}
-          </div>
-
-          <div className="notification-list mobile-alert-list">
-            {filteredMobileAlerts.length > 0 ? (
-              filteredMobileAlerts.slice(0, 10).map((alert) => (
-                <div key={alert.id} className="notification-item">
-                  <div className="notification-icon">
-                    {alert.kind === "low-stock" ? <AlertIcon size={16} /> : <BellIcon size={16} />}
-                  </div>
-                  <div className="notification-copy">
-                    <strong>{alert.itemName}</strong>
-                    <p>{alert.message}</p>
-                    <small>
-                      {alert.locationName}
-                      {alert.expiryDate ? ` - ${formatDateTime(alert.expiryDate)}` : ""}
-                    </small>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="empty-copy">No alerts match this filter right now.</p>
-            )}
-          </div>
-        </section>
-
-        <header className="workspace-header">
-          <div className="workspace-header-main">
-            <button
-              type="button"
-              className="toolbar-icon-button"
-              onClick={() => setSidebarCollapsed((current) => !current)}
-              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            >
-              {sidebarCollapsed ? <MenuIcon size={18} /> : <CollapseIcon size={18} />}
-            </button>
-
-            <div>
-              <p className="eyebrow">Live Workspace</p>
-              <h1 className="workspace-title">{resolvedActiveView?.label ?? "OmniStock"}</h1>
-              <p className="workspace-copy">{resolvedActiveView?.description}</p>
-            </div>
-          </div>
-
-          <div className="workspace-toolbar">
-            <AppNotificationCenter snapshot={snapshot} />
-
-            <button
-              type="button"
-              className="toolbar-icon-button"
-              onClick={() => setThemeMode(themeMode === "dark" ? "light" : "dark")}
-              aria-label={themeToggleLabel}
-              title={themeToggleLabel}
-            >
-              {themeMode === "dark" ? <SunIcon size={18} /> : <MoonIcon size={18} />}
-            </button>
-
-            <button type="button" className="toolbar-button" onClick={() => void refresh()}>
-              <RefreshIcon size={16} />
-              <span>Sync now</span>
-            </button>
-
-            <NavLink
-              to="/profile"
-              className={({ isActive }) =>
-                isActive ? "toolbar-button toolbar-button-active" : "toolbar-button"
-              }
-            >
-              <ProfileIcon size={16} />
-              <span>Profile</span>
-            </NavLink>
-
-            <NavLink to="/profile" className="workspace-user-card">
-              <div className="workspace-user-copy">
-                <strong>{currentUser.name}</strong>
-                <small>
-                  @{currentUser.username} - {ROLE_PRESETS[currentUser.role].label}
-                </small>
-              </div>
-              <div className="workspace-avatar">{currentUser.name.charAt(0).toUpperCase()}</div>
-            </NavLink>
-          </div>
-        </header>
-
-        <section className="sync-strip">
-          <span className={`sync-pill ${syncState.online ? "sync-pill-positive" : "sync-pill-warning"}`}>
-            {syncState.online ? "Online" : "Offline mode"}
-          </span>
-          <span
-            className={`sync-pill ${
-              syncState.websocket === "connected" ? "sync-pill-positive" : "sync-pill-neutral"
-            }`}
-          >
-            Realtime: {syncState.websocket}
-          </span>
-          <span className="sync-pill sync-pill-neutral">Queued: {syncState.queued}</span>
-          <span className="sync-pill sync-pill-neutral">Source: {syncState.source}</span>
-          <span className="sync-pill sync-pill-neutral">
-            Last sync: {syncState.lastSyncedAt ? formatDateTime(syncState.lastSyncedAt) : "Waiting"}
-          </span>
-          {syncState.error ? <span className="sync-pill sync-pill-warning">{syncState.error}</span> : null}
-        </section>
-
-        <main className="content">
-          <Routes>
-            {canAccessModule(currentUser, "dashboard") ? (
-              <Route
-                path="/"
-                element={
-                  <DashboardPage
-                    snapshot={snapshot}
-                    currentUser={currentUser}
-                    syncState={syncState}
-                  />
-                }
-              />
-            ) : null}
-
-            {canAccessModule(currentUser, "inventoryOps") ? (
-              <>
-                <Route path="/inventory" element={<Navigate to="/inventory/grn" replace />} />
-                <Route
-                  path="/inventory/*"
-                  element={
-                    <InventoryOpsPage
-                      snapshot={snapshot}
-                      currentUser={currentUser}
-                      syncState={syncState}
-                      onCreateOperation={createOperation}
-                    />
-                  }
-                />
-              </>
-            ) : null}
-
-            {canAccessModule(currentUser, "masterData") ? (
-              <>
-                <Route path="/master-data" element={<Navigate to="/master-data/items" replace />} />
-                <Route
-                  path="/master-data/*"
-                  element={
-                    <MasterDataPage
-                      snapshot={snapshot}
-                      currentUser={currentUser}
-                      onCreateMarketPrice={createMarketPrice}
-                    />
-                  }
-                />
-              </>
-            ) : null}
-
-            {canAccessModule(currentUser, "reports") ? (
-              <>
-                <Route path="/reports" element={<Navigate to="/reports/analytics" replace />} />
-                <Route
-                  path="/reports/*"
-                  element={<ReportsPage snapshot={snapshot} currentUser={currentUser} />}
-                />
-              </>
-            ) : null}
-
-            {canAccessModule(currentUser, "administration") ? (
-              <>
-                <Route
-                  path="/administration"
-                  element={<Navigate to="/administration/users" replace />}
-                />
-                <Route
-                  path="/administration/*"
-                  element={
-                    <AdminPage
-                      snapshot={snapshot}
-                      currentUser={currentUser}
-                      onCreateUser={createUserAccount}
-                      onUpdateUser={updateUserAccount}
-                      onResetUserPassword={resetAccountPassword}
-                      onRemoveUser={removeUserAccount}
-                    />
-                  }
-                />
-              </>
-            ) : null}
-
-            <Route
-              path="/profile"
-              element={
-                <ProfilePage
-                  snapshot={snapshot}
-                  currentUser={currentUser}
-                  onUpdateProfile={updateProfile}
-                  onChangePassword={changeProfilePassword}
-                />
-              }
-            />
-
-            <Route path="*" element={<Navigate to={defaultPath} replace />} />
-          </Routes>
-        </main>
-      </div>
-
-      <nav className="mobile-nav" aria-label="Mobile navigation">
-        {mobileNavRoutes.map((item) => {
-          const Icon = item.icon;
-          return (
-            <NavLink
-              key={item.key}
-              to={item.to}
-              className={({ isActive }) => (isActive ? "mobile-link active" : "mobile-link")}
-              end={item.end}
-            >
-              <Icon size={20} />
-              <span>{item.label}</span>
-            </NavLink>
-          );
-        })}
-
-        <button
-          type="button"
-          className={mobileAlertsOpen ? "mobile-link active" : "mobile-link"}
-          onClick={toggleMobileAlerts}
-        >
-          <BellIcon size={20} />
-          <span>Alerts</span>
-          {allAlerts.length > 0 ? (
-            <small className="mobile-link-badge">{allAlerts.length > 9 ? "9+" : allAlerts.length}</small>
-          ) : null}
-        </button>
-      </nav>
-    </div>
+    <ThemeProvider theme={muiTheme}>
+      <CssBaseline />
+      {content}
+    </ThemeProvider>
   );
 }

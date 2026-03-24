@@ -1,4 +1,16 @@
 import { useEffect, useState } from "react";
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  Paper,
+  Stack,
+  TextField,
+  Typography,
+  alpha,
+  useTheme,
+} from "@mui/material";
 import { ROLE_PRESETS } from "../../shared/permissions";
 import type {
   ChangeOwnPasswordRequest,
@@ -21,6 +33,7 @@ export function ProfilePage({
   onUpdateProfile,
   onChangePassword,
 }: Props) {
+  const theme = useTheme();
   const [name, setName] = useState(currentUser.name);
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -64,11 +77,7 @@ export function ProfilePage({
         throw new Error("Your new password confirmation does not match.");
       }
 
-      await onChangePassword({
-        oldPassword,
-        newPassword,
-      });
-
+      await onChangePassword({ oldPassword, newPassword });
       setOldPassword("");
       setNewPassword("");
       setConfirmPassword("");
@@ -81,166 +90,173 @@ export function ProfilePage({
   }
 
   return (
-    <div className="page-stack">
-      <section className="hero-panel">
-        <div>
-          <p className="eyebrow">My Profile</p>
-          <h1>{currentUser.name}</h1>
-          <p className="hero-copy">
-            Update your display information here. Your username stays fixed for self-service use,
-            your email account remains separate, and password changes require your current password
-            before a new one is saved.
-          </p>
-        </div>
+    <Stack spacing={2.5}>
+      <Paper
+        sx={{
+          p: { xs: 2.5, md: 3 },
+          borderRadius: 4,
+          background:
+            theme.palette.mode === "dark"
+              ? alpha(theme.palette.background.paper, 0.88)
+              : alpha(theme.palette.background.paper, 0.92),
+        }}
+      >
+        <Stack
+          direction={{ xs: "column", lg: "row" }}
+          justifyContent="space-between"
+          spacing={2}
+        >
+          <Box>
+            <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+              My Profile
+            </Typography>
+            <Typography variant="h4" sx={{ mt: 0.5 }}>
+              {currentUser.name}
+            </Typography>
+            <Typography variant="body1" color="text.secondary" sx={{ mt: 1.25, maxWidth: 720 }}>
+              Update your display information here. Your username stays fixed for self-service use,
+              your email account remains separate, and password changes require your current password
+              before a new one is saved.
+            </Typography>
+          </Box>
 
-        <div className="hero-meta">
-          <div className="meta-card">
-            <span>Role</span>
-            <strong>{ROLE_PRESETS[currentUser.role].label}</strong>
-            <small>{ROLE_PRESETS[currentUser.role].description}</small>
-          </div>
-          <div className="meta-card">
-            <span>Assigned sites</span>
-            <strong>{assignedLocations.length}</strong>
-            <small>
-              {assignedLocations.map((location) => location.code).join(", ") || "No assigned sites"}
-            </small>
-          </div>
-        </div>
-      </section>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25} useFlexGap flexWrap="wrap">
+            <Chip label={ROLE_PRESETS[currentUser.role].label} color="primary" />
+            <Chip
+              variant="outlined"
+              label={`${assignedLocations.length} assigned site${assignedLocations.length === 1 ? "" : "s"}`}
+            />
+            <Chip variant="outlined" label={`Last active ${formatDateTime(currentUser.lastSeenAt)}`} />
+          </Stack>
+        </Stack>
+      </Paper>
 
-      <section className="split-grid">
-        <article className="panel">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">Personal Details</p>
-              <h2>Profile information</h2>
-            </div>
-          </div>
+      {feedback ? <Alert severity="info">{feedback}</Alert> : null}
 
-          <form className="page-stack" onSubmit={handleProfileSubmit}>
-            <div className="form-grid">
-              <label className="field">
-                <span>Display name</span>
-                <input value={name} onChange={(event) => setName(event.target.value)} />
-              </label>
+      <Box
+        sx={{
+          display: "grid",
+          gap: 2,
+          gridTemplateColumns: {
+            xs: "1fr",
+            xl: "minmax(0, 1fr) minmax(0, 1fr)",
+          },
+        }}
+      >
+        <Paper sx={{ p: { xs: 2.25, md: 3 }, borderRadius: 4 }}>
+          <Stack spacing={2}>
+            <Box>
+              <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                Personal Details
+              </Typography>
+              <Typography variant="h6" sx={{ mt: 0.5 }}>
+                Profile information
+              </Typography>
+            </Box>
 
-              <label className="field">
-                <span>Username</span>
-                <input value={currentUser.username} readOnly disabled />
-              </label>
+            <Box component="form" onSubmit={handleProfileSubmit}>
+              <Stack spacing={2}>
+                <TextField label="Display name" value={name} onChange={(event) => setName(event.target.value)} fullWidth />
+                <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" } }}>
+                  <TextField label="Username" value={currentUser.username} fullWidth disabled />
+                  <TextField label="Email" value={currentUser.email} fullWidth disabled />
+                </Box>
+                <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" } }}>
+                  <TextField label="Role" value={ROLE_PRESETS[currentUser.role].label} fullWidth disabled />
+                  <TextField label="Last active" value={formatDateTime(currentUser.lastSeenAt)} fullWidth disabled />
+                </Box>
 
-              <label className="field">
-                <span>Email</span>
-                <input value={currentUser.email} readOnly disabled />
-              </label>
+                <Stack direction="row" justifyContent="flex-start">
+                  <Button type="submit" variant="contained" disabled={submitting === "profile"}>
+                    {submitting === "profile" ? "Saving..." : "Save profile"}
+                  </Button>
+                </Stack>
+              </Stack>
+            </Box>
+          </Stack>
+        </Paper>
 
-              <label className="field">
-                <span>Role</span>
-                <input value={ROLE_PRESETS[currentUser.role].label} readOnly disabled />
-              </label>
+        <Paper sx={{ p: { xs: 2.25, md: 3 }, borderRadius: 4 }}>
+          <Stack spacing={2}>
+            <Box>
+              <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                Security
+              </Typography>
+              <Typography variant="h6" sx={{ mt: 0.5 }}>
+                Change password
+              </Typography>
+            </Box>
 
-              <label className="field">
-                <span>Last active</span>
-                <input value={formatDateTime(currentUser.lastSeenAt)} readOnly disabled />
-              </label>
-            </div>
-
-            <div className="button-row">
-              <button
-                type="submit"
-                className="primary-button"
-                disabled={submitting === "profile"}
-              >
-                {submitting === "profile" ? "Saving..." : "Save profile"}
-              </button>
-            </div>
-          </form>
-        </article>
-
-        <article className="panel">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">Security</p>
-              <h2>Change password</h2>
-            </div>
-          </div>
-
-          <form className="page-stack" onSubmit={handlePasswordSubmit}>
-            <div className="form-grid">
-              <label className="field field-wide">
-                <span>Current password</span>
-                <input
+            <Box component="form" onSubmit={handlePasswordSubmit}>
+              <Stack spacing={2}>
+                <TextField
+                  label="Current password"
                   type="password"
                   value={oldPassword}
                   onChange={(event) => setOldPassword(event.target.value)}
                   autoComplete="current-password"
+                  fullWidth
                 />
-              </label>
+                <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" } }}>
+                  <TextField
+                    label="New password"
+                    type="password"
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                    placeholder="Minimum 8 characters"
+                    autoComplete="new-password"
+                    fullWidth
+                  />
+                  <TextField
+                    label="Confirm new password"
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    placeholder="Repeat the new password"
+                    autoComplete="new-password"
+                    fullWidth
+                  />
+                </Box>
 
-              <label className="field">
-                <span>New password</span>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(event) => setNewPassword(event.target.value)}
-                  placeholder="Minimum 8 characters"
-                  autoComplete="new-password"
+                <Stack direction="row" justifyContent="flex-start">
+                  <Button type="submit" variant="outlined" disabled={submitting === "password"}>
+                    {submitting === "password" ? "Updating..." : "Update password"}
+                  </Button>
+                </Stack>
+              </Stack>
+            </Box>
+          </Stack>
+        </Paper>
+      </Box>
+
+      <Paper sx={{ p: { xs: 2.25, md: 3 }, borderRadius: 4 }}>
+        <Stack spacing={1.5}>
+          <Box>
+            <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+              Assigned Locations
+            </Typography>
+            <Typography variant="h6" sx={{ mt: 0.5 }}>
+              Sites you can work with
+            </Typography>
+          </Box>
+
+          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+            {assignedLocations.length > 0 ? (
+              assignedLocations.map((location) => (
+                <Chip
+                  key={location.id}
+                  variant="outlined"
+                  label={`${location.code} - ${location.name}`}
                 />
-              </label>
-
-              <label className="field">
-                <span>Confirm new password</span>
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(event) => setConfirmPassword(event.target.value)}
-                  placeholder="Repeat the new password"
-                  autoComplete="new-password"
-                />
-              </label>
-            </div>
-
-            <div className="button-row">
-              <button
-                type="submit"
-                className="secondary-button"
-                disabled={submitting === "password"}
-              >
-                {submitting === "password" ? "Updating..." : "Update password"}
-              </button>
-            </div>
-          </form>
-        </article>
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">Assigned Locations</p>
-            <h2>Where you can operate</h2>
-          </div>
-        </div>
-        <div className="stack-list">
-          {assignedLocations.length > 0 ? (
-            assignedLocations.map((location) => (
-              <div key={location.id} className="list-row">
-                <div>
-                  <strong>{location.name}</strong>
-                  <p>
-                    {location.code} - {location.city}
-                  </p>
-                </div>
-                <span className="status-chip neutral">{location.type}</span>
-              </div>
-            ))
-          ) : (
-            <p className="empty-copy">No locations are currently assigned to your account.</p>
-          )}
-        </div>
-      </section>
-
-      {feedback ? <p className="feedback-copy">{feedback}</p> : null}
-    </div>
+              ))
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                No locations have been assigned to this profile yet.
+              </Typography>
+            )}
+          </Stack>
+        </Stack>
+      </Paper>
+    </Stack>
   );
 }
