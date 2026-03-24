@@ -32,7 +32,7 @@ OmniStock is a Cloudflare-ready warehouse inventory starter built with React and
 - `Manager`: operations, master data, reports, and activity audit.
 - `Worker`: dashboard plus inventory operations.
 
-The current starter uses a demo user switcher in the header so you can test permissions immediately. For production, wire this to Cloudflare Access, JWTs, or your identity provider and enforce the same permission map server-side.
+OmniStock now uses real username/email sign-in, password hashing, session cookies, superadmin user management, and per-user profile/password maintenance. For production, keep server-side permission enforcement aligned with the same role map used in the UI.
 
 ## Local Development
 
@@ -60,10 +60,21 @@ npm run build
 npm run deploy
 ```
 
+5. Apply D1 migrations before first production use:
+
+```bash
+npx wrangler d1 migrations apply stock --remote
+```
+
 ## Cloudflare Notes
 
-- `wrangler.toml` serves the Vite build from `dist/` and routes `/api/*` and `/ws` to the Worker first.
+- `wrangler.toml` serves the built static app from `dist/client` and routes `/api/*` and `/ws` to the Worker first.
 - The Cloudflare Vite plugin generates a deploy-ready config at `dist/omnistock/wrangler.json`, and the npm `preview` / `deploy` scripts target that verified output directly.
+- If Cloudflare asks for dashboard build settings, use:
+  - Install command: `npm ci`
+  - Build command: `npm run build`
+  - Output directory: `dist/client`
+  - Deploy command: `npx wrangler deploy --config dist/omnistock/wrangler.json`
 - The Durable Object is declared as `OmniStockHub` and uses a SQLite-backed migration.
 - The Worker currently persists the main demo snapshot and event log inside the Durable Object. For larger production deployments, you will likely split this into:
   - D1 for long-term relational storage and reporting
@@ -77,7 +88,6 @@ npm run deploy
 
 ## Important Next Steps For Production
 
-- Add real authentication and session validation.
 - Enforce role permissions inside the Worker, not only in the UI.
 - Add approval workflows for submitted GRN / GIN / transfer requests if posting should not be immediate.
 - Replace seeded demo data with persistent warehouse records.
