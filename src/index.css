@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+@media print {
+  body {
+    background-color: white !important;
+    color: black !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Hide navigation, sidebar, and non-essential UI */
+  nav, aside, .no-print, button, input, select, textarea {
+    display: none !important;
+  }
+
+  /* Ensure main content takes full width */
+  main, .print-full-width {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+  }
+
+  /* Print only block support */
+  body.printing-modal * {
+    visibility: hidden;
+  }
+  body.printing-modal .print-only-block, 
+  body.printing-modal .print-only-block * {
+    visibility: visible;
+  }
+  body.printing-modal .print-only-block {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Fix table borders and colors for printing */
+  table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+    page-break-inside: auto !important;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+    page-break-after: auto !important;
+  }
+
+  th, td {
+    border: 1px solid #ccc !important;
+    padding: 8px !important;
+    color: black !important;
+    background-color: transparent !important;
+  }
+
+  th {
+    background-color: #f3f4f6 !important;
+    font-weight: bold !important;
+  }
+
+  /* Remove dark mode backgrounds */
+  .bg-slate-900, .bg-slate-800, .bg-slate-950, .dark\:bg-slate-900 {
+    background-color: white !important;
+    border-color: #e5e7eb !important;
+  }
+
+  /* Ensure text is black */
+  .text-white, .text-slate-300, .text-slate-400, .text-slate-500 {
+    color: black !important;
+  }
+
+  /* Page margins */
+  @page {
+    margin: 1cm;
+  }
+}
