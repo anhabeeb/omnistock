@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
   alpha,
@@ -10,6 +10,7 @@ import {
   Divider,
   Drawer,
   IconButton,
+  InputAdornment,
   List,
   ListItemButton,
   ListItemIcon,
@@ -18,17 +19,24 @@ import {
   MenuItem,
   Paper,
   Stack,
+  TextField,
   ThemeProvider,
-  Tooltip,
   Typography,
   useMediaQuery,
 } from "@mui/material";
+import CalendarMonthRoundedIcon from "@mui/icons-material/CalendarMonthRounded";
+import ChevronRightRoundedIcon from "@mui/icons-material/ChevronRightRounded";
+import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
+import MoreHorizRoundedIcon from "@mui/icons-material/MoreHorizRounded";
+import PersonOutlineRoundedIcon from "@mui/icons-material/PersonOutlineRounded";
+import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
+import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 import { MODULES, ROLE_PRESETS, canAccessModule } from "../shared/permissions";
 import { inventoryAlerts } from "../shared/selectors";
 import { AppNotificationCenter } from "./components/AppNotificationCenter";
 import {
+  ActivityIcon,
   AdminIcon,
-  CloseIcon,
   DashboardIcon,
   DataIcon,
   InventoryIcon,
@@ -53,17 +61,12 @@ import { MasterDataPage } from "./pages/MasterDataPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { ReportsPage } from "./pages/ReportsPage";
 
+const SIDEBAR_WIDTH = 236;
+
 const PROFILE_VIEW = {
   label: "My Profile",
   description: "Update your personal information and password.",
 };
-
-const NAV_GROUPS: Array<{ label: string; moduleKeys: Array<(typeof MODULES)[number]["key"]> }> = [
-  { label: "General", moduleKeys: ["dashboard"] },
-  { label: "Operations", moduleKeys: ["inventoryOps"] },
-  { label: "Data & Reports", moduleKeys: ["masterData", "reports"] },
-  { label: "Administration", moduleKeys: ["administration"] },
-];
 
 const MODULE_ICONS = {
   dashboard: DashboardIcon,
@@ -144,6 +147,7 @@ export default function App() {
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileMenuAnchor, setProfileMenuAnchor] = useState<HTMLElement | null>(null);
+  const [shellSearch, setShellSearch] = useState("");
   const {
     payload,
     syncState,
@@ -162,11 +166,10 @@ export default function App() {
     resetAccountPassword,
     removeUserAccount,
   } = useOmniStockApp();
-  const { themeMode, resolvedTheme, setThemeMode } = useThemePreference();
+  const { resolvedTheme, setThemeMode } = useThemePreference();
   const muiTheme = useMemo(() => buildMuiTheme(resolvedTheme), [resolvedTheme]);
   const isTabletOrMobile = useMediaQuery(muiTheme.breakpoints.down("lg"));
   const profileMenuOpen = Boolean(profileMenuAnchor);
-  const themeToggleLabel = themeMode === "dark" ? "Switch to light mode" : "Switch to dark mode";
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -185,7 +188,7 @@ export default function App() {
     };
   }, [mobileMenuOpen]);
 
-  let content: React.ReactNode;
+  let content: ReactNode;
 
   if (!payload && authRequired) {
     content = (
@@ -203,29 +206,6 @@ export default function App() {
     const { snapshot, currentUser } = payload;
     const visibleModules = MODULES.filter((module) => canAccessModule(currentUser, module.key));
     const defaultPath = visibleModules[0] ? moduleEntryPath(visibleModules[0].key) : "/";
-    const viewingProfile = location.pathname.startsWith("/profile");
-    const activeModule = visibleModules.find((module) => moduleIsActive(location.pathname, module.path)) ?? visibleModules[0];
-    const activeSubpage = Object.values(MODULE_SUBPAGES).flat().find((subpage) => subpage.path === location.pathname);
-    const resolvedActiveView = viewingProfile
-      ? PROFILE_VIEW
-      : activeSubpage
-        ? { label: activeSubpage.label, description: activeSubpage.description }
-        : activeModule;
-    const assignedCodes = snapshot.locations
-      .filter((locationEntry) => currentUser.assignedLocationIds.includes(locationEntry.id))
-      .map((locationEntry) => locationEntry.code)
-      .join(", ");
-    const activeAlertsCount = inventoryAlerts(snapshot).length;
-    const mobileRoutes = visibleModules
-      .map((module) => ({
-        key: module.key,
-        label: module.key === "inventoryOps" ? "Ops" : module.label,
-        to: moduleEntryPath(module.key),
-        end: module.path === "/",
-        icon: MODULE_ICONS[module.key],
-      }))
-      .filter((entry, index, array) => array.findIndex((candidate) => candidate.to === entry.to) === index)
-      .slice(0, 3);
 
     if (visibleModules.length === 0) {
       content = (
@@ -244,164 +224,357 @@ export default function App() {
         </Box>
       );
     } else {
-      const desktopStatusChips = [
-        { key: "online", label: syncState.online ? "Online" : "Offline mode", color: syncState.online ? "success" : "warning" },
-        { key: "realtime", label: `Realtime ${syncState.websocket}`, color: syncState.websocket === "connected" ? "success" : "default" },
-        { key: "queue", label: `Queue ${syncState.queued}`, color: syncState.queued > 0 ? "primary" : "default" },
-        { key: "sync", label: `Last sync ${syncState.lastSyncedAt ? formatDateTime(syncState.lastSyncedAt) : "Waiting"}`, color: "default" },
+      const viewingProfile = location.pathname.startsWith("/profile");
+      const activeModule =
+        visibleModules.find((module) => moduleIsActive(location.pathname, module.path)) ??
+        visibleModules[0];
+      const activeSubpage = Object.values(MODULE_SUBPAGES)
+        .flat()
+        .find((subpage) => subpage.path === location.pathname);
+      const activeView = viewingProfile
+        ? PROFILE_VIEW
+        : activeSubpage
+          ? { label: activeSubpage.label, description: activeSubpage.description }
+          : activeModule;
+      const assignedCodes = snapshot.locations
+        .filter((locationEntry) => currentUser.assignedLocationIds.includes(locationEntry.id))
+        .map((locationEntry) => locationEntry.code)
+        .join(", ");
+      const activeAlertsCount = inventoryAlerts(snapshot).length;
+      const mobileRoutes = visibleModules
+        .map((module) => ({
+          key: module.key,
+          label: module.key === "inventoryOps" ? "Ops" : module.label,
+          to: moduleEntryPath(module.key),
+          end: module.path === "/",
+          icon: MODULE_ICONS[module.key],
+        }))
+        .filter(
+          (entry, index, array) =>
+            array.findIndex((candidate) => candidate.to === entry.to) === index,
+        )
+        .slice(0, 3);
+      const breadcrumbRoot = viewingProfile ? "Account" : activeModule?.label ?? "Workspace";
+      const breadcrumbLeaf = viewingProfile
+        ? "Profile"
+        : activeSubpage?.label ??
+          (activeModule?.key === "dashboard" ? "Home" : activeModule?.label ?? "Workspace");
+      const pageHeading =
+        viewingProfile
+          ? "Profile"
+          : activeModule?.key === "dashboard" && !activeSubpage
+            ? "Overview"
+            : activeView.label;
+      const liveStatusLabel = syncState.online
+        ? `Live sync${syncState.queued ? ` · ${syncState.queued} queued` : ""}`
+        : `Offline${syncState.queued ? ` · ${syncState.queued} queued` : ""}`;
+      const currentDateLabel = new Intl.DateTimeFormat("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }).format(new Date());
+      const utilityLinks = [
+        {
+          label: "Settings",
+          to: canAccessModule(currentUser, "administration")
+            ? "/administration/settings"
+            : "/profile",
+          icon: <SettingsRoundedIcon sx={{ fontSize: 18 }} />,
+        },
+        {
+          label: "Profile",
+          to: "/profile",
+          icon: <PersonOutlineRoundedIcon sx={{ fontSize: 18 }} />,
+        },
+        {
+          label: canAccessModule(currentUser, "administration") ? "Activity" : "Reports",
+          to: canAccessModule(currentUser, "administration")
+            ? "/administration/activity"
+            : canAccessModule(currentUser, "reports")
+              ? "/reports/analytics"
+              : defaultPath,
+          icon: canAccessModule(currentUser, "administration") ? (
+            <HistoryRoundedIcon sx={{ fontSize: 18 }} />
+          ) : (
+            <ActivityIcon size={18} />
+          ),
+        },
       ] as const;
+      const promoDescription =
+        activeAlertsCount > 0
+          ? `${activeAlertsCount} stock alerts need review across your assigned locations today.`
+          : "The network looks healthy. Keep an eye on reports and recent stock movements.";
 
-      const renderAvatarTrigger = (size: number) => (
-        <Tooltip title="Account menu">
-          <IconButton
-            aria-label="Open profile menu"
-            onClick={(event) => setProfileMenuAnchor(event.currentTarget)}
-            sx={{ p: 0.5, borderRadius: 999, borderColor: alpha(muiTheme.palette.primary.main, 0.18) }}
-          >
-            <Avatar
-              sx={{
-                width: size,
-                height: size,
-                bgcolor: alpha(muiTheme.palette.primary.main, 0.14),
-                color: "primary.main",
-                fontWeight: 800,
-              }}
-            >
-              {currentUser.name.charAt(0).toUpperCase()}
-            </Avatar>
-          </IconButton>
-        </Tooltip>
-      );
+      const openProfileMenu = (event: MouseEvent<HTMLElement>) => {
+        setProfileMenuAnchor(event.currentTarget);
+      };
 
       const renderSidebar = () => (
-        <Stack sx={{ height: "100%", px: 2, py: 2 }} spacing={2}>
-          <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 0.75 }}>
-            <Box
-              sx={{
-                width: 44,
-                height: 44,
-                borderRadius: 2.5,
-                display: "grid",
-                placeItems: "center",
-                background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
-                color: "#ffffff",
-                fontFamily: '"Sora", sans-serif',
-                fontWeight: 800,
-                boxShadow: `0 16px 32px ${alpha(muiTheme.palette.primary.main, 0.28)}`,
-              }}
-            >
-              OS
-            </Box>
-            <Box minWidth={0}>
-              <Typography variant="subtitle1" fontWeight={800}>
-                OmniStock
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Restaurant warehouse system
-              </Typography>
-            </Box>
-          </Stack>
+        <Stack sx={{ height: "100%", px: 1.5, py: 1.5 }} spacing={1.5}>
+          <Paper
+            variant="outlined"
+            sx={{
+              p: 1,
+              borderRadius: 3,
+              bgcolor:
+                muiTheme.palette.mode === "dark"
+                  ? alpha(muiTheme.palette.common.white, 0.02)
+                  : alpha(muiTheme.palette.background.paper, 0.92),
+            }}
+          >
+            <Stack direction="row" alignItems="center" spacing={1.25}>
+              <Box
+                sx={{
+                  width: 42,
+                  height: 42,
+                  borderRadius: 999,
+                  display: "grid",
+                  placeItems: "center",
+                  border: `1px solid ${alpha(
+                    muiTheme.palette.common.white,
+                    muiTheme.palette.mode === "dark" ? 0.12 : 0.08,
+                  )}`,
+                  bgcolor:
+                    muiTheme.palette.mode === "dark"
+                      ? alpha(muiTheme.palette.primary.main, 0.08)
+                      : alpha(muiTheme.palette.primary.main, 0.1),
+                  color: "primary.main",
+                  flex: "0 0 auto",
+                }}
+              >
+                <InventoryIcon size={18} />
+              </Box>
+              <Box minWidth={0} flex={1}>
+                <Typography variant="subtitle2" fontWeight={800} noWrap>
+                  OmniStock
+                </Typography>
+                <Typography variant="body2" color="text.secondary" noWrap>
+                  Warehouse app
+                </Typography>
+              </Box>
+              <IconButton size="small" sx={{ width: 28, height: 28 }}>
+                <MoreHorizRoundedIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Stack>
+          </Paper>
+
+          <Divider />
 
           <Box sx={{ flex: 1, overflowY: "auto", pr: 0.5 }}>
-            <Stack spacing={2}>
-              {NAV_GROUPS.map((group) => {
-                const groupModules = visibleModules.filter((module) => group.moduleKeys.includes(module.key));
-                if (groupModules.length === 0) {
-                  return null;
-                }
-
+            <List disablePadding sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+              {visibleModules.map((module) => {
+                const Icon = MODULE_ICONS[module.key];
+                const active = moduleIsActive(location.pathname, module.path);
+                const subpages = MODULE_SUBPAGES[module.key] ?? [];
                 return (
-                  <Box key={group.label}>
-                    <Typography variant="overline" sx={{ px: 1.5, color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
-                      {group.label}
-                    </Typography>
-                    <List disablePadding sx={{ mt: 0.5 }}>
-                      {groupModules.map((module) => {
-                        const Icon = MODULE_ICONS[module.key];
-                        const subpages = MODULE_SUBPAGES[module.key] ?? [];
-                        const active = moduleIsActive(location.pathname, module.path);
-                        return (
-                          <Box key={module.key} sx={{ mb: 0.5 }}>
-                            <ListItemButton
-                              selected={active}
+                  <Box key={module.key}>
+                    <ListItemButton
+                      selected={active}
+                      onClick={() => {
+                        navigate(moduleEntryPath(module.key));
+                        setMobileMenuOpen(false);
+                      }}
+                      sx={{
+                        minHeight: 40,
+                        px: 1.25,
+                        borderRadius: 2,
+                        color: active ? "text.primary" : "text.secondary",
+                        bgcolor:
+                          active
+                            ? muiTheme.palette.mode === "dark"
+                              ? alpha(muiTheme.palette.common.white, 0.12)
+                              : alpha(muiTheme.palette.text.primary, 0.08)
+                            : "transparent",
+                        "&.Mui-selected": {
+                          bgcolor:
+                            muiTheme.palette.mode === "dark"
+                              ? alpha(muiTheme.palette.common.white, 0.12)
+                              : alpha(muiTheme.palette.text.primary, 0.08),
+                        },
+                        "&:hover": {
+                          bgcolor:
+                            muiTheme.palette.mode === "dark"
+                              ? alpha(muiTheme.palette.common.white, 0.08)
+                              : alpha(muiTheme.palette.text.primary, 0.05),
+                        },
+                      }}
+                    >
+                      <ListItemIcon sx={{ minWidth: 32, color: "inherit" }}>
+                        <Icon size={17} />
+                      </ListItemIcon>
+                      <ListItemText
+                        primary={module.label}
+                        primaryTypographyProps={{ fontWeight: 700, fontSize: "0.95rem" }}
+                      />
+                    </ListItemButton>
+
+                    {active && subpages.length > 0 ? (
+                      <Stack
+                        spacing={0.35}
+                        sx={{
+                          ml: 3.75,
+                          mt: 0.4,
+                          pl: 1.25,
+                          borderLeft: `1px solid ${alpha(muiTheme.palette.divider, 0.8)}`,
+                        }}
+                      >
+                        {subpages.map((subpage) => {
+                          const subpageActive = location.pathname === subpage.path;
+                          return (
+                            <Button
+                              key={subpage.path}
+                              variant="text"
+                              color="inherit"
                               onClick={() => {
-                                navigate(moduleEntryPath(module.key));
+                                navigate(subpage.path);
                                 setMobileMenuOpen(false);
                               }}
                               sx={{
-                                minHeight: 50,
-                                px: 1.5,
-                                bgcolor: active ? alpha(muiTheme.palette.primary.main, 0.16) : "transparent",
-                                color: active ? "primary.main" : "text.primary",
-                                "&.Mui-selected": { bgcolor: alpha(muiTheme.palette.primary.main, 0.16) },
+                                justifyContent: "flex-start",
+                                minHeight: 30,
+                                px: 0.75,
+                                borderRadius: 1.5,
+                                color: subpageActive ? "text.primary" : "text.secondary",
+                                fontSize: "0.8rem",
+                                fontWeight: subpageActive ? 700 : 600,
+                                bgcolor:
+                                  subpageActive
+                                    ? muiTheme.palette.mode === "dark"
+                                      ? alpha(muiTheme.palette.primary.main, 0.14)
+                                      : alpha(muiTheme.palette.primary.main, 0.08)
+                                    : "transparent",
                               }}
                             >
-                              <ListItemIcon sx={{ minWidth: 38, color: "inherit" }}>
-                                <Icon size={20} />
-                              </ListItemIcon>
-                              <ListItemText primary={module.label} primaryTypographyProps={{ fontWeight: 700 }} />
-                            </ListItemButton>
-
-                            {subpages.length > 0 ? (
-                              <Stack spacing={0.5} sx={{ ml: 3, mt: 0.5, pl: 1.5, borderLeft: `1px solid ${muiTheme.palette.divider}` }}>
-                                {subpages.map((subpage) => {
-                                  const subpageActive = location.pathname === subpage.path;
-                                  return (
-                                    <Button
-                                      key={subpage.path}
-                                      variant={subpageActive ? "contained" : "text"}
-                                      color={subpageActive ? "primary" : "inherit"}
-                                      onClick={() => {
-                                        navigate(subpage.path);
-                                        setMobileMenuOpen(false);
-                                      }}
-                                      sx={{
-                                        justifyContent: "flex-start",
-                                        minHeight: 36,
-                                        px: 1.25,
-                                        borderRadius: 2.5,
-                                        color: subpageActive ? "primary.contrastText" : "text.secondary",
-                                      }}
-                                    >
-                                      {subpage.label}
-                                    </Button>
-                                  );
-                                })}
-                              </Stack>
-                            ) : null}
-                          </Box>
-                        );
-                      })}
-                    </List>
+                              {subpage.label}
+                            </Button>
+                          );
+                        })}
+                      </Stack>
+                    ) : null}
                   </Box>
+                );
+              })}
+            </List>
+
+            <Stack spacing={0.5} sx={{ mt: 3 }}>
+              {utilityLinks.map((item) => {
+                const active = location.pathname === item.to;
+                return (
+                  <Button
+                    key={item.label}
+                    variant="text"
+                    color="inherit"
+                    onClick={() => {
+                      navigate(item.to);
+                      setMobileMenuOpen(false);
+                    }}
+                    startIcon={item.icon}
+                    sx={{
+                      justifyContent: "flex-start",
+                      minHeight: 34,
+                      px: 1.25,
+                      borderRadius: 1.75,
+                      color: active ? "text.primary" : "text.secondary",
+                      fontSize: "0.9rem",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {item.label}
+                  </Button>
                 );
               })}
             </Stack>
           </Box>
 
-          <Paper sx={{ p: 1.5, borderRadius: 3, bgcolor: muiTheme.palette.mode === "dark" ? alpha(muiTheme.palette.common.white, 0.03) : alpha(muiTheme.palette.primary.main, 0.03) }}>
+          <Paper
+            variant="outlined"
+            sx={{
+              p: 2,
+              borderRadius: 3,
+              bgcolor:
+                muiTheme.palette.mode === "dark"
+                  ? alpha(muiTheme.palette.common.white, 0.02)
+                  : alpha(muiTheme.palette.primary.main, 0.04),
+            }}
+          >
             <Stack spacing={1.25}>
-              <Box>
-                <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
-                  Current Role
+              <Typography variant="subtitle2" fontWeight={800}>
+                Stock watch
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {promoDescription}
+              </Typography>
+              <Button
+                variant={muiTheme.palette.mode === "dark" ? "contained" : "outlined"}
+                color={muiTheme.palette.mode === "dark" ? "inherit" : "primary"}
+                onClick={() =>
+                  navigate(
+                    canAccessModule(currentUser, "reports") ? "/reports/analytics" : defaultPath,
+                  )
+                }
+                sx={{
+                  alignSelf: "flex-start",
+                  minHeight: 34,
+                  px: 1.5,
+                  borderRadius: 2,
+                  bgcolor:
+                    muiTheme.palette.mode === "dark"
+                      ? muiTheme.palette.common.white
+                      : undefined,
+                  color:
+                    muiTheme.palette.mode === "dark"
+                      ? muiTheme.palette.common.black
+                      : undefined,
+                  "&:hover": {
+                    bgcolor:
+                      muiTheme.palette.mode === "dark"
+                        ? alpha(muiTheme.palette.common.white, 0.88)
+                        : undefined,
+                  },
+                }}
+              >
+                Open reports
+              </Button>
+            </Stack>
+          </Paper>
+
+          <Paper
+            variant="outlined"
+            sx={{
+              p: 1,
+              borderRadius: 3,
+              cursor: "pointer",
+              bgcolor:
+                muiTheme.palette.mode === "dark"
+                  ? alpha(muiTheme.palette.common.white, 0.02)
+                  : alpha(muiTheme.palette.background.paper, 0.92),
+            }}
+            onClick={openProfileMenu}
+          >
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <Avatar
+                sx={{
+                  width: 40,
+                  height: 40,
+                  bgcolor: alpha(muiTheme.palette.primary.main, 0.14),
+                  color: "primary.main",
+                  fontWeight: 800,
+                  flex: "0 0 auto",
+                }}
+              >
+                {currentUser.name.charAt(0).toUpperCase()}
+              </Avatar>
+              <Box minWidth={0} flex={1}>
+                <Typography variant="subtitle2" fontWeight={800} noWrap>
+                  {currentUser.name}
                 </Typography>
-                <Typography variant="subtitle2" fontWeight={800}>
-                  {ROLE_PRESETS[currentUser.role].label}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {assignedCodes || "No locations assigned yet."}
+                <Typography variant="body2" color="text.secondary" noWrap>
+                  {currentUser.email}
                 </Typography>
               </Box>
-              <Stack direction="row" spacing={1}>
-                <Tooltip title={themeToggleLabel}>
-                  <IconButton onClick={() => setThemeMode(resolvedTheme === "dark" ? "light" : "dark")} sx={{ width: 42, height: 42 }}>
-                    {resolvedTheme === "dark" ? <SunIcon size={18} /> : <MoonIcon size={18} />}
-                  </IconButton>
-                </Tooltip>
-                <Button fullWidth color="error" variant="outlined" startIcon={<LogoutIcon size={16} />} onClick={() => void logoutUser()}>
-                  Log out
-                </Button>
-              </Stack>
+              <IconButton size="small" onClick={openProfileMenu} sx={{ width: 32, height: 32 }}>
+                <MoreHorizRoundedIcon sx={{ fontSize: 18 }} />
+              </IconButton>
             </Stack>
           </Paper>
         </Stack>
@@ -410,76 +583,139 @@ export default function App() {
       content = (
         <Box sx={{ minHeight: "100vh", display: "flex" }}>
           {!isTabletOrMobile ? (
-            <Drawer variant="permanent" open PaperProps={{ sx: { width: 320, overflowX: "hidden" } }}>
+            <Drawer
+              variant="permanent"
+              open
+              PaperProps={{ sx: { width: SIDEBAR_WIDTH, overflowX: "hidden" } }}
+            >
               {renderSidebar()}
             </Drawer>
           ) : null}
 
           <Drawer
-            anchor="right"
+            anchor="left"
             open={mobileMenuOpen}
             onClose={() => setMobileMenuOpen(false)}
-            PaperProps={{ sx: { width: "min(420px, 92vw)", borderTopLeftRadius: 28, borderBottomLeftRadius: 28, overflow: "hidden" } }}
+            PaperProps={{ sx: { width: "min(360px, 88vw)", overflow: "hidden" } }}
           >
-            <Box sx={{ px: 2, pt: 2, display: "flex", justifyContent: "flex-end" }}>
-              <IconButton onClick={() => setMobileMenuOpen(false)}>
-                <CloseIcon size={18} />
-              </IconButton>
-            </Box>
             {renderSidebar()}
           </Drawer>
 
-          <Box component="main" sx={{ flex: 1, minWidth: 0, ml: !isTabletOrMobile ? "320px" : 0, px: { xs: 2, sm: 2.5, lg: 3 }, pt: { xs: 2, sm: 2.5, lg: 3 }, pb: { xs: 12, lg: 4 } }}>
-            <Paper component="header" sx={{ position: "sticky", top: { xs: 12, lg: 20 }, zIndex: 10, mb: { xs: 2, lg: 2.5 }, px: 2, py: 1.5, borderRadius: 4, backdropFilter: "blur(18px)", bgcolor: muiTheme.palette.mode === "dark" ? alpha(muiTheme.palette.background.paper, 0.88) : alpha(muiTheme.palette.background.paper, 0.86) }}>
-              <Stack direction={{ xs: "column", lg: "row" }} alignItems={{ xs: "stretch", lg: "center" }} justifyContent="space-between" spacing={1.5}>
-                <Stack direction="row" alignItems="center" spacing={1.5} minWidth={0}>
-                  {isTabletOrMobile ? (
-                    <IconButton aria-label="Open navigation menu" onClick={() => setMobileMenuOpen(true)}>
-                      <MenuIcon size={20} />
-                    </IconButton>
-                  ) : null}
-                  <Box minWidth={0}>
-                    <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
-                      Live Workspace
+          <Box
+            component="main"
+            sx={{
+              flex: 1,
+              minWidth: 0,
+              ml: !isTabletOrMobile ? `${SIDEBAR_WIDTH}px` : 0,
+              px: { xs: 2, sm: 2.5, lg: 3 },
+              pt: { xs: 1.5, sm: 2, lg: 2.5 },
+              pb: { xs: 11.5, lg: 4 },
+            }}
+          >
+            <Box
+              component="header"
+              sx={{
+                position: "sticky",
+                top: 0,
+                zIndex: 10,
+                mb: { xs: 2, lg: 2.5 },
+                py: { xs: 1, lg: 0.75 },
+                backdropFilter: "blur(14px)",
+                bgcolor: alpha(muiTheme.palette.background.default, 0.82),
+              }}
+            >
+              <Stack
+                direction={{ xs: "column", md: "row" }}
+                justifyContent="space-between"
+                alignItems={{ xs: "stretch", md: "center" }}
+                spacing={1.5}
+              >
+                <Box minWidth={0}>
+                  <Stack direction="row" alignItems="center" spacing={0.65} sx={{ minHeight: 24 }}>
+                    {isTabletOrMobile ? (
+                      <IconButton
+                        aria-label="Open navigation menu"
+                        onClick={() => setMobileMenuOpen(true)}
+                        sx={{ mr: 0.25, width: 34, height: 34 }}
+                      >
+                        <MenuIcon size={18} />
+                      </IconButton>
+                    ) : null}
+                    <Typography variant="body2" sx={{ color: "primary.main", fontWeight: 600 }}>
+                      {breadcrumbRoot}
                     </Typography>
-                    <Typography variant="h5" sx={{ mt: 0.25 }} noWrap>
-                      {resolvedActiveView?.label ?? "OmniStock"}
+                    <ChevronRightRoundedIcon sx={{ fontSize: 16, color: "text.secondary" }} />
+                    <Typography variant="body2" sx={{ color: "text.primary", fontWeight: 700 }}>
+                      {breadcrumbLeaf}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }} noWrap>
-                      {resolvedActiveView?.description}
-                    </Typography>
-                  </Box>
-                </Stack>
+                  </Stack>
 
-                <Stack direction="row" alignItems="center" spacing={1} justifyContent={{ xs: "flex-start", lg: "flex-end" }} flexWrap="wrap" useFlexGap>
-                  <Paper variant="outlined" sx={{ px: 1, py: 0.75, borderRadius: 3, bgcolor: muiTheme.palette.mode === "dark" ? alpha(muiTheme.palette.common.white, 0.02) : alpha(muiTheme.palette.primary.main, 0.03) }}>
-                    <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                      {desktopStatusChips.map((status) => (
-                        <Chip key={status.key} label={status.label} size="small" color={status.color} variant={status.color === "default" ? "outlined" : "filled"} />
-                      ))}
-                      <Chip label={`${activeAlertsCount} alerts`} size="small" color={activeAlertsCount > 0 ? "warning" : "default"} variant={activeAlertsCount > 0 ? "filled" : "outlined"} />
-                      {syncState.error ? <Chip label={syncState.error} size="small" color="error" variant="outlined" /> : null}
-                    </Stack>
-                  </Paper>
+                  <Stack
+                    direction={{ xs: "column", sm: "row" }}
+                    alignItems={{ xs: "flex-start", sm: "center" }}
+                    spacing={1}
+                    sx={{ mt: 1 }}
+                  >
+                    <Typography variant={isTabletOrMobile ? "h5" : "h4"} sx={{ lineHeight: 1.1 }}>
+                      {pageHeading}
+                    </Typography>
+                    <Chip
+                      size="small"
+                      color={syncState.online ? "success" : "warning"}
+                      variant={syncState.online ? "outlined" : "filled"}
+                      label={liveStatusLabel}
+                    />
+                  </Stack>
+                </Box>
+
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  alignItems="center"
+                  useFlexGap
+                  flexWrap="wrap"
+                  justifyContent={{ xs: "flex-start", md: "flex-end" }}
+                >
+                  <TextField
+                    size="small"
+                    placeholder="Search..."
+                    value={shellSearch}
+                    onChange={(event) => setShellSearch(event.target.value)}
+                    sx={{
+                      width: { xs: "100%", sm: 220 },
+                      maxWidth: { md: 220 },
+                      "& .MuiOutlinedInput-root": {
+                        minHeight: 40,
+                        borderRadius: 2.5,
+                      },
+                    }}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchRoundedIcon sx={{ fontSize: 18, color: "text.secondary" }} />
+                        </InputAdornment>
+                      ),
+                    }}
+                  />
+
+                  <Button
+                    variant="outlined"
+                    color="inherit"
+                    startIcon={<CalendarMonthRoundedIcon sx={{ fontSize: 18 }} />}
+                    sx={{
+                      minHeight: 40,
+                      borderRadius: 2.5,
+                      color: "text.primary",
+                      borderColor: alpha(muiTheme.palette.divider, 0.95),
+                    }}
+                  >
+                    {currentDateLabel}
+                  </Button>
 
                   <AppNotificationCenter snapshot={snapshot} />
-
-                  <Tooltip title={themeToggleLabel}>
-                    <IconButton onClick={() => setThemeMode(resolvedTheme === "dark" ? "light" : "dark")}>
-                      {resolvedTheme === "dark" ? <SunIcon size={18} /> : <MoonIcon size={18} />}
-                    </IconButton>
-                  </Tooltip>
-
-                  <Tooltip title="Sync now">
-                    <IconButton onClick={() => void refresh()}>
-                      <RefreshIcon size={18} />
-                    </IconButton>
-                  </Tooltip>
-
-                  {renderAvatarTrigger(isTabletOrMobile ? 34 : 36)}
                 </Stack>
               </Stack>
-            </Paper>
+            </Box>
 
             <Menu
               anchorEl={profileMenuAnchor}
@@ -487,11 +723,28 @@ export default function App() {
               onClose={() => setProfileMenuAnchor(null)}
               anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
               transformOrigin={{ vertical: "top", horizontal: "right" }}
-              slotProps={{ paper: { sx: { width: { xs: "min(92vw, 320px)", sm: 320 }, borderRadius: 3.5, mt: 1, p: 0.5 } } }}
+              slotProps={{
+                paper: {
+                  sx: {
+                    width: { xs: "min(92vw, 320px)", sm: 320 },
+                    borderRadius: 3.5,
+                    mt: 1,
+                    p: 0.5,
+                  },
+                },
+              }}
             >
               <Box sx={{ px: 1.5, py: 1.25 }}>
                 <Stack direction="row" spacing={1.25} alignItems="center">
-                  <Avatar sx={{ width: 44, height: 44, bgcolor: alpha(muiTheme.palette.primary.main, 0.14), color: "primary.main", fontWeight: 800 }}>
+                  <Avatar
+                    sx={{
+                      width: 44,
+                      height: 44,
+                      bgcolor: alpha(muiTheme.palette.primary.main, 0.14),
+                      color: "primary.main",
+                      fontWeight: 800,
+                    }}
+                  >
                     {currentUser.name.charAt(0).toUpperCase()}
                   </Avatar>
                   <Box minWidth={0}>
@@ -514,19 +767,46 @@ export default function App() {
 
               <Divider />
 
-              <MenuItem onClick={() => { setProfileMenuAnchor(null); navigate("/profile"); }}>
+              <MenuItem
+                onClick={() => {
+                  setProfileMenuAnchor(null);
+                  navigate("/profile");
+                }}
+              >
                 <ListItemIcon sx={{ minWidth: 34 }}>
                   <ProfileIcon size={16} />
                 </ListItemIcon>
                 <ListItemText primary="Edit profile" />
               </MenuItem>
-              <MenuItem onClick={() => { setProfileMenuAnchor(null); void refresh(); }}>
+              <MenuItem
+                onClick={() => {
+                  setProfileMenuAnchor(null);
+                  void refresh();
+                }}
+              >
                 <ListItemIcon sx={{ minWidth: 34 }}>
                   <RefreshIcon size={16} />
                 </ListItemIcon>
                 <ListItemText primary="Sync now" />
               </MenuItem>
-              <MenuItem onClick={() => { setProfileMenuAnchor(null); void logoutUser(); }} sx={{ color: "error.main" }}>
+              <MenuItem
+                onClick={() => {
+                  setProfileMenuAnchor(null);
+                  setThemeMode(resolvedTheme === "dark" ? "light" : "dark");
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 34 }}>
+                  {resolvedTheme === "dark" ? <SunIcon size={16} /> : <MoonIcon size={16} />}
+                </ListItemIcon>
+                <ListItemText primary={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"} />
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  setProfileMenuAnchor(null);
+                  void logoutUser();
+                }}
+                sx={{ color: "error.main" }}
+              >
                 <ListItemIcon sx={{ minWidth: 34, color: "inherit" }}>
                   <LogoutIcon size={16} />
                 </ListItemIcon>
@@ -536,45 +816,140 @@ export default function App() {
 
             <Box sx={{ mt: 0.5 }}>
               <Routes>
-                {canAccessModule(currentUser, "dashboard") ? <Route path="/" element={<DashboardPage snapshot={snapshot} currentUser={currentUser} syncState={syncState} />} /> : null}
+                {canAccessModule(currentUser, "dashboard") ? (
+                  <Route
+                    path="/"
+                    element={
+                      <DashboardPage
+                        snapshot={snapshot}
+                        currentUser={currentUser}
+                        syncState={syncState}
+                      />
+                    }
+                  />
+                ) : null}
                 {canAccessModule(currentUser, "inventoryOps") ? (
                   <>
                     <Route path="/inventory" element={<Navigate to="/inventory/grn" replace />} />
-                    <Route path="/inventory/*" element={<InventoryOpsPage snapshot={snapshot} currentUser={currentUser} syncState={syncState} onCreateOperation={createOperation} />} />
+                    <Route
+                      path="/inventory/*"
+                      element={
+                        <InventoryOpsPage
+                          snapshot={snapshot}
+                          currentUser={currentUser}
+                          syncState={syncState}
+                          onCreateOperation={createOperation}
+                        />
+                      }
+                    />
                   </>
                 ) : null}
                 {canAccessModule(currentUser, "masterData") ? (
                   <>
                     <Route path="/master-data" element={<Navigate to="/master-data/items" replace />} />
-                    <Route path="/master-data/*" element={<MasterDataPage snapshot={snapshot} currentUser={currentUser} onCreateMarketPrice={createMarketPrice} />} />
+                    <Route
+                      path="/master-data/*"
+                      element={
+                        <MasterDataPage
+                          snapshot={snapshot}
+                          currentUser={currentUser}
+                          onCreateMarketPrice={createMarketPrice}
+                        />
+                      }
+                    />
                   </>
                 ) : null}
                 {canAccessModule(currentUser, "reports") ? (
                   <>
                     <Route path="/reports" element={<Navigate to="/reports/analytics" replace />} />
-                    <Route path="/reports/*" element={<ReportsPage snapshot={snapshot} currentUser={currentUser} />} />
+                    <Route
+                      path="/reports/*"
+                      element={<ReportsPage snapshot={snapshot} currentUser={currentUser} />}
+                    />
                   </>
                 ) : null}
                 {canAccessModule(currentUser, "administration") ? (
                   <>
-                    <Route path="/administration" element={<Navigate to="/administration/users" replace />} />
-                    <Route path="/administration/*" element={<AdminPage snapshot={snapshot} currentUser={currentUser} onCreateUser={createUserAccount} onUpdateUser={updateUserAccount} onResetUserPassword={resetAccountPassword} onRemoveUser={removeUserAccount} />} />
+                    <Route
+                      path="/administration"
+                      element={<Navigate to="/administration/users" replace />}
+                    />
+                    <Route
+                      path="/administration/*"
+                      element={
+                        <AdminPage
+                          snapshot={snapshot}
+                          currentUser={currentUser}
+                          onCreateUser={createUserAccount}
+                          onUpdateUser={updateUserAccount}
+                          onResetUserPassword={resetAccountPassword}
+                          onRemoveUser={removeUserAccount}
+                        />
+                      }
+                    />
                   </>
                 ) : null}
-                <Route path="/profile" element={<ProfilePage snapshot={snapshot} currentUser={currentUser} onUpdateProfile={updateProfile} onChangePassword={changeProfilePassword} />} />
+                <Route
+                  path="/profile"
+                  element={
+                    <ProfilePage
+                      snapshot={snapshot}
+                      currentUser={currentUser}
+                      onUpdateProfile={updateProfile}
+                      onChangePassword={changeProfilePassword}
+                    />
+                  }
+                />
                 <Route path="*" element={<Navigate to={defaultPath} replace />} />
               </Routes>
             </Box>
           </Box>
 
           {isTabletOrMobile ? (
-            <Paper sx={{ position: "fixed", left: 16, right: 16, bottom: 16, zIndex: 20, borderRadius: 3.5, p: 0.75, backdropFilter: "blur(18px)", bgcolor: muiTheme.palette.mode === "dark" ? alpha(muiTheme.palette.background.paper, 0.9) : alpha(muiTheme.palette.background.paper, 0.9) }}>
+            <Paper
+              sx={{
+                position: "fixed",
+                left: 16,
+                right: 16,
+                bottom: 16,
+                zIndex: 20,
+                borderRadius: 3,
+                p: 0.75,
+                backdropFilter: "blur(16px)",
+                bgcolor:
+                  muiTheme.palette.mode === "dark"
+                    ? alpha(muiTheme.palette.background.paper, 0.94)
+                    : alpha(muiTheme.palette.background.paper, 0.94),
+              }}
+            >
               <Stack direction="row" spacing={0.75}>
                 {mobileRoutes.map((item) => {
                   const Icon = item.icon;
-                  const active = item.end ? location.pathname === item.to : moduleIsActive(location.pathname, item.to);
+                  const active = item.end
+                    ? location.pathname === item.to
+                    : moduleIsActive(location.pathname, item.to);
                   return (
-                    <Button key={item.key} fullWidth variant={active ? "contained" : "text"} color={active ? "primary" : "inherit"} onClick={() => navigate(item.to)} sx={{ minHeight: 52, display: "flex", flexDirection: "column", gap: 0.5, borderRadius: 2.5, color: active ? "primary.contrastText" : "text.secondary" }}>
+                    <Button
+                      key={item.key}
+                      fullWidth
+                      variant={active ? "contained" : "text"}
+                      color="inherit"
+                      onClick={() => navigate(item.to)}
+                      sx={{
+                        minHeight: 52,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 0.5,
+                        borderRadius: 2,
+                        color: active ? "text.primary" : "text.secondary",
+                        bgcolor:
+                          active
+                            ? muiTheme.palette.mode === "dark"
+                              ? alpha(muiTheme.palette.common.white, 0.12)
+                              : alpha(muiTheme.palette.text.primary, 0.08)
+                            : "transparent",
+                      }}
+                    >
                       <Icon size={18} />
                       <Typography variant="caption" sx={{ fontWeight: 800 }}>
                         {item.label}
@@ -582,7 +957,26 @@ export default function App() {
                     </Button>
                   );
                 })}
-                <Button fullWidth variant={viewingProfile ? "contained" : "text"} color={viewingProfile ? "primary" : "inherit"} onClick={() => navigate("/profile")} sx={{ minHeight: 52, display: "flex", flexDirection: "column", gap: 0.5, borderRadius: 2.5, color: viewingProfile ? "primary.contrastText" : "text.secondary" }}>
+                <Button
+                  fullWidth
+                  variant={viewingProfile ? "contained" : "text"}
+                  color="inherit"
+                  onClick={() => navigate("/profile")}
+                  sx={{
+                    minHeight: 52,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 0.5,
+                    borderRadius: 2,
+                    color: viewingProfile ? "text.primary" : "text.secondary",
+                    bgcolor:
+                      viewingProfile
+                        ? muiTheme.palette.mode === "dark"
+                          ? alpha(muiTheme.palette.common.white, 0.12)
+                          : alpha(muiTheme.palette.text.primary, 0.08)
+                        : "transparent",
+                  }}
+                >
                   <ProfileIcon size={18} />
                   <Typography variant="caption" sx={{ fontWeight: 800 }}>
                     Profile
