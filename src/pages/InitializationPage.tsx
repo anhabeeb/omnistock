@@ -127,59 +127,61 @@ export function InitializationPage({ syncState, onInitialize }: Props) {
       return false;
     }
 
-    const optionalUsers = [
-      {
-        label: "Admin",
-        values: [form.adminName, form.adminUsername, form.adminEmail, form.adminPassword],
-      },
-      {
-        label: "Manager",
-        values: [form.managerName, form.managerUsername, form.managerEmail, form.managerPassword],
-      },
-      {
-        label: "Worker",
-        values: [form.workerName, form.workerUsername, form.workerEmail, form.workerPassword],
-      },
-    ];
+    if (nextStep >= 3) {
+      const optionalUsers = [
+        {
+          label: "Admin",
+          values: [form.adminName, form.adminUsername, form.adminEmail, form.adminPassword],
+        },
+        {
+          label: "Manager",
+          values: [form.managerName, form.managerUsername, form.managerEmail, form.managerPassword],
+        },
+        {
+          label: "Worker",
+          values: [form.workerName, form.workerUsername, form.workerEmail, form.workerPassword],
+        },
+      ];
 
-    for (const entry of optionalUsers) {
-      const hasSome = hasAnyValue(entry.values);
-      const hasAll = entry.values.every((value) => value.trim().length > 0);
-      if (hasSome && !hasAll) {
-        setFeedback(
-          `${entry.label} setup is incomplete. Fill name, username, email, and password or leave it blank.`,
-        );
+      for (const entry of optionalUsers) {
+        const hasSome = hasAnyValue(entry.values);
+        const hasAll = entry.values.every((value) => value.trim().length > 0);
+        if (hasSome && !hasAll) {
+          setFeedback(
+            `${entry.label} setup is incomplete. Fill name, username, email, and password or leave it blank.`,
+          );
+          return false;
+        }
+
+        if (hasAll && !isStrongEnough(entry.values[3])) {
+          setFeedback(`${entry.label} password must be at least 8 characters long.`);
+          return false;
+        }
+      }
+
+      const usernames = [
+        form.superadminUsername,
+        form.adminUsername,
+        form.managerUsername,
+        form.workerUsername,
+      ]
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean);
+
+      if (new Set(usernames).size !== usernames.length) {
+        setFeedback("Each username must be unique across the setup team.");
         return false;
       }
 
-      if (hasAll && !isStrongEnough(entry.values[3])) {
-        setFeedback(`${entry.label} password must be at least 8 characters long.`);
+      if (
+        !form.superadminEmail.includes("@") ||
+        (form.adminEmail.trim() && !form.adminEmail.includes("@")) ||
+        (form.managerEmail.trim() && !form.managerEmail.includes("@")) ||
+        (form.workerEmail.trim() && !form.workerEmail.includes("@"))
+      ) {
+        setFeedback("Use valid email addresses for each user account.");
         return false;
       }
-    }
-
-    const usernames = [
-      form.superadminUsername,
-      form.adminUsername,
-      form.managerUsername,
-      form.workerUsername,
-    ]
-      .map((value) => value.trim().toLowerCase())
-      .filter(Boolean);
-
-    if (new Set(usernames).size !== usernames.length) {
-      setFeedback("Each username must be unique across the setup team.");
-      return false;
-    }
-
-    if (
-      !form.superadminEmail.includes("@") ||
-      (form.adminEmail.trim() && !form.adminEmail.includes("@")) ||
-      (form.managerEmail.trim() && !form.managerEmail.includes("@")) ||
-      (form.workerEmail.trim() && !form.workerEmail.includes("@"))
-    ) {
-      setFeedback("Use valid email addresses for each user account.");
-      return false;
     }
 
     setFeedback(undefined);
