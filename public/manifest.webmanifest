@@ -1,0 +1,9 @@
+{
+  "name": "OmniStock",
+  "short_name": "OmniStock",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5fafb",
+  "theme_color": "#0f766e",
+  "description": "Offline-first warehouse inventory system with realtime sync and barcode workflows."
+}
