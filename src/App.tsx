@@ -10,7 +10,6 @@ import {
   Divider,
   Drawer,
   IconButton,
-  InputAdornment,
   List,
   ListItemButton,
   ListItemIcon,
@@ -19,7 +18,6 @@ import {
   MenuItem,
   Paper,
   Stack,
-  TextField,
   ThemeProvider,
   Typography,
   useMediaQuery,
@@ -27,12 +25,9 @@ import {
 import CalendarMonthRoundedIcon from "@mui/icons-material/CalendarMonthRounded";
 import ChevronRightRoundedIcon from "@mui/icons-material/ChevronRightRounded";
 import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
-import MoreHorizRoundedIcon from "@mui/icons-material/MoreHorizRounded";
 import PersonOutlineRoundedIcon from "@mui/icons-material/PersonOutlineRounded";
-import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 import { MODULES, ROLE_PRESETS, canAccessModule } from "../shared/permissions";
-import { inventoryAlerts } from "../shared/selectors";
 import { AppNotificationCenter } from "./components/AppNotificationCenter";
 import {
   ActivityIcon,
@@ -147,7 +142,6 @@ export default function App() {
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileMenuAnchor, setProfileMenuAnchor] = useState<HTMLElement | null>(null);
-  const [shellSearch, setShellSearch] = useState("");
   const {
     payload,
     syncState,
@@ -205,6 +199,8 @@ export default function App() {
   } else {
     const { snapshot, currentUser } = payload;
     const visibleModules = MODULES.filter((module) => canAccessModule(currentUser, module.key));
+    const hasAdministrationAccess = canAccessModule(currentUser, "administration");
+    const sidebarModules = visibleModules.filter((module) => module.key !== "administration");
     const defaultPath = visibleModules[0] ? moduleEntryPath(visibleModules[0].key) : "/";
 
     if (visibleModules.length === 0) {
@@ -240,8 +236,7 @@ export default function App() {
         .filter((locationEntry) => currentUser.assignedLocationIds.includes(locationEntry.id))
         .map((locationEntry) => locationEntry.code)
         .join(", ");
-      const activeAlertsCount = inventoryAlerts(snapshot).length;
-      const mobileRoutes = visibleModules
+      const mobileRoutes = sidebarModules
         .map((module) => ({
           key: module.key,
           label: module.key === "inventoryOps" ? "Ops" : module.label,
@@ -276,9 +271,7 @@ export default function App() {
       const utilityLinks = [
         {
           label: "Settings",
-          to: canAccessModule(currentUser, "administration")
-            ? "/administration/settings"
-            : "/profile",
+          to: hasAdministrationAccess ? "/administration/settings" : "/profile",
           icon: <SettingsRoundedIcon sx={{ fontSize: 18 }} />,
         },
         {
@@ -286,83 +279,72 @@ export default function App() {
           to: "/profile",
           icon: <PersonOutlineRoundedIcon sx={{ fontSize: 18 }} />,
         },
+        ...(hasAdministrationAccess
+          ? [
+              {
+                label: "Users",
+                to: "/administration/users",
+                icon: <AdminIcon size={18} />,
+              },
+            ]
+          : []),
         {
-          label: canAccessModule(currentUser, "administration") ? "Activity" : "Reports",
-          to: canAccessModule(currentUser, "administration")
+          label: hasAdministrationAccess ? "Activity" : "Reports",
+          to: hasAdministrationAccess
             ? "/administration/activity"
             : canAccessModule(currentUser, "reports")
               ? "/reports/analytics"
               : defaultPath,
-          icon: canAccessModule(currentUser, "administration") ? (
+          icon: hasAdministrationAccess ? (
             <HistoryRoundedIcon sx={{ fontSize: 18 }} />
           ) : (
             <ActivityIcon size={18} />
           ),
         },
       ] as const;
-      const promoDescription =
-        activeAlertsCount > 0
-          ? `${activeAlertsCount} stock alerts need review across your assigned locations today.`
-          : "The network looks healthy. Keep an eye on reports and recent stock movements.";
-
       const openProfileMenu = (event: MouseEvent<HTMLElement>) => {
         setProfileMenuAnchor(event.currentTarget);
       };
 
       const renderSidebar = () => (
         <Stack sx={{ height: "100%", px: 1.5, py: 1.5 }} spacing={1.5}>
-          <Paper
-            variant="outlined"
-            sx={{
-              p: 1,
-              borderRadius: 3,
-              bgcolor:
-                muiTheme.palette.mode === "dark"
-                  ? alpha(muiTheme.palette.common.white, 0.02)
-                  : alpha(muiTheme.palette.background.paper, 0.92),
-            }}
-          >
-            <Stack direction="row" alignItems="center" spacing={1.25}>
-              <Box
-                sx={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 999,
-                  display: "grid",
-                  placeItems: "center",
-                  border: `1px solid ${alpha(
-                    muiTheme.palette.common.white,
-                    muiTheme.palette.mode === "dark" ? 0.12 : 0.08,
-                  )}`,
-                  bgcolor:
-                    muiTheme.palette.mode === "dark"
-                      ? alpha(muiTheme.palette.primary.main, 0.08)
-                      : alpha(muiTheme.palette.primary.main, 0.1),
-                  color: "primary.main",
-                  flex: "0 0 auto",
-                }}
-              >
-                <InventoryIcon size={18} />
-              </Box>
-              <Box minWidth={0} flex={1}>
-                <Typography variant="subtitle2" fontWeight={800} noWrap>
-                  OmniStock
-                </Typography>
-                <Typography variant="body2" color="text.secondary" noWrap>
-                  Warehouse app
-                </Typography>
-              </Box>
-              <IconButton size="small" sx={{ width: 28, height: 28 }}>
-                <MoreHorizRoundedIcon sx={{ fontSize: 18 }} />
-              </IconButton>
-            </Stack>
-          </Paper>
+          <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 0.5, py: 0.25 }}>
+            <Box
+              sx={{
+                width: 42,
+                height: 42,
+                borderRadius: 999,
+                display: "grid",
+                placeItems: "center",
+                border: `1px solid ${alpha(
+                  muiTheme.palette.common.white,
+                  muiTheme.palette.mode === "dark" ? 0.12 : 0.08,
+                )}`,
+                bgcolor:
+                  muiTheme.palette.mode === "dark"
+                    ? alpha(muiTheme.palette.primary.main, 0.08)
+                    : alpha(muiTheme.palette.primary.main, 0.1),
+                color: "primary.main",
+                flex: "0 0 auto",
+              }}
+            >
+              <InventoryIcon size={18} />
+            </Box>
+            <Box minWidth={0} flex={1}>
+              <Typography variant="subtitle2" fontWeight={800} noWrap>
+                OmniStock
+              </Typography>
+              <Typography variant="body2" color="text.secondary" noWrap>
+                Warehouse app
+              </Typography>
+            </Box>
+          </Stack>
 
           <Divider />
 
           <Box sx={{ flex: 1, overflowY: "auto", pr: 0.5 }}>
             <List disablePadding sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-              {visibleModules.map((module) => {
+              {sidebarModules.map((module) => {
                 const Icon = MODULE_ICONS[module.key];
                 const active = moduleIsActive(location.pathname, module.path);
                 const subpages = MODULE_SUBPAGES[module.key] ?? [];
@@ -489,58 +471,6 @@ export default function App() {
           <Paper
             variant="outlined"
             sx={{
-              p: 2,
-              borderRadius: 3,
-              bgcolor:
-                muiTheme.palette.mode === "dark"
-                  ? alpha(muiTheme.palette.common.white, 0.02)
-                  : alpha(muiTheme.palette.primary.main, 0.04),
-            }}
-          >
-            <Stack spacing={1.25}>
-              <Typography variant="subtitle2" fontWeight={800}>
-                Stock watch
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {promoDescription}
-              </Typography>
-              <Button
-                variant={muiTheme.palette.mode === "dark" ? "contained" : "outlined"}
-                color={muiTheme.palette.mode === "dark" ? "inherit" : "primary"}
-                onClick={() =>
-                  navigate(
-                    canAccessModule(currentUser, "reports") ? "/reports/analytics" : defaultPath,
-                  )
-                }
-                sx={{
-                  alignSelf: "flex-start",
-                  minHeight: 34,
-                  px: 1.5,
-                  borderRadius: 2,
-                  bgcolor:
-                    muiTheme.palette.mode === "dark"
-                      ? muiTheme.palette.common.white
-                      : undefined,
-                  color:
-                    muiTheme.palette.mode === "dark"
-                      ? muiTheme.palette.common.black
-                      : undefined,
-                  "&:hover": {
-                    bgcolor:
-                      muiTheme.palette.mode === "dark"
-                        ? alpha(muiTheme.palette.common.white, 0.88)
-                        : undefined,
-                  },
-                }}
-              >
-                Open reports
-              </Button>
-            </Stack>
-          </Paper>
-
-          <Paper
-            variant="outlined"
-            sx={{
               p: 1,
               borderRadius: 3,
               cursor: "pointer",
@@ -572,9 +502,6 @@ export default function App() {
                   {currentUser.email}
                 </Typography>
               </Box>
-              <IconButton size="small" onClick={openProfileMenu} sx={{ width: 32, height: 32 }}>
-                <MoreHorizRoundedIcon sx={{ fontSize: 18 }} />
-              </IconButton>
             </Stack>
           </Paper>
         </Stack>
@@ -619,9 +546,7 @@ export default function App() {
                 top: 0,
                 zIndex: 10,
                 mb: { xs: 2, lg: 2.5 },
-                py: { xs: 1, lg: 0.75 },
-                backdropFilter: "blur(14px)",
-                bgcolor: alpha(muiTheme.palette.background.default, 0.82),
+                py: { xs: 0.5, lg: 0.25 },
               }}
             >
               <Stack
@@ -676,28 +601,6 @@ export default function App() {
                   flexWrap="wrap"
                   justifyContent={{ xs: "flex-start", md: "flex-end" }}
                 >
-                  <TextField
-                    size="small"
-                    placeholder="Search..."
-                    value={shellSearch}
-                    onChange={(event) => setShellSearch(event.target.value)}
-                    sx={{
-                      width: { xs: "100%", sm: 220 },
-                      maxWidth: { md: 220 },
-                      "& .MuiOutlinedInput-root": {
-                        minHeight: 40,
-                        borderRadius: 2.5,
-                      },
-                    }}
-                    InputProps={{
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <SearchRoundedIcon sx={{ fontSize: 18, color: "text.secondary" }} />
-                        </InputAdornment>
-                      ),
-                    }}
-                  />
-
                   <Button
                     variant="outlined"
                     color="inherit"
