@@ -96,6 +96,12 @@ interface ValueTextRow {
   value_text: string | null;
 }
 
+interface InitializationCounts {
+  userCount: number;
+  locationCount: number;
+  settingsCount: number;
+}
+
 function numberPart(value: string): number {
   const [, numeric] = value.split("-", 2);
   return Number.parseInt(numeric ?? "0", 10) || 0;
@@ -254,6 +260,16 @@ async function scalarCount(db: D1Database, tableName: string): Promise<number> {
   return Number(row?.count ?? 0);
 }
 
+async function loadInitializationCounts(db: D1Database): Promise<InitializationCounts> {
+  const [userCount, locationCount, settingsCount] = await Promise.all([
+    scalarCount(db, "users"),
+    scalarCount(db, "locations"),
+    scalarCount(db, "app_settings"),
+  ]);
+
+  return { userCount, locationCount, settingsCount };
+}
+
 async function tableExists(db: D1Database, tableName: string): Promise<boolean> {
   const row = await first<{ name: string }>(
     db,
@@ -350,11 +366,63 @@ async function initializedAt(db: D1Database): Promise<string | null> {
 
 export async function isSystemInitialized(db: D1Database): Promise<boolean> {
   await ensureDatabaseReady(db);
-  const [userCount, settingsCount] = await Promise.all([
-    scalarCount(db, "users"),
-    scalarCount(db, "app_settings"),
+  const { userCount, locationCount, settingsCount } = await loadInitializationCounts(db);
+  return userCount > 0 && locationCount > 0 && settingsCount > 0;
+}
+
+async function hasOperationalData(db: D1Database): Promise<boolean> {
+  const [
+    supplierCount,
+    itemCount,
+    stockCount,
+    batchCount,
+    requestCount,
+    ledgerCount,
+    marketPriceCount,
+    wasteCount,
+    syncEventCount,
+  ] = await Promise.all([
+    scalarCount(db, "suppliers"),
+    scalarCount(db, "items"),
+    scalarCount(db, "item_stocks"),
+    scalarCount(db, "stock_batches"),
+    scalarCount(db, "inventory_requests"),
+    scalarCount(db, "movement_ledger"),
+    scalarCount(db, "market_price_entries"),
+    scalarCount(db, "waste_entries"),
+    scalarCount(db, "sync_events"),
   ]);
-  return userCount > 0 && settingsCount > 0;
+
+  return [
+    supplierCount,
+    itemCount,
+    stockCount,
+    batchCount,
+    requestCount,
+    ledgerCount,
+    marketPriceCount,
+    wasteCount,
+    syncEventCount,
+  ].some((count) => count > 0);
+}
+
+async function resetIncompleteInitialization(db: D1Database): Promise<void> {
+  if (await hasOperationalData(db)) {
+    throw new Error(
+      "OmniStock setup is incomplete and cannot be auto-recovered because operational records already exist. Clear the database or restore from a clean state before retrying initialization.",
+    );
+  }
+
+  await execute(db, "DELETE FROM user_sessions");
+  await execute(db, "DELETE FROM user_location_assignments");
+  await execute(db, "DELETE FROM activity_logs");
+  await execute(db, "DELETE FROM app_settings");
+  await execute(db, "DELETE FROM users");
+  await execute(db, "DELETE FROM locations");
+  await execute(
+    db,
+    "DELETE FROM system_state WHERE key IN ('initialized_at', 'latest_cursor')",
+  );
 }
 
 async function deleteUserSessions(db: D1Database, userId: string): Promise<void> {
@@ -2163,14 +2231,16 @@ export async function initializeSystemInD1(
 ): Promise<InitializeSystemResponse> {
   await ensureDatabaseReady(db);
 
-  const [userCount, locationCount, settingsCount] = await Promise.all([
-    scalarCount(db, "users"),
-    scalarCount(db, "locations"),
-    scalarCount(db, "app_settings"),
-  ]);
+  const { userCount, locationCount, settingsCount } = await loadInitializationCounts(db);
+  const fullyInitialized = userCount > 0 && locationCount > 0 && settingsCount > 0;
+  const partiallyInitialized = userCount > 0 || locationCount > 0 || settingsCount > 0;
 
-  if (userCount > 0 || locationCount > 0 || settingsCount > 0) {
+  if (fullyInitialized) {
     throw new Error("OmniStock is already initialized for this database.");
+  }
+
+  if (partiallyInitialized) {
+    await resetIncompleteInitialization(db);
   }
 
   const companyName = input.companyName.trim();
