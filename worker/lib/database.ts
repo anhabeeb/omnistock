@@ -2162,7 +2162,7 @@ export async function initializeSystemInD1(
       code: location.code.trim().toUpperCase(),
       city: location.city.trim(),
     }))
-    .filter((location) => location.name && location.code && location.city);
+    .filter((location) => location.name && location.code);
   const hasWarehouse = locations.some((location) => location.type === "warehouse");
   const hasOutlet = locations.some((location) => location.type === "outlet");
   if (!hasWarehouse || !hasOutlet) {

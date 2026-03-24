@@ -53,6 +53,24 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
+function errorResponse(error: unknown): Response {
+  const message = error instanceof Error ? error.message : "Unexpected server error.";
+  const status =
+    message === "Authentication required."
+      ? 401
+      : error instanceof Error
+        ? 400
+        : 500;
+
+  return new Response(message, {
+    status,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
 function readCookie(request: Request, name: string): string | undefined {
   const cookieHeader = request.headers.get("Cookie");
   if (!cookieHeader) {
@@ -425,73 +443,77 @@ export class OmniStockHub extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     await this.ensureInitialized();
 
-    const url = new URL(request.url);
+    try {
+      const url = new URL(request.url);
 
-    if (request.method === "GET" && url.pathname === "/bootstrap") {
-      return this.handleBootstrap(request);
+      if (request.method === "GET" && url.pathname === "/bootstrap") {
+        return this.handleBootstrap(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/sync/pull") {
+        return this.handlePull(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/sync/push") {
+        return this.handlePush(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/market-prices") {
+        return this.handleCreateMarketPrice(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/auth/login") {
+        return this.handleLogin(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/auth/activate-superadmin") {
+        return this.handleActivateSuperadmin(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/auth/logout") {
+        return this.handleLogout(request);
+      }
+
+      if (request.method === "PATCH" && url.pathname === "/profile") {
+        return this.handleUpdateOwnProfile(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/profile/change-password") {
+        return this.handleChangeOwnPassword(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/users") {
+        return this.handleCreateUser(request);
+      }
+
+      if (request.method === "PATCH" && url.pathname === "/users") {
+        return this.handleUpdateUser(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/users/reset-password") {
+        return this.handleResetUserPassword(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/users/remove") {
+        return this.handleRemoveUser(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/initialize") {
+        return this.handleInitialize(request);
+      }
+
+      if (request.method === "GET" && url.pathname === "/health") {
+        return this.handleHealth();
+      }
+
+      if (url.pathname === "/ws") {
+        return this.handleWebSocket(request);
+      }
+
+      return new Response("Not found.", { status: 404 });
+    } catch (error) {
+      return errorResponse(error);
     }
-
-    if (request.method === "POST" && url.pathname === "/sync/pull") {
-      return this.handlePull(request);
-    }
-
-    if (request.method === "POST" && url.pathname === "/sync/push") {
-      return this.handlePush(request);
-    }
-
-    if (request.method === "POST" && url.pathname === "/market-prices") {
-      return this.handleCreateMarketPrice(request);
-    }
-
-    if (request.method === "POST" && url.pathname === "/auth/login") {
-      return this.handleLogin(request);
-    }
-
-    if (request.method === "POST" && url.pathname === "/auth/activate-superadmin") {
-      return this.handleActivateSuperadmin(request);
-    }
-
-    if (request.method === "POST" && url.pathname === "/auth/logout") {
-      return this.handleLogout(request);
-    }
-
-    if (request.method === "PATCH" && url.pathname === "/profile") {
-      return this.handleUpdateOwnProfile(request);
-    }
-
-    if (request.method === "POST" && url.pathname === "/profile/change-password") {
-      return this.handleChangeOwnPassword(request);
-    }
-
-    if (request.method === "POST" && url.pathname === "/users") {
-      return this.handleCreateUser(request);
-    }
-
-    if (request.method === "PATCH" && url.pathname === "/users") {
-      return this.handleUpdateUser(request);
-    }
-
-    if (request.method === "POST" && url.pathname === "/users/reset-password") {
-      return this.handleResetUserPassword(request);
-    }
-
-    if (request.method === "POST" && url.pathname === "/users/remove") {
-      return this.handleRemoveUser(request);
-    }
-
-    if (request.method === "POST" && url.pathname === "/initialize") {
-      return this.handleInitialize(request);
-    }
-
-    if (request.method === "GET" && url.pathname === "/health") {
-      return this.handleHealth();
-    }
-
-    if (url.pathname === "/ws") {
-      return this.handleWebSocket(request);
-    }
-
-    return new Response("Not found.", { status: 404 });
   }
 
   webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {

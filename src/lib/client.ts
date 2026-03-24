@@ -20,10 +20,23 @@ import type {
   MutationEnvelope,
 } from "../../shared/types";
 
+function normalizeErrorMessage(message: string): string {
+  const trimmed = message.trim();
+  if (!trimmed) {
+    return "Request failed.";
+  }
+
+  if (trimmed.startsWith("<!DOCTYPE") || trimmed.startsWith("<html")) {
+    return "The server returned an unexpected error page. Please try again. If it keeps happening, check the Worker logs.";
+  }
+
+  return trimmed;
+}
+
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(message || "Request failed.");
+    throw new Error(normalizeErrorMessage(message));
   }
 
   return (await response.json()) as T;
