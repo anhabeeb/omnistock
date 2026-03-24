@@ -1,6 +1,4 @@
 export const OMNISTOCK_D1_SCHEMA_SQL = `
-PRAGMA foreign_keys = ON;
-
 CREATE TABLE IF NOT EXISTS roles (
   code TEXT PRIMARY KEY,
   label TEXT NOT NULL,

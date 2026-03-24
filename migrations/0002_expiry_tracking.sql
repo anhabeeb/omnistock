@@ -1,5 +1,3 @@
-PRAGMA foreign_keys = ON;
-
 ALTER TABLE inventory_request_lines ADD COLUMN lot_code TEXT;
 ALTER TABLE inventory_request_lines ADD COLUMN expiry_date TEXT;
 ALTER TABLE inventory_request_lines ADD COLUMN received_at TEXT;
