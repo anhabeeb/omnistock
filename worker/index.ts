@@ -62,6 +62,8 @@ function errorResponse(error: unknown): Response {
         ? 400
         : 500;
 
+  console.error("OmniStock request failed:", error);
+
   return new Response(message, {
     status,
     headers: {
@@ -104,21 +106,25 @@ async function readJson<T>(request: Request): Promise<T> {
 
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
+    try {
+      const url = new URL(request.url);
 
-    if (url.pathname.startsWith("/api/")) {
-      const stub = env.OMNISTOCK_HUB.getByName("primary");
-      const proxiedUrl = new URL(request.url);
-      proxiedUrl.pathname = url.pathname.replace("/api", "") || "/";
-      return stub.fetch(new Request(proxiedUrl.toString(), request));
+      if (url.pathname.startsWith("/api/")) {
+        const stub = env.OMNISTOCK_HUB.getByName("primary");
+        const proxiedUrl = new URL(request.url);
+        proxiedUrl.pathname = url.pathname.replace("/api", "") || "/";
+        return await stub.fetch(new Request(proxiedUrl.toString(), request));
+      }
+
+      if (url.pathname === "/ws") {
+        const stub = env.OMNISTOCK_HUB.getByName("primary");
+        return await stub.fetch(request);
+      }
+
+      return env.ASSETS.fetch(request);
+    } catch (error) {
+      return errorResponse(error);
     }
-
-    if (url.pathname === "/ws") {
-      const stub = env.OMNISTOCK_HUB.getByName("primary");
-      return stub.fetch(request);
-    }
-
-    return env.ASSETS.fetch(request);
   },
 } satisfies ExportedHandler<Env>;
 
@@ -441,9 +447,8 @@ export class OmniStockHub extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
-    await this.ensureInitialized();
-
     try {
+      await this.ensureInitialized();
       const url = new URL(request.url);
 
       if (request.method === "GET" && url.pathname === "/bootstrap") {
