@@ -42,7 +42,7 @@ type D1Value = string | number | null;
 const SETTINGS_ID = "stg-00001";
 const SEQUENCE_DEFAULT_WIDTH = 5;
 const DOCUMENT_SEQUENCE_START = 1001;
-const PASSWORD_ITERATIONS = 210_000;
+const PASSWORD_ITERATIONS = 100_000;
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 const textEncoder = new TextEncoder();
 
