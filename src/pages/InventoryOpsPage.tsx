@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { OPERATION_LABELS } from "../../shared/operations";
 import {
   batchDaysUntilExpiry,
@@ -71,6 +72,8 @@ export function InventoryOpsPage({
   syncState,
   onCreateOperation,
 }: Props) {
+  const [searchParams] = useSearchParams();
+  const preferredKind = searchParams.get("kind");
   const [form, setForm] = useState<FormState>(() => defaultForm(snapshot, currentUser));
   const [searchTerm, setSearchTerm] = useState("");
   const [feedback, setFeedback] = useState<string>();
@@ -78,9 +81,14 @@ export function InventoryOpsPage({
   const deferredSearchTerm = useDeferredValue(searchTerm);
 
   useEffect(() => {
-    setForm(defaultForm(snapshot, currentUser));
+    const nextForm = defaultForm(snapshot, currentUser);
+    if (preferredKind && preferredKind in OPERATION_LABELS) {
+      nextForm.kind = preferredKind as RequestKind;
+    }
+
+    setForm(nextForm);
     setFeedback(undefined);
-  }, [currentUser.id, snapshot.generatedAt]);
+  }, [currentUser.id, preferredKind, snapshot.generatedAt]);
 
   const selectedItem = snapshot.items.find((item) => item.id === form.itemId);
   const needsSource =

@@ -1,17 +1,26 @@
+import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import {
   dashboardMetrics,
   expiredAlerts,
   inventoryAlerts,
   lowStockAlerts,
+  nearExpiryAlerts,
   openRequests,
   recentLedger,
   visibleModuleCount,
-  nearExpiryAlerts,
 } from "../../shared/selectors";
 import type { InventoryAlert, InventorySnapshot, User } from "../../shared/types";
 import { formatDateTime } from "../lib/format";
 import type { SyncState } from "../lib/useOmniStockApp";
+import {
+  AlertIcon,
+  ClockIcon,
+  CurrencyIcon,
+  InventoryIcon,
+  PlusIcon,
+  ReportsIcon,
+} from "../components/AppIcons";
 
 interface Props {
   snapshot: InventorySnapshot;
@@ -27,7 +36,7 @@ const ALERT_COPY: Record<AlertTab, { title: string; empty: string }> = {
     empty: "No low-stock alerts right now.",
   },
   "near-expiry": {
-    title: "Nearing Expiry",
+    title: "Near Expiry",
     empty: "No batches are nearing expiry inside the alert window.",
   },
   expired: {
@@ -40,30 +49,23 @@ const GUIDE_STORAGE_PREFIX = "omnistock:first-login-guide:";
 const FIRST_LOGIN_STEPS = [
   {
     title: "Check alerts first",
-    detail: "Use the notification center to review low stock, near-expiry, and expired items before taking action.",
+    detail: "Review low stock, near-expiry, and expired items before starting daily issue or receiving.",
   },
   {
-    title: "Post movements in Inventory OPS",
-    detail: "Create GRN, GIN, transfers, adjustments, counts, or wastage. Barcode scanning is available for faster item selection.",
+    title: "Post operations from Inventory OPS",
+    detail: "Use GRN, GIN, transfers, adjustments, counts, and wastage with barcode support where needed.",
   },
   {
     title: "Keep master data clean",
-    detail: "Add items, suppliers, warehouses, outlets, and daily market rates before the operation volume grows.",
+    detail: "Maintain items, suppliers, warehouses, outlets, and market prices before transaction volume grows.",
   },
   {
-    title: "Review waste and stock reports",
-    detail: "Use Reports and Analytics to monitor movement, waste cost, expiry exposure, and export Excel sheets.",
-  },
-  {
-    title: "Use Administration for control",
-    detail: "Manage users, settings, and activity logs so permissions and operational rules stay aligned.",
+    title: "Monitor reports every day",
+    detail: "Use the reports area for movement history, waste analysis, expiry exposure, exports, and prints.",
   },
 ];
 
-function alertListForTab(
-  snapshot: InventorySnapshot,
-  tab: AlertTab,
-): InventoryAlert[] {
+function alertListForTab(snapshot: InventorySnapshot, tab: AlertTab): InventoryAlert[] {
   if (tab === "low-stock") {
     return lowStockAlerts(snapshot);
   }
@@ -75,22 +77,74 @@ function alertListForTab(
   return expiredAlerts(snapshot);
 }
 
+function locationCoverage(snapshot: InventorySnapshot, locationId: string): number {
+  const stocks = snapshot.items
+    .flatMap((item) =>
+      item.stocks
+        .filter((stock) => stock.locationId === locationId)
+        .map((stock) => ({
+          onHand: stock.onHand,
+          minLevel: stock.minLevel,
+        })),
+    )
+    .filter((stock) => stock.onHand > 0 || stock.minLevel > 0);
+
+  if (stocks.length === 0) {
+    return 100;
+  }
+
+  const healthy = stocks.filter((stock) => stock.onHand > stock.minLevel).length;
+  return Math.round((healthy / stocks.length) * 100);
+}
+
+function statIcon(label: string) {
+  if (label.includes("Value")) {
+    return CurrencyIcon;
+  }
+
+  if (label.includes("Low")) {
+    return AlertIcon;
+  }
+
+  if (label.includes("Expiry")) {
+    return ClockIcon;
+  }
+
+  return InventoryIcon;
+}
+
+function statTone(label: string): "emerald" | "blue" | "amber" | "rose" {
+  if (label.includes("Value")) {
+    return "emerald";
+  }
+
+  if (label.includes("Low")) {
+    return "amber";
+  }
+
+  if (label.includes("Expiry")) {
+    return "rose";
+  }
+
+  return "blue";
+}
+
 export function DashboardPage({ snapshot, currentUser, syncState }: Props) {
   const [alertTab, setAlertTab] = useState<AlertTab>("low-stock");
   const [showGuide, setShowGuide] = useState(false);
-  const metrics = inventoryAlerts(snapshot);
   const metricCards = dashboardMetrics(snapshot);
   const pendingRequests = openRequests(snapshot).slice(0, 5);
-  const recentMovements = recentLedger(snapshot, 6);
+  const recentMovements = recentLedger(snapshot, 5);
+  const activeAlerts = alertListForTab(snapshot, alertTab).slice(0, 6);
   const assignedLocations = snapshot.locations.filter((location) =>
     currentUser.assignedLocationIds.includes(location.id),
   );
+  const alertBacklog = inventoryAlerts(snapshot).length;
   const alertCounts = {
     "low-stock": lowStockAlerts(snapshot).length,
     "near-expiry": nearExpiryAlerts(snapshot).length,
     expired: expiredAlerts(snapshot).length,
   } satisfies Record<AlertTab, number>;
-  const activeAlerts = alertListForTab(snapshot, alertTab).slice(0, 6);
 
   useEffect(() => {
     const key = `${GUIDE_STORAGE_PREFIX}${currentUser.id}`;
@@ -103,91 +157,121 @@ export function DashboardPage({ snapshot, currentUser, syncState }: Props) {
   }
 
   return (
-    <div className="page-stack">
-      <section className="hero-panel">
+    <div className="page-stack page-stack-dashboard">
+      <section className="dashboard-hero">
         <div>
-          <p className="eyebrow">Operational Overview</p>
-          <h1>{snapshot.settings.companyName}</h1>
-          <p className="hero-copy">
-            {currentUser.name} can currently access {visibleModuleCount(snapshot, currentUser.id)}{" "}
-            modules, covering {assignedLocations.length} assigned locations. Offline sync remains
-            available, and outbound stock uses FEFO so the earliest valid expiry moves first.
+          <p className="eyebrow">Dashboard Overview</p>
+          <h2 className="dashboard-title">Welcome back, {currentUser.name.split(" ")[0]}</h2>
+          <p className="dashboard-copy">
+            {snapshot.settings.companyName} is running across {assignedLocations.length} assigned
+            locations. You currently have access to {visibleModuleCount(snapshot, currentUser.id)}{" "}
+            modules, with {alertBacklog} active stock alerts and {syncState.online ? "healthy" : "offline"} sync posture.
           </p>
         </div>
 
-        <div className="hero-meta">
-          <div className="meta-card">
-            <span>Assigned locations</span>
-            <strong>{assignedLocations.length}</strong>
-            <small>
-              {assignedLocations.map((location) => location.code).join(", ") || "No sites assigned"}
-            </small>
-          </div>
-          <div className="meta-card">
-            <span>Alert backlog</span>
-            <strong>{metrics.length}</strong>
-            <small>
-              Includes low stock, near-expiry, and expired batches across the network.
-            </small>
-          </div>
-          <div className="meta-card">
-            <span>Sync posture</span>
-            <strong>{syncState.online ? "Healthy" : "Offline mode"}</strong>
-            <small>
-              {syncState.websocket === "connected"
-                ? "Realtime channel live"
-                : "Polling and queue fallback ready"}
-            </small>
-          </div>
+        <div className="dashboard-hero-actions">
+          <Link to="/reports" className="toolbar-button">
+            <ReportsIcon size={16} />
+            <span>Movement ledger</span>
+          </Link>
+          <Link to="/inventory" className="toolbar-button toolbar-button-primary">
+            <PlusIcon size={16} />
+            <span>Inventory OPS</span>
+          </Link>
         </div>
       </section>
 
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">First Login Guide</p>
-            <h2>How To Operate OmniStock</h2>
-          </div>
-          <div className="button-row">
-            <button type="button" className="secondary-button" onClick={() => setShowGuide(true)}>
-              Open guide
-            </button>
-            {showGuide ? (
-              <button type="button" className="secondary-button" onClick={dismissGuide}>
-                Mark as done
-              </button>
-            ) : null}
-          </div>
-        </div>
-        {showGuide ? (
-          <div className="stack-list">
-            {FIRST_LOGIN_STEPS.map((step, index) => (
-              <div key={step.title} className="list-row">
-                <div>
-                  <strong>
-                    {index + 1}. {step.title}
-                  </strong>
-                  <p>{step.detail}</p>
+      <section className="metric-grid dashboard-metric-grid">
+        {metricCards.map((metric) => {
+          const Icon = statIcon(metric.label);
+          const tone = statTone(metric.label);
+          return (
+            <article key={metric.label} className={`stat-card tone-${tone}`}>
+              <div className="stat-card-top">
+                <div className={`stat-card-icon tone-${tone}`}>
+                  <Icon size={20} />
                 </div>
-                <span className="status-chip neutral">Step {index + 1}</span>
+                <span className="stat-card-trace">{metric.tone === "warning" ? "Attention" : "Live"}</span>
               </div>
-            ))}
-          </div>
-        ) : (
-          <p className="empty-copy">
-            The quick-start guide is tucked away. Open it anytime if a user needs a refresher.
-          </p>
-        )}
+              <p>{metric.label}</p>
+              <strong>{metric.value}</strong>
+              <small>{metric.detail}</small>
+            </article>
+          );
+        })}
       </section>
 
-      <section className="metric-grid">
-        {metricCards.map((metric) => (
-          <article key={metric.label} className={`metric-card tone-${metric.tone}`}>
-            <p>{metric.label}</p>
-            <strong>{metric.value}</strong>
-            <small>{metric.detail}</small>
-          </article>
-        ))}
+      <section className="dashboard-main-grid">
+        <article className="panel dashboard-panel-large">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Movement Ledger</p>
+              <h2>Recent Stock Activity</h2>
+            </div>
+            <Link to="/reports" className="panel-link">
+              View all
+            </Link>
+          </div>
+          <div className="stack-list">
+            {recentMovements.length > 0 ? (
+              recentMovements.map((entry) => (
+                <div key={entry.id} className="dashboard-movement-card">
+                  <div className={`dashboard-movement-icon ${entry.quantityChange < 0 ? "negative" : "positive"}`}>
+                    <InventoryIcon size={18} />
+                  </div>
+                  <div className="dashboard-movement-copy">
+                    <strong>{entry.itemName}</strong>
+                    <p>
+                      {entry.changeType} - {entry.locationName}
+                    </p>
+                    <small>{entry.reference}</small>
+                  </div>
+                  <div className="dashboard-movement-value">
+                    <strong className={entry.quantityChange < 0 ? "text-warning" : "text-positive"}>
+                      {entry.quantityChange > 0 ? "+" : ""}
+                      {entry.quantityChange}
+                    </strong>
+                    <small>{formatDateTime(entry.createdAt)}</small>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="empty-copy">No stock movements have been posted yet.</p>
+            )}
+          </div>
+        </article>
+
+        <article className="panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Warehouse Status</p>
+              <h2>Assigned Locations</h2>
+            </div>
+          </div>
+          <div className="stack-list">
+            {assignedLocations.length > 0 ? (
+              assignedLocations.map((location) => {
+                const coverage = locationCoverage(snapshot, location.id);
+                return (
+                  <div key={location.id} className="location-health-card">
+                    <div className="location-health-header">
+                      <div>
+                        <strong>{location.name}</strong>
+                        <p>{location.code}</p>
+                      </div>
+                      <span>{coverage}% ready</span>
+                    </div>
+                    <div className="location-health-bar">
+                      <div className="location-health-fill" style={{ width: `${coverage}%` }} />
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <p className="empty-copy">No locations are assigned to this user yet.</p>
+            )}
+          </div>
+        </article>
       </section>
 
       <section className="split-grid">
@@ -198,7 +282,7 @@ export function DashboardPage({ snapshot, currentUser, syncState }: Props) {
               <h2>{ALERT_COPY[alertTab].title}</h2>
             </div>
             <span className="status-chip neutral">
-              FEFO {snapshot.settings.strictFefo ? "enforced" : "guided"}
+              {snapshot.settings.strictFefo ? "FEFO enforced" : "FEFO guided"}
             </span>
           </div>
           <div className="chip-row">
@@ -274,37 +358,39 @@ export function DashboardPage({ snapshot, currentUser, syncState }: Props) {
         <article className="panel">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">Movement Ledger</p>
-              <h2>Recent Stock Activity</h2>
+              <p className="eyebrow">First Login Guide</p>
+              <h2>How To Operate OmniStock</h2>
+            </div>
+            <div className="button-row">
+              <button type="button" className="toolbar-button" onClick={() => setShowGuide(true)}>
+                Open guide
+              </button>
+              {showGuide ? (
+                <button type="button" className="toolbar-button" onClick={dismissGuide}>
+                  Mark as done
+                </button>
+              ) : null}
             </div>
           </div>
-          <div className="table-wrap">
-            <table className="data-table compact">
-              <thead>
-                <tr>
-                  <th>Reference</th>
-                  <th>Item</th>
-                  <th>Location</th>
-                  <th>Delta</th>
-                  <th>When</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentMovements.map((entry) => (
-                  <tr key={entry.id}>
-                    <td>{entry.reference}</td>
-                    <td>{entry.itemName}</td>
-                    <td>{entry.locationName}</td>
-                    <td className={entry.quantityChange < 0 ? "text-warning" : "text-positive"}>
-                      {entry.quantityChange > 0 ? "+" : ""}
-                      {entry.quantityChange}
-                    </td>
-                    <td>{formatDateTime(entry.createdAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {showGuide ? (
+            <div className="stack-list">
+              {FIRST_LOGIN_STEPS.map((step, index) => (
+                <div key={step.title} className="list-row">
+                  <div>
+                    <strong>
+                      {index + 1}. {step.title}
+                    </strong>
+                    <p>{step.detail}</p>
+                  </div>
+                  <span className="status-chip neutral">Step {index + 1}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="empty-copy">
+              The quick-start guide is tucked away. Open it anytime if a user needs a refresher.
+            </p>
+          )}
         </article>
 
         <article className="panel">
@@ -313,6 +399,7 @@ export function DashboardPage({ snapshot, currentUser, syncState }: Props) {
               <p className="eyebrow">Activity Feed</p>
               <h2>Audit Highlights</h2>
             </div>
+            <span className="status-chip neutral">{syncState.online ? "Live sync" : "Queued sync"}</span>
           </div>
           <div className="timeline">
             {snapshot.activity.slice(0, 6).map((event) => (
