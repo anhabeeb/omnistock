@@ -15,7 +15,6 @@ import {
 import { useLocation } from "react-router-dom";
 import { lowStockItems, openRequests, totalInventoryValue } from "../../shared/selectors";
 import type { InventorySnapshot, User, WasteEntry } from "../../shared/types";
-import { ModuleSubnav } from "../components/ModuleSubnav";
 import { exportMovementLedger, exportWasteEntries, printCurrentPage } from "../lib/export";
 import { formatCurrency, formatDateTime } from "../lib/format";
 
@@ -71,11 +70,6 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
   const [exportingLedger, setExportingLedger] = useState(false);
   const [exportingWaste, setExportingWaste] = useState(false);
   const deferredSearch = useDeferredValue(search);
-  const subnavItems = REPORT_SECTIONS.map((section) => ({
-    label: section.label,
-    to: `/reports/${section.slug}`,
-  }));
-
   const filteredLedger = snapshot.movementLedger.filter((entry) => {
     const matchesLocation = locationFilter === "all" ? true : entry.locationId === locationFilter;
     const matchesSearch =
@@ -129,8 +123,6 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
 
   return (
     <Stack spacing={2.5}>
-      <ModuleSubnav items={subnavItems} />
-
       <Paper
         sx={{
           p: { xs: 2.5, md: 3 },
@@ -154,10 +146,18 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
             </Typography>
           </Box>
 
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25} useFlexGap flexWrap="wrap">
-            <Chip label={`Prepared for ${currentUser.name}`} color="primary" />
-            <Chip variant="outlined" label={formatCurrency(totalInventoryValue(snapshot), snapshot.settings.currency)} />
-          </Stack>
+          <Box className="hero-meta" sx={{ width: { xs: "100%", lg: 360 }, maxWidth: "100%" }}>
+            <Box className="meta-card">
+              <span>Prepared For</span>
+              <strong>{currentUser.name}</strong>
+              <small>Current report session owner for exports and print actions.</small>
+            </Box>
+            <Box className="meta-card">
+              <span>Inventory Value</span>
+              <strong>{formatCurrency(totalInventoryValue(snapshot), snapshot.settings.currency)}</strong>
+              <small>Total live stock value across the active OmniStock snapshot.</small>
+            </Box>
+          </Box>
         </Stack>
       </Paper>
 

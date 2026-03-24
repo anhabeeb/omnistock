@@ -9,7 +9,6 @@ import type {
   UpdateUserRequest,
   User,
 } from "../../shared/types";
-import { ModuleSubnav } from "../components/ModuleSubnav";
 import { formatDateTime } from "../lib/format";
 
 interface Props {
@@ -126,11 +125,6 @@ export function AdminPage({
   const [feedback, setFeedback] = useState<string>();
   const [submitting, setSubmitting] = useState<string>();
   const isSuperadmin = currentUser.role === "superadmin";
-  const subnavItems = ADMIN_SECTIONS.map((section) => ({
-    label: section.label,
-    to: `/administration/${section.slug}`,
-  }));
-
   const selectedUser = useMemo(
     () => snapshot.users.find((user) => user.id === selectedUserId) ?? snapshot.users[0] ?? null,
     [selectedUserId, snapshot.users],
@@ -269,8 +263,6 @@ export function AdminPage({
 
   return (
     <div className="page-stack">
-      <ModuleSubnav items={subnavItems} />
-
       <section className="hero-panel">
         <div>
           <p className="eyebrow">Administration</p>

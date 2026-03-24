@@ -535,7 +535,7 @@ export default function App() {
               minWidth: 0,
               ml: !isTabletOrMobile ? `${SIDEBAR_WIDTH}px` : 0,
               px: { xs: 2, sm: 2.5, lg: 3 },
-              pt: { xs: 1.5, sm: 2, lg: 2.5 },
+              pt: 0,
               pb: { xs: 11.5, lg: 4 },
             }}
           >
@@ -544,9 +544,13 @@ export default function App() {
               sx={{
                 position: "sticky",
                 top: 0,
-                zIndex: 10,
+                zIndex: muiTheme.zIndex.appBar,
                 mb: { xs: 2, lg: 2.5 },
-                py: { xs: 0.5, lg: 0.25 },
+                pt: { xs: 1.5, sm: 2, lg: 2.5 },
+                pb: { xs: 0.75, lg: 0.5 },
+                bgcolor: alpha(muiTheme.palette.background.default, 0.94),
+                backdropFilter: "blur(12px)",
+                borderBottom: `1px solid ${alpha(muiTheme.palette.divider, 0.7)}`,
               }}
             >
               <Stack

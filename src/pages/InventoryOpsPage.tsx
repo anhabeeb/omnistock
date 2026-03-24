@@ -16,7 +16,6 @@ import type {
   WasteReason,
 } from "../../shared/types";
 import { BarcodeScanner } from "../components/BarcodeScanner";
-import { ModuleSubnav } from "../components/ModuleSubnav";
 import { formatDateTime } from "../lib/format";
 import type { CreateOperationInput, SyncState } from "../lib/useOmniStockApp";
 
@@ -158,11 +157,6 @@ export function InventoryOpsPage({
   const sectionRequests = snapshot.requests
     .filter((request) => request.kind === activeSection.kind)
     .slice(0, 8);
-  const subnavItems = INVENTORY_SECTIONS.map((section) => ({
-    label: section.navLabel,
-    to: `/inventory/${section.slug}`,
-  }));
-
   const visibleItems = snapshot.items.filter((item) => {
     if (!deferredSearchTerm.trim()) {
       return true;
@@ -250,8 +244,6 @@ export function InventoryOpsPage({
 
   return (
     <div className="page-stack">
-      <ModuleSubnav items={subnavItems} />
-
       <section className="hero-panel">
         <div>
           <p className="eyebrow">Inventory OPS</p>

@@ -921,11 +921,14 @@ a {
 }
 
 .hero-meta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+  align-items: stretch;
 }
 
 .meta-card {
   padding: 16px;
+  min-width: 0;
 }
 
 .meta-card span,
@@ -2027,6 +2030,12 @@ textarea {
   .hero-panel,
   .split-grid,
   .dashboard-main-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .hero-meta {
     grid-template-columns: 1fr;
   }
 }

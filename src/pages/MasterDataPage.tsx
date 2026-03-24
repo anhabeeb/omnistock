@@ -8,7 +8,6 @@ import type {
   PriceCategory,
   User,
 } from "../../shared/types";
-import { ModuleSubnav } from "../components/ModuleSubnav";
 import { exportMarketPrices } from "../lib/export";
 import { formatCurrency, formatDateTime } from "../lib/format";
 
@@ -116,11 +115,6 @@ export function MasterDataPage({ snapshot, currentUser, onCreateMarketPrice }: P
   const [savingPrice, setSavingPrice] = useState(false);
   const [exporting, setExporting] = useState(false);
   const deferredSearch = useDeferredValue(search);
-  const subnavItems = MASTER_SECTIONS.map((section) => ({
-    label: section.label,
-    to: `/master-data/${section.slug}`,
-  }));
-
   useEffect(() => {
     setPriceForm((current) => {
       if (current.itemId && snapshot.items.some((item) => item.id === current.itemId)) {
@@ -317,8 +311,6 @@ export function MasterDataPage({ snapshot, currentUser, onCreateMarketPrice }: P
 
   return (
     <div className="page-stack">
-      <ModuleSubnav items={subnavItems} />
-
       <section className="hero-panel">
         <div>
           <p className="eyebrow">Master Data</p>
