@@ -32,6 +32,7 @@
     "Segoe UI Variable Text", "Aptos", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --font-heading:
     "Segoe UI Variable Display", "Aptos Display", "Aptos", "Segoe UI", sans-serif;
+  --font-ui: "Segoe UI", "Segoe UI Variable Text", "Aptos", "Helvetica Neue", Arial, sans-serif;
   --transition: 180ms ease;
 }
 
@@ -228,7 +229,9 @@ a {
 }
 
 .nav-link span {
+  font-family: var(--font-ui);
   font-weight: 700;
+  font-size: 0.98rem;
   letter-spacing: -0.01em;
 }
 
@@ -664,8 +667,11 @@ textarea:disabled {
   min-height: 44px;
   border-radius: 999px;
   padding: 11px 18px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-family: var(--font-ui);
+  font-size: 0.97rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.35;
   transition:
     transform var(--transition),
     box-shadow var(--transition),
@@ -913,8 +919,10 @@ textarea:disabled {
   place-items: center;
   min-height: 46px;
   border-radius: 16px;
+  font-family: var(--font-ui);
+  font-size: 0.92rem;
+  line-height: 1.35;
   color: rgba(241, 247, 255, 0.72);
-  font-size: 0.84rem;
   font-weight: 700;
 }
 
