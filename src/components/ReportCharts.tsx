@@ -55,7 +55,7 @@ function arcPath(cx: number, cy: number, radius: number, startAngle: number, end
 
 function Legend({ items }: { items: ChartLegendItem[] }) {
   return (
-    <Stack direction="row" spacing={1.5} useFlexGap flexWrap="wrap">
+    <Stack direction="row" spacing={1.5} useFlexGap flexWrap="wrap" justifyContent="center">
       {items.map((item) => (
         <Stack key={item.label} direction="row" spacing={0.75} alignItems="center">
           <Box
@@ -126,7 +126,7 @@ export function LineAreaChart({
   }
 
   return (
-    <Stack spacing={1.5}>
+    <Stack spacing={1.5} alignItems="center">
       <Box sx={{ width: "100%", overflowX: "auto" }}>
         <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="Line chart">
           {[0, 1, 2, 3].map((step) => {
@@ -220,7 +220,7 @@ export function StackedBarChart({
   }
 
   return (
-    <Stack spacing={1.5}>
+    <Stack spacing={1.5} alignItems="center">
       <Box sx={{ width: "100%", overflowX: "auto" }}>
         <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="Stacked bar chart">
           {[0, 1, 2, 3].map((step) => {
@@ -316,7 +316,7 @@ export function DonutChart({
   let startAngle = 0;
 
   return (
-    <Stack direction={{ xs: "column", sm: "row" }} spacing={2.5} alignItems="center">
+    <Stack direction={{ xs: "column", sm: "row" }} spacing={2.5} alignItems="center" justifyContent="center">
       <Box sx={{ width: size, height: size, flexShrink: 0 }}>
         <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} role="img" aria-label="Donut chart">
           <circle

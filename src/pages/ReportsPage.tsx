@@ -196,9 +196,9 @@ function SectionCard({
   children: ReactNode;
 }) {
   return (
-    <Paper sx={{ p: { xs: 2.25, md: 2.75 }, borderRadius: 4, height: "100%" }}>
+    <Paper sx={{ p: { xs: 2.25, md: 2.75 }, borderRadius: 2.5, height: "100%" }}>
       <Stack spacing={2}>
-        <Box>
+        <Box sx={{ textAlign: "center" }}>
           <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
             {eyebrow}
           </Typography>
@@ -227,8 +227,8 @@ function MetricCard({
   detail: string;
 }) {
   return (
-    <Paper sx={{ p: 2.25, borderRadius: 4, height: "100%" }}>
-      <Stack spacing={1}>
+    <Paper sx={{ p: 2.25, borderRadius: 2.5, height: "100%" }}>
+      <Stack spacing={1} alignItems="center" textAlign="center">
         <Typography variant="body2" color="text.secondary">
           {label}
         </Typography>
@@ -255,9 +255,9 @@ function StatusCard({
   background: string;
 }) {
   return (
-    <Paper sx={{ p: 2, borderRadius: 4, backgroundColor: background, border: `1px solid ${accent}` }}>
-      <Stack spacing={1}>
-        <Stack direction="row" spacing={1} alignItems="center">
+    <Paper sx={{ p: 2, borderRadius: 2.5, backgroundColor: background, border: `1px solid ${accent}` }}>
+      <Stack spacing={1} alignItems="center" textAlign="center">
+        <Stack direction="row" spacing={1} alignItems="center" justifyContent="center">
           <Box sx={{ width: 10, height: 10, borderRadius: "999px", backgroundColor: accent, flexShrink: 0 }} />
           <Typography variant="subtitle2" fontWeight={800}>
             {label}
@@ -291,7 +291,9 @@ function InsightRow({
           {caption}
         </Typography>
       </Box>
-      <Typography variant="subtitle2">{value}</Typography>
+      <Typography variant="subtitle2" textAlign="right">
+        {value}
+      </Typography>
     </Stack>
   );
 }
@@ -1196,12 +1198,12 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
           </Box>
 
           <Box className="hero-meta" sx={{ width: { xs: "100%", lg: 360 }, maxWidth: "100%" }}>
-            <Box className="meta-card">
+            <Box className="meta-card" sx={{ borderRadius: "14px !important" }}>
               <span>Prepared For</span>
               <strong>{currentUser.name}</strong>
               <small>Current report session owner for exports and print actions.</small>
             </Box>
-            <Box className="meta-card">
+            <Box className="meta-card" sx={{ borderRadius: "14px !important" }}>
               <span>Visible Inventory Value</span>
               <strong>{formatCurrency(visibleInventoryValue, snapshot.settings.currency)}</strong>
               <small>Capital currently visible inside the active filters and reporting scope.</small>
@@ -1210,7 +1212,7 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
         </Stack>
       </Box>
 
-      <Paper sx={{ p: { xs: 2.25, md: 3 }, borderRadius: 4 }}>
+      <Paper sx={{ p: { xs: 2.25, md: 3 }, borderRadius: 2.5 }}>
         <Stack spacing={2}>
           <Box>
             <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
@@ -1227,7 +1229,7 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
               gap: 2,
               gridTemplateColumns: {
                 xs: "1fr",
-                md: "1.2fr 0.9fr 0.9fr",
+                md: "1.7fr 0.72fr 0.72fr",
               },
             }}
           >
@@ -1239,6 +1241,7 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
               fullWidth
             />
             <TextField
+              size="small"
               select
               label="Filter by location"
               value={locationFilter}
@@ -1253,6 +1256,7 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
               ))}
             </TextField>
             <TextField
+              size="small"
               select
               label="Date range"
               value={datePreset}
@@ -1270,6 +1274,7 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
           {datePreset === "custom" ? (
             <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" } }}>
               <TextField
+                size="small"
                 label="Custom start date"
                 type="date"
                 value={customStartDate}
@@ -1278,6 +1283,7 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
                 fullWidth
               />
               <TextField
+                size="small"
                 label="Custom end date"
                 type="date"
                 value={customEndDate}
