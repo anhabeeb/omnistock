@@ -6,24 +6,41 @@ import type {
   CreateItemResponse,
   CreateLocationRequest,
   CreateLocationResponse,
-  CreateUserRequest,
   CreateMarketPriceRequest,
   CreateMarketPriceResponse,
   CreateSupplierRequest,
   CreateSupplierResponse,
+  CreateUserRequest,
+  DeleteInventoryRequest,
+  DeleteItemRequest,
+  DeleteLocationRequest,
+  DeleteMarketPriceRequest,
+  DeleteSnapshotResponse,
+  DeleteSupplierRequest,
+  EditInventoryRequest,
   InitializeSystemRequest,
   InitializeSystemResponse,
+  InventoryActionResponse,
   LoginRequest,
   LoginResponse,
+  MutationEnvelope,
   PullResponse,
+  ProfileResponse,
   PushResponse,
   RemoveUserRequest,
+  ReverseInventoryRequest,
   ResetUserPasswordRequest,
+  UpdateItemRequest,
+  UpdateItemResponse,
+  UpdateLocationRequest,
+  UpdateLocationResponse,
+  UpdateMarketPriceRequest,
+  UpdateMarketPriceResponse,
   UpdateOwnProfileRequest,
+  UpdateSupplierRequest,
+  UpdateSupplierResponse,
   UpdateUserRequest,
-  ProfileResponse,
   UserAdminResponse,
-  MutationEnvelope,
 } from "../../shared/types";
 
 function normalizeErrorMessage(message: string): string {
@@ -111,6 +128,30 @@ export async function createItemRecord(input: CreateItemRequest): Promise<Create
   return parseJson<CreateItemResponse>(response);
 }
 
+export async function updateItemRecord(input: UpdateItemRequest): Promise<UpdateItemResponse> {
+  const response = await fetch("/api/items", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<UpdateItemResponse>(response);
+}
+
+export async function deleteItemRecord(input: DeleteItemRequest): Promise<DeleteSnapshotResponse> {
+  const response = await fetch("/api/items/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<DeleteSnapshotResponse>(response);
+}
+
 export async function createSupplierRecord(
   input: CreateSupplierRequest,
 ): Promise<CreateSupplierResponse> {
@@ -125,6 +166,34 @@ export async function createSupplierRecord(
   return parseJson<CreateSupplierResponse>(response);
 }
 
+export async function updateSupplierRecord(
+  input: UpdateSupplierRequest,
+): Promise<UpdateSupplierResponse> {
+  const response = await fetch("/api/suppliers", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<UpdateSupplierResponse>(response);
+}
+
+export async function deleteSupplierRecord(
+  input: DeleteSupplierRequest,
+): Promise<DeleteSnapshotResponse> {
+  const response = await fetch("/api/suppliers/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<DeleteSnapshotResponse>(response);
+}
+
 export async function createLocationRecord(
   input: CreateLocationRequest,
 ): Promise<CreateLocationResponse> {
@@ -137,6 +206,104 @@ export async function createLocationRecord(
   });
 
   return parseJson<CreateLocationResponse>(response);
+}
+
+export async function updateLocationRecord(
+  input: UpdateLocationRequest,
+): Promise<UpdateLocationResponse> {
+  const response = await fetch("/api/locations", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<UpdateLocationResponse>(response);
+}
+
+export async function deleteLocationRecord(
+  input: DeleteLocationRequest,
+): Promise<DeleteSnapshotResponse> {
+  const response = await fetch("/api/locations/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<DeleteSnapshotResponse>(response);
+}
+
+export async function updateMarketPriceEntry(
+  input: UpdateMarketPriceRequest,
+): Promise<UpdateMarketPriceResponse> {
+  const response = await fetch("/api/market-prices", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<UpdateMarketPriceResponse>(response);
+}
+
+export async function deleteMarketPriceEntry(
+  input: DeleteMarketPriceRequest,
+): Promise<DeleteSnapshotResponse> {
+  const response = await fetch("/api/market-prices/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<DeleteSnapshotResponse>(response);
+}
+
+export async function reverseInventoryRequestEntry(
+  input: ReverseInventoryRequest,
+): Promise<InventoryActionResponse> {
+  const response = await fetch("/api/inventory/reverse", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<InventoryActionResponse>(response);
+}
+
+export async function editInventoryRequestEntry(
+  input: EditInventoryRequest,
+): Promise<InventoryActionResponse> {
+  const response = await fetch("/api/inventory/edit", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<InventoryActionResponse>(response);
+}
+
+export async function deleteInventoryRequestEntry(
+  input: DeleteInventoryRequest,
+): Promise<InventoryActionResponse> {
+  const response = await fetch("/api/inventory/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<InventoryActionResponse>(response);
 }
 
 export async function initializeSystem(

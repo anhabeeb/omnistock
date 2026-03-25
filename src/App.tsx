@@ -160,10 +160,21 @@ export default function App() {
     activateSuperadminPassword,
     logoutUser,
     createOperation,
+    editInventoryRequest,
+    removeInventoryRequest,
+    reverseInventoryRequest,
     createItem,
+    updateItem,
+    removeItem,
     createSupplier,
+    updateSupplier,
+    removeSupplier,
     createLocation,
+    updateLocation,
+    removeLocation,
     createMarketPrice,
+    updateMarketPrice,
+    removeMarketPrice,
     initializeApp,
     updateProfile,
     changeProfilePassword,
@@ -803,6 +814,9 @@ export default function App() {
                           currentUser={currentUser}
                           syncState={syncState}
                           onCreateOperation={createOperation}
+                          onEditOperation={editInventoryRequest}
+                          onDeleteOperation={removeInventoryRequest}
+                          onReverseOperation={reverseInventoryRequest}
                         />
                       }
                     />
@@ -818,9 +832,17 @@ export default function App() {
                           snapshot={snapshot}
                           currentUser={currentUser}
                           onCreateItem={createItem}
+                          onUpdateItem={updateItem}
+                          onDeleteItem={removeItem}
                           onCreateSupplier={createSupplier}
+                          onUpdateSupplier={updateSupplier}
+                          onDeleteSupplier={removeSupplier}
                           onCreateLocation={createLocation}
+                          onUpdateLocation={updateLocation}
+                          onDeleteLocation={removeLocation}
                           onCreateMarketPrice={createMarketPrice}
+                          onUpdateMarketPrice={updateMarketPrice}
+                          onDeleteMarketPrice={removeMarketPrice}
                         />
                       }
                     />

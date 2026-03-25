@@ -6,6 +6,10 @@ import type {
   CreateLocationRequest,
   CreateMarketPriceRequest,
   CreateSupplierRequest,
+  DeleteItemRequest,
+  DeleteLocationRequest,
+  DeleteMarketPriceRequest,
+  DeleteSupplierRequest,
   Item,
   InventorySnapshot,
   Location,
@@ -14,8 +18,13 @@ import type {
   PriceCategory,
   RecordStatus,
   Supplier,
+  UpdateItemRequest,
+  UpdateLocationRequest,
+  UpdateMarketPriceRequest,
+  UpdateSupplierRequest,
   User,
 } from "../../shared/types";
+import { DeleteIcon, EditIcon, ViewIcon } from "../components/AppIcons";
 import { BarcodeScanner } from "../components/BarcodeScanner";
 import {
   DATE_FILTER_OPTIONS,
@@ -29,9 +38,17 @@ interface Props {
   snapshot: InventorySnapshot;
   currentUser: User;
   onCreateItem: (input: CreateItemRequest) => Promise<Item>;
+  onUpdateItem: (input: UpdateItemRequest) => Promise<Item>;
+  onDeleteItem: (input: DeleteItemRequest) => Promise<void>;
   onCreateSupplier: (input: CreateSupplierRequest) => Promise<Supplier>;
+  onUpdateSupplier: (input: UpdateSupplierRequest) => Promise<Supplier>;
+  onDeleteSupplier: (input: DeleteSupplierRequest) => Promise<void>;
   onCreateLocation: (input: CreateLocationRequest) => Promise<Location>;
+  onUpdateLocation: (input: UpdateLocationRequest) => Promise<Location>;
+  onDeleteLocation: (input: DeleteLocationRequest) => Promise<void>;
   onCreateMarketPrice: (input: CreateMarketPriceRequest) => Promise<MarketPriceEntry>;
+  onUpdateMarketPrice: (input: UpdateMarketPriceRequest) => Promise<MarketPriceEntry>;
+  onDeleteMarketPrice: (input: DeleteMarketPriceRequest) => Promise<void>;
 }
 
 interface PriceFormState {
@@ -73,6 +90,8 @@ interface LocationFormState {
   city: string;
   status: RecordStatus;
 }
+
+type MasterDialogMode = "create" | "edit" | "view" | "delete";
 
 const MASTER_SECTIONS = [
   {
@@ -206,19 +225,76 @@ function defaultLocationForm(): LocationFormState {
   };
 }
 
+function itemFormFromItem(item: Item): ItemFormState {
+  return {
+    sku: item.sku,
+    barcode: item.barcode,
+    name: item.name,
+    category: item.category,
+    unit: item.unit,
+    supplierId: item.supplierId,
+    costPrice: String(item.costPrice),
+    sellingPrice: String(item.sellingPrice),
+    status: item.status,
+  };
+}
+
+function supplierFormFromSupplier(supplier: Supplier): SupplierFormState {
+  return {
+    code: supplier.code,
+    name: supplier.name,
+    email: supplier.email,
+    phone: supplier.phone,
+    leadTimeDays: String(supplier.leadTimeDays),
+    status: supplier.status,
+  };
+}
+
+function locationFormFromLocation(location: Location): LocationFormState {
+  return {
+    code: location.code,
+    name: location.name,
+    type: location.type,
+    city: location.city,
+    status: location.status,
+  };
+}
+
+function priceFormFromEntry(entry: MarketPriceEntry): PriceFormState {
+  return {
+    itemId: entry.itemId,
+    category: entry.category,
+    locationId: entry.locationId,
+    supplierId: entry.supplierId ?? "",
+    quotedPrice: String(entry.quotedPrice),
+    sourceName: entry.sourceName,
+    marketDate: entry.marketDate,
+    note: entry.note,
+  };
+}
+
 export function MasterDataPage({
   snapshot,
   currentUser,
   onCreateItem,
+  onUpdateItem,
+  onDeleteItem,
   onCreateSupplier,
+  onUpdateSupplier,
+  onDeleteSupplier,
   onCreateLocation,
+  onUpdateLocation,
+  onDeleteLocation,
   onCreateMarketPrice,
+  onUpdateMarketPrice,
+  onDeleteMarketPrice,
 }: Props) {
   const location = useLocation();
   const activeSlug = location.pathname.split("/")[2] ?? MASTER_SECTIONS[0].slug;
   const activeSection = MASTER_SECTIONS.find((section) => section.slug === activeSlug) ?? MASTER_SECTIONS[0];
   const [search, setSearch] = useState("");
-  const [entryOpen, setEntryOpen] = useState(false);
+  const [dialogMode, setDialogMode] = useState<MasterDialogMode | null>(null);
+  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false);
   const [itemStatusFilter, setItemStatusFilter] = useState<"all" | RecordStatus>("all");
   const [supplierStatusFilter, setSupplierStatusFilter] = useState<"all" | RecordStatus>("all");
@@ -254,20 +330,21 @@ export function MasterDataPage({
     setItemForm(defaultItemForm(snapshot));
     setSupplierForm(defaultSupplierForm());
     setLocationForm(defaultLocationForm());
-    setEntryOpen(false);
+    setDialogMode(null);
+    setSelectedEntryId(null);
     setBarcodeScannerOpen(false);
     setFeedback(undefined);
   }, [activeSection.slug, snapshot.generatedAt]);
 
   useEffect(() => {
-    if (!entryOpen) {
+    if (!dialogMode) {
       return undefined;
     }
 
     const previousOverflow = document.body.style.overflow;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !submittingEntry && !savingPrice) {
-        setEntryOpen(false);
+        setDialogMode(null);
       }
     };
 
@@ -277,9 +354,12 @@ export function MasterDataPage({
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [entryOpen, savingPrice, submittingEntry]);
+  }, [dialogMode, savingPrice, submittingEntry]);
 
   const filteredItems = snapshot.items.filter((item) => {
+    if (item.status === "archived") {
+      return false;
+    }
     const matchesStatus = itemStatusFilter === "all" ? true : item.status === itemStatusFilter;
     if (!deferredSearch.trim()) {
       return matchesStatus;
@@ -294,6 +374,9 @@ export function MasterDataPage({
   });
 
   const filteredSuppliers = snapshot.suppliers.filter((supplier) => {
+    if (supplier.status === "archived") {
+      return false;
+    }
     const matchesStatus =
       supplierStatusFilter === "all" ? true : supplier.status === supplierStatusFilter;
     if (!deferredSearch.trim()) {
@@ -310,6 +393,9 @@ export function MasterDataPage({
   });
 
   const filteredLocations = snapshot.locations.filter((locationEntry) => {
+    if (locationEntry.status === "archived") {
+      return false;
+    }
     const matchesType = locationTypeFilter === "all" ? true : locationEntry.type === locationTypeFilter;
     if (!deferredSearch.trim()) {
       return matchesType;
@@ -355,6 +441,22 @@ export function MasterDataPage({
   const warehouses = snapshot.locations.filter((locationEntry) => locationEntry.type === "warehouse");
   const outlets = snapshot.locations.filter((locationEntry) => locationEntry.type === "outlet");
   const popupBusy = submittingEntry || savingPrice;
+  const selectedItemRecord =
+    activeSection.slug === "items" && selectedEntryId
+      ? snapshot.items.find((item) => item.id === selectedEntryId)
+      : undefined;
+  const selectedSupplierRecord =
+    activeSection.slug === "suppliers" && selectedEntryId
+      ? snapshot.suppliers.find((supplier) => supplier.id === selectedEntryId)
+      : undefined;
+  const selectedLocationRecord =
+    activeSection.slug === "locations" && selectedEntryId
+      ? snapshot.locations.find((locationEntry) => locationEntry.id === selectedEntryId)
+      : undefined;
+  const selectedMarketPriceRecord =
+    activeSection.slug === "market-prices" && selectedEntryId
+      ? snapshot.marketPrices.find((entry) => entry.id === selectedEntryId)
+      : undefined;
 
   function patch<K extends keyof PriceFormState>(key: K, value: PriceFormState[K]) {
     setPriceForm((current) => ({ ...current, [key]: value }));
@@ -378,8 +480,19 @@ export function MasterDataPage({
     setLocationForm((current) => ({ ...current, [key]: value }));
   }
 
+  function closeDialog(force = false) {
+    if (!force && popupBusy) {
+      return;
+    }
+
+    setDialogMode(null);
+    setSelectedEntryId(null);
+    setBarcodeScannerOpen(false);
+  }
+
   function openEntryModal() {
     setFeedback(undefined);
+    setSelectedEntryId(null);
     setBarcodeScannerOpen(false);
 
     if (activeSection.slug === "items") {
@@ -392,7 +505,53 @@ export function MasterDataPage({
       setPriceForm(defaultPriceForm(snapshot));
     }
 
-    setEntryOpen(true);
+    setDialogMode("create");
+  }
+
+  function openEditModal(entryId: string) {
+    setFeedback(undefined);
+    setSelectedEntryId(entryId);
+    setBarcodeScannerOpen(false);
+
+    if (activeSection.slug === "items") {
+      const item = snapshot.items.find((record) => record.id === entryId);
+      if (!item) {
+        return;
+      }
+      setItemForm(itemFormFromItem(item));
+    } else if (activeSection.slug === "suppliers") {
+      const supplier = snapshot.suppliers.find((record) => record.id === entryId);
+      if (!supplier) {
+        return;
+      }
+      setSupplierForm(supplierFormFromSupplier(supplier));
+    } else if (activeSection.slug === "locations") {
+      const locationEntry = snapshot.locations.find((record) => record.id === entryId);
+      if (!locationEntry) {
+        return;
+      }
+      setLocationForm(locationFormFromLocation(locationEntry));
+    } else if (activeSection.slug === "market-prices") {
+      const entry = snapshot.marketPrices.find((record) => record.id === entryId);
+      if (!entry) {
+        return;
+      }
+      setPriceForm(priceFormFromEntry(entry));
+    }
+
+    setDialogMode("edit");
+  }
+
+  function openViewModal(entryId: string) {
+    setFeedback(undefined);
+    setSelectedEntryId(entryId);
+    setDialogMode("view");
+  }
+
+  function openDeleteModal(entryId: string) {
+    setFeedback(undefined);
+    setSelectedEntryId(entryId);
+    setDialogMode("delete");
   }
 
   function handleItemBarcodeDetected(value: string) {
@@ -472,7 +631,7 @@ export function MasterDataPage({
         )}.`,
       );
       setPriceForm(defaultPriceForm(snapshot));
-      setEntryOpen(false);
+      closeDialog(true);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not save the market rate.");
     } finally {
@@ -514,7 +673,7 @@ export function MasterDataPage({
 
       setFeedback(`${item.name} was added to the item catalog.`);
       setItemForm(defaultItemForm(snapshot));
-      setEntryOpen(false);
+      closeDialog(true);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not create the item.");
     } finally {
@@ -539,7 +698,7 @@ export function MasterDataPage({
 
       setFeedback(`${supplier.name} was added to the supplier directory.`);
       setSupplierForm(defaultSupplierForm());
-      setEntryOpen(false);
+      closeDialog(true);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not create the supplier.");
     } finally {
@@ -563,9 +722,156 @@ export function MasterDataPage({
 
       setFeedback(`${createdLocation.name} was added to the location directory.`);
       setLocationForm(defaultLocationForm());
-      setEntryOpen(false);
+      closeDialog(true);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not create the location.");
+    } finally {
+      setSubmittingEntry(false);
+    }
+  }
+
+  async function handleUpdateItem(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedItemRecord) {
+      return;
+    }
+
+    setFeedback(undefined);
+    setSubmittingEntry(true);
+
+    try {
+      const item = await onUpdateItem({
+        itemId: selectedItemRecord.id,
+        sku: itemForm.sku,
+        barcode: itemForm.barcode,
+        name: itemForm.name,
+        category: itemForm.category,
+        unit: itemForm.unit,
+        supplierId: itemForm.supplierId,
+        costPrice: Number(itemForm.costPrice),
+        sellingPrice: Number(itemForm.sellingPrice),
+        status: itemForm.status,
+      });
+      setFeedback(`${item.name} was updated.`);
+      closeDialog(true);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not update the item.");
+    } finally {
+      setSubmittingEntry(false);
+    }
+  }
+
+  async function handleUpdateSupplier(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedSupplierRecord) {
+      return;
+    }
+
+    setFeedback(undefined);
+    setSubmittingEntry(true);
+
+    try {
+      const supplier = await onUpdateSupplier({
+        supplierId: selectedSupplierRecord.id,
+        code: supplierForm.code,
+        name: supplierForm.name,
+        email: supplierForm.email,
+        phone: supplierForm.phone,
+        leadTimeDays: Number(supplierForm.leadTimeDays),
+        status: supplierForm.status,
+      });
+      setFeedback(`${supplier.name} was updated.`);
+      closeDialog(true);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not update the supplier.");
+    } finally {
+      setSubmittingEntry(false);
+    }
+  }
+
+  async function handleUpdateLocation(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedLocationRecord) {
+      return;
+    }
+
+    setFeedback(undefined);
+    setSubmittingEntry(true);
+
+    try {
+      const updatedLocation = await onUpdateLocation({
+        locationId: selectedLocationRecord.id,
+        code: locationForm.code,
+        name: locationForm.name,
+        type: locationForm.type,
+        city: locationForm.city,
+        status: locationForm.status,
+      });
+      setFeedback(`${updatedLocation.name} was updated.`);
+      closeDialog(true);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not update the location.");
+    } finally {
+      setSubmittingEntry(false);
+    }
+  }
+
+  async function handleUpdateMarketPrice(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedMarketPriceRecord) {
+      return;
+    }
+
+    setFeedback(undefined);
+    setSavingPrice(true);
+
+    try {
+      const entry = await onUpdateMarketPrice({
+        marketPriceId: selectedMarketPriceRecord.id,
+        itemId: priceForm.itemId,
+        category: priceForm.category,
+        locationId: priceForm.locationId,
+        supplierId: priceForm.supplierId || undefined,
+        quotedPrice: Number(priceForm.quotedPrice),
+        sourceName: priceForm.sourceName,
+        marketDate: priceForm.marketDate,
+        note: priceForm.note,
+      });
+      setFeedback(`${entry.itemName} market price was updated.`);
+      closeDialog(true);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not update the market price.");
+    } finally {
+      setSavingPrice(false);
+    }
+  }
+
+  async function handleDeleteEntry() {
+    if (!selectedEntryId) {
+      return;
+    }
+
+    setFeedback(undefined);
+    setSubmittingEntry(true);
+
+    try {
+      if (activeSection.slug === "items") {
+        await onDeleteItem({ itemId: selectedEntryId });
+        setFeedback("Item removed from the active catalog.");
+      } else if (activeSection.slug === "suppliers") {
+        await onDeleteSupplier({ supplierId: selectedEntryId });
+        setFeedback("Supplier removed from the active directory.");
+      } else if (activeSection.slug === "locations") {
+        await onDeleteLocation({ locationId: selectedEntryId });
+        setFeedback("Location removed from the active list.");
+      } else if (activeSection.slug === "market-prices") {
+        await onDeleteMarketPrice({ marketPriceId: selectedEntryId });
+        setFeedback("Market price entry deleted.");
+      }
+
+      closeDialog(true);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not delete this entry.");
     } finally {
       setSubmittingEntry(false);
     }
@@ -695,6 +1001,7 @@ export function MasterDataPage({
                   <th>Category</th>
                   <th>Supplier</th>
                   <th>Total Stock</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -711,6 +1018,37 @@ export function MasterDataPage({
                     </td>
                     <td>
                       {totalOnHand(item)} {item.unit}
+                    </td>
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className="action-icon-button"
+                          onClick={() => openViewModal(item.id)}
+                          aria-label={`View ${item.name}`}
+                          title="View"
+                        >
+                          <ViewIcon size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          className="action-icon-button"
+                          onClick={() => openEditModal(item.id)}
+                          aria-label={`Edit ${item.name}`}
+                          title="Edit"
+                        >
+                          <EditIcon size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          className="action-icon-button danger"
+                          onClick={() => openDeleteModal(item.id)}
+                          aria-label={`Delete ${item.name}`}
+                          title="Delete"
+                        >
+                          <DeleteIcon size={16} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -759,6 +1097,7 @@ export function MasterDataPage({
                   <th>Contact</th>
                   <th>Lead Time</th>
                   <th>Status</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -772,6 +1111,37 @@ export function MasterDataPage({
                     </td>
                     <td>{supplier.leadTimeDays} days</td>
                     <td>{supplier.status}</td>
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className="action-icon-button"
+                          onClick={() => openViewModal(supplier.id)}
+                          aria-label={`View ${supplier.name}`}
+                          title="View"
+                        >
+                          <ViewIcon size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          className="action-icon-button"
+                          onClick={() => openEditModal(supplier.id)}
+                          aria-label={`Edit ${supplier.name}`}
+                          title="Edit"
+                        >
+                          <EditIcon size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          className="action-icon-button danger"
+                          onClick={() => openDeleteModal(supplier.id)}
+                          aria-label={`Delete ${supplier.name}`}
+                          title="Delete"
+                        >
+                          <DeleteIcon size={16} />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -816,6 +1186,7 @@ export function MasterDataPage({
                   <th>Type</th>
                   <th>City</th>
                   <th>Status</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -826,6 +1197,37 @@ export function MasterDataPage({
                     <td>{locationEntry.type}</td>
                     <td>{locationEntry.city}</td>
                     <td>{locationEntry.status}</td>
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className="action-icon-button"
+                          onClick={() => openViewModal(locationEntry.id)}
+                          aria-label={`View ${locationEntry.name}`}
+                          title="View"
+                        >
+                          <ViewIcon size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          className="action-icon-button"
+                          onClick={() => openEditModal(locationEntry.id)}
+                          aria-label={`Edit ${locationEntry.name}`}
+                          title="Edit"
+                        >
+                          <EditIcon size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          className="action-icon-button danger"
+                          onClick={() => openDeleteModal(locationEntry.id)}
+                          aria-label={`Delete ${locationEntry.name}`}
+                          title="Delete"
+                        >
+                          <DeleteIcon size={16} />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -906,6 +1308,7 @@ export function MasterDataPage({
                   <th>Quoted Price</th>
                   <th>Variance</th>
                   <th>Source</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -930,6 +1333,37 @@ export function MasterDataPage({
                         : `${entry.variancePct > 0 ? "+" : ""}${entry.variancePct.toFixed(2)}%`}
                     </td>
                     <td>{entry.sourceName}</td>
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className="action-icon-button"
+                          onClick={() => openViewModal(entry.id)}
+                          aria-label={`View ${entry.itemName}`}
+                          title="View"
+                        >
+                          <ViewIcon size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          className="action-icon-button"
+                          onClick={() => openEditModal(entry.id)}
+                          aria-label={`Edit ${entry.itemName}`}
+                          title="Edit"
+                        >
+                          <EditIcon size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          className="action-icon-button danger"
+                          onClick={() => openDeleteModal(entry.id)}
+                          aria-label={`Delete ${entry.itemName}`}
+                          title="Delete"
+                        >
+                          <DeleteIcon size={16} />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -939,26 +1373,40 @@ export function MasterDataPage({
         </section>
       ) : null}
 
-      {entryOpen ? (
+      {dialogMode ? (
         <div
           className="page-popup-scrim"
           onClick={() => {
             if (!popupBusy) {
-              setEntryOpen(false);
+              closeDialog();
             }
           }}
         >
           <div className="page-popup-card entry-popup-card" onClick={(event) => event.stopPropagation()}>
             <div className="panel-heading">
               <div>
-                <p className="eyebrow">Master Data Entry</p>
-                <h2>Add New {singularLabelForSection(activeSection.slug)}</h2>
+                <p className="eyebrow">
+                  {dialogMode === "view"
+                    ? "Entry Details"
+                    : dialogMode === "delete"
+                      ? "Delete Entry"
+                      : "Master Data Entry"}
+                </p>
+                <h2>
+                  {dialogMode === "create"
+                    ? `Add New ${singularLabelForSection(activeSection.slug)}`
+                    : dialogMode === "edit"
+                      ? `Edit ${singularLabelForSection(activeSection.slug)}`
+                      : dialogMode === "delete"
+                        ? `Delete ${singularLabelForSection(activeSection.slug)}`
+                        : `${singularLabelForSection(activeSection.slug)} Details`}
+                </h2>
               </div>
               <div className="button-row">
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={() => setEntryOpen(false)}
+                  onClick={() => closeDialog()}
                   disabled={popupBusy}
                 >
                   Close
@@ -966,8 +1414,97 @@ export function MasterDataPage({
               </div>
             </div>
 
-            {activeSection.slug === "items" ? (
-              <form className="form-grid compact-form" onSubmit={handleCreateItem}>
+            {dialogMode === "view" && activeSection.slug === "items" && selectedItemRecord ? (
+              <dl className="detail-list">
+                <div><dt>ID</dt><dd>{selectedItemRecord.id}</dd></div>
+                <div><dt>Name</dt><dd>{selectedItemRecord.name}</dd></div>
+                <div><dt>SKU</dt><dd>{selectedItemRecord.sku}</dd></div>
+                <div><dt>Barcode</dt><dd>{selectedItemRecord.barcode}</dd></div>
+                <div><dt>Category</dt><dd>{selectedItemRecord.category}</dd></div>
+                <div><dt>Unit</dt><dd>{selectedItemRecord.unit}</dd></div>
+                <div>
+                  <dt>Supplier</dt>
+                  <dd>{snapshot.suppliers.find((supplier) => supplier.id === selectedItemRecord.supplierId)?.name ?? "Unknown"}</dd>
+                </div>
+                <div><dt>Cost Price</dt><dd>{formatCurrency(selectedItemRecord.costPrice, snapshot.settings.currency)}</dd></div>
+                <div><dt>Selling Price</dt><dd>{formatCurrency(selectedItemRecord.sellingPrice, snapshot.settings.currency)}</dd></div>
+                <div><dt>Status</dt><dd>{selectedItemRecord.status}</dd></div>
+                <div><dt>Total Stock</dt><dd>{totalOnHand(selectedItemRecord)} {selectedItemRecord.unit}</dd></div>
+                <div><dt>Updated</dt><dd>{formatDateTime(selectedItemRecord.updatedAt)}</dd></div>
+              </dl>
+            ) : null}
+
+            {dialogMode === "view" && activeSection.slug === "suppliers" && selectedSupplierRecord ? (
+              <dl className="detail-list">
+                <div><dt>ID</dt><dd>{selectedSupplierRecord.id}</dd></div>
+                <div><dt>Name</dt><dd>{selectedSupplierRecord.name}</dd></div>
+                <div><dt>Code</dt><dd>{selectedSupplierRecord.code}</dd></div>
+                <div><dt>Email</dt><dd>{selectedSupplierRecord.email}</dd></div>
+                <div><dt>Phone</dt><dd>{selectedSupplierRecord.phone}</dd></div>
+                <div><dt>Lead Time</dt><dd>{selectedSupplierRecord.leadTimeDays} days</dd></div>
+                <div><dt>Status</dt><dd>{selectedSupplierRecord.status}</dd></div>
+              </dl>
+            ) : null}
+
+            {dialogMode === "view" && activeSection.slug === "locations" && selectedLocationRecord ? (
+              <dl className="detail-list">
+                <div><dt>ID</dt><dd>{selectedLocationRecord.id}</dd></div>
+                <div><dt>Name</dt><dd>{selectedLocationRecord.name}</dd></div>
+                <div><dt>Code</dt><dd>{selectedLocationRecord.code}</dd></div>
+                <div><dt>Type</dt><dd>{selectedLocationRecord.type}</dd></div>
+                <div><dt>City</dt><dd>{selectedLocationRecord.city || "Not set"}</dd></div>
+                <div><dt>Status</dt><dd>{selectedLocationRecord.status}</dd></div>
+              </dl>
+            ) : null}
+
+            {dialogMode === "view" && activeSection.slug === "market-prices" && selectedMarketPriceRecord ? (
+              <dl className="detail-list">
+                <div><dt>ID</dt><dd>{selectedMarketPriceRecord.id}</dd></div>
+                <div><dt>Date</dt><dd>{selectedMarketPriceRecord.marketDate}</dd></div>
+                <div><dt>Item</dt><dd>{selectedMarketPriceRecord.itemName}</dd></div>
+                <div><dt>Category</dt><dd>{labelForCategory(selectedMarketPriceRecord.category)}</dd></div>
+                <div><dt>Location</dt><dd>{selectedMarketPriceRecord.locationName}</dd></div>
+                <div><dt>Supplier</dt><dd>{selectedMarketPriceRecord.supplierName ?? "Open market"}</dd></div>
+                <div><dt>Quoted Price</dt><dd>{formatCurrency(selectedMarketPriceRecord.quotedPrice, snapshot.settings.currency)}</dd></div>
+                <div><dt>Variance</dt><dd>{selectedMarketPriceRecord.variancePct === undefined ? "New" : `${selectedMarketPriceRecord.variancePct > 0 ? "+" : ""}${selectedMarketPriceRecord.variancePct.toFixed(2)}%`}</dd></div>
+                <div><dt>Source</dt><dd>{selectedMarketPriceRecord.sourceName}</dd></div>
+                <div><dt>Captured By</dt><dd>{selectedMarketPriceRecord.capturedByName}</dd></div>
+                <div><dt>Created</dt><dd>{formatDateTime(selectedMarketPriceRecord.createdAt)}</dd></div>
+                <div className="detail-list-wide"><dt>Note</dt><dd>{selectedMarketPriceRecord.note || "No note provided."}</dd></div>
+              </dl>
+            ) : null}
+
+            {dialogMode === "delete" ? (
+              <div className="confirm-dialog">
+                <p className="confirm-copy">
+                  This will remove the selected {singularLabelForSection(activeSection.slug).toLowerCase()} from the active list.
+                </p>
+                <div className="button-row">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => closeDialog()}
+                    disabled={submittingEntry}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="primary-button danger-button"
+                    onClick={() => void handleDeleteEntry()}
+                    disabled={submittingEntry}
+                  >
+                    {submittingEntry ? "Deleting..." : `Confirm Delete ${singularLabelForSection(activeSection.slug)}`}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {(dialogMode === "create" || dialogMode === "edit") && activeSection.slug === "items" ? (
+              <form
+                className="form-grid compact-form"
+                onSubmit={dialogMode === "edit" ? handleUpdateItem : handleCreateItem}
+              >
                 <label className="field">
                   <span>Item name</span>
                   <input
@@ -1077,14 +1614,17 @@ export function MasterDataPage({
 
                 <div className="button-row field-wide">
                   <button type="submit" className="primary-button" disabled={submittingEntry}>
-                    {submittingEntry ? "Saving..." : "Save Item"}
+                    {submittingEntry ? "Saving..." : dialogMode === "edit" ? "Update Item" : "Save Item"}
                   </button>
                 </div>
               </form>
             ) : null}
 
-            {activeSection.slug === "suppliers" ? (
-              <form className="form-grid compact-form" onSubmit={handleCreateSupplier}>
+            {(dialogMode === "create" || dialogMode === "edit") && activeSection.slug === "suppliers" ? (
+              <form
+                className="form-grid compact-form"
+                onSubmit={dialogMode === "edit" ? handleUpdateSupplier : handleCreateSupplier}
+              >
                 <label className="field">
                   <span>Supplier name</span>
                   <input
@@ -1149,14 +1689,17 @@ export function MasterDataPage({
 
                 <div className="button-row field-wide">
                   <button type="submit" className="primary-button" disabled={submittingEntry}>
-                    {submittingEntry ? "Saving..." : "Save Supplier"}
+                    {submittingEntry ? "Saving..." : dialogMode === "edit" ? "Update Supplier" : "Save Supplier"}
                   </button>
                 </div>
               </form>
             ) : null}
 
-            {activeSection.slug === "locations" ? (
-              <form className="form-grid compact-form" onSubmit={handleCreateLocation}>
+            {(dialogMode === "create" || dialogMode === "edit") && activeSection.slug === "locations" ? (
+              <form
+                className="form-grid compact-form"
+                onSubmit={dialogMode === "edit" ? handleUpdateLocation : handleCreateLocation}
+              >
                 <label className="field">
                   <span>Location name</span>
                   <input
@@ -1211,14 +1754,17 @@ export function MasterDataPage({
 
                 <div className="button-row field-wide">
                   <button type="submit" className="primary-button" disabled={submittingEntry}>
-                    {submittingEntry ? "Saving..." : "Save Location"}
+                    {submittingEntry ? "Saving..." : dialogMode === "edit" ? "Update Location" : "Save Location"}
                   </button>
                 </div>
               </form>
             ) : null}
 
-            {activeSection.slug === "market-prices" ? (
-              <form className="form-grid compact-form" onSubmit={handleCreateMarketPrice}>
+            {(dialogMode === "create" || dialogMode === "edit") && activeSection.slug === "market-prices" ? (
+              <form
+                className="form-grid compact-form"
+                onSubmit={dialogMode === "edit" ? handleUpdateMarketPrice : handleCreateMarketPrice}
+              >
                 <label className="field">
                   <span>Item</span>
                   <select
@@ -1317,7 +1863,11 @@ export function MasterDataPage({
 
                 <div className="button-row field-wide">
                   <button type="submit" className="primary-button" disabled={savingPrice}>
-                    {savingPrice ? "Saving..." : "Save Market Price"}
+                    {savingPrice
+                      ? "Saving..."
+                      : dialogMode === "edit"
+                        ? "Update Market Price"
+                        : "Save Market Price"}
                   </button>
                 </div>
               </form>

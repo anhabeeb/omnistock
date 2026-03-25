@@ -224,3 +224,42 @@ export function LocationIcon({ size = 20, ...props }: AppIconProps) {
     </svg>
   );
 }
+
+export function ViewIcon({ size = 20, ...props }: AppIconProps) {
+  return (
+    <svg {...baseProps(size, props)}>
+      <path d="M2.5 12S6.5 5 12 5s9.5 7 9.5 7-4 7-9.5 7-9.5-7-9.5-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+export function EditIcon({ size = 20, ...props }: AppIconProps) {
+  return (
+    <svg {...baseProps(size, props)}>
+      <path d="m4 20 4.5-1 9-9a2.1 2.1 0 0 0-3-3l-9 9L4 20Z" />
+      <path d="m13.5 6.5 4 4" />
+    </svg>
+  );
+}
+
+export function DeleteIcon({ size = 20, ...props }: AppIconProps) {
+  return (
+    <svg {...baseProps(size, props)}>
+      <path d="M4 7h16" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12" />
+      <path d="M9 7V4h6v3" />
+    </svg>
+  );
+}
+
+export function ReverseIcon({ size = 20, ...props }: AppIconProps) {
+  return (
+    <svg {...baseProps(size, props)}>
+      <path d="M9 8H4V3" />
+      <path d="M4 8a8 8 0 1 1-1 4" />
+    </svg>
+  );
+}

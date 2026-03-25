@@ -10,14 +10,25 @@ import type {
   CreateMarketPriceRequest,
   CreateSupplierRequest,
   CreateUserRequest,
+  DeleteInventoryRequest,
+  DeleteItemRequest,
+  DeleteLocationRequest,
+  DeleteMarketPriceRequest,
+  DeleteSupplierRequest,
+  EditInventoryRequest,
   InitializeSystemRequest,
   MutationEnvelope,
   MutationPayload,
   OutboxRecord,
   RealtimeMessage,
+  ReverseInventoryRequest,
   RequestKind,
   ResetUserPasswordRequest,
+  UpdateItemRequest,
+  UpdateLocationRequest,
+  UpdateMarketPriceRequest,
   UpdateOwnProfileRequest,
+  UpdateSupplierRequest,
   UpdateUserRequest,
 } from "../../shared/types";
 import {
@@ -28,6 +39,12 @@ import {
   createMarketPriceEntry,
   createSupplierRecord,
   createUser,
+  deleteInventoryRequestEntry,
+  deleteItemRecord,
+  deleteLocationRecord,
+  deleteMarketPriceEntry,
+  deleteSupplierRecord,
+  editInventoryRequestEntry,
   fetchBootstrap,
   initializeSystem,
   login,
@@ -36,8 +53,13 @@ import {
   pullChanges,
   pushMutations,
   removeUser,
+  reverseInventoryRequestEntry,
   resetUserPassword,
+  updateItemRecord,
+  updateLocationRecord,
+  updateMarketPriceEntry,
   updateOwnProfile,
+  updateSupplierRecord,
   updateUser,
 } from "./client";
 import {
@@ -64,6 +86,10 @@ export interface SyncState {
 
 export interface CreateOperationInput extends MutationPayload {
   kind: RequestKind;
+}
+
+export interface EditOperationInput extends Omit<EditInventoryRequest, "requestId"> {
+  requestId: string;
 }
 
 function safeLastUserId(): string {
@@ -629,10 +655,32 @@ export function useOmniStockApp() {
     return response.entry;
   }
 
+  async function updateMarketPrice(input: UpdateMarketPriceRequest) {
+    const response = await updateMarketPriceEntry(input);
+    await applyAdminSnapshot(response.snapshot);
+    return response.entry;
+  }
+
+  async function removeMarketPrice(input: DeleteMarketPriceRequest) {
+    const response = await deleteMarketPriceEntry(input);
+    await applyAdminSnapshot(response.snapshot);
+  }
+
   async function createItem(input: CreateItemRequest) {
     const response = await createItemRecord(input);
     await applyAdminSnapshot(response.snapshot);
     return response.item;
+  }
+
+  async function updateItem(input: UpdateItemRequest) {
+    const response = await updateItemRecord(input);
+    await applyAdminSnapshot(response.snapshot);
+    return response.item;
+  }
+
+  async function removeItem(input: DeleteItemRequest) {
+    const response = await deleteItemRecord(input);
+    await applyAdminSnapshot(response.snapshot);
   }
 
   async function createSupplier(input: CreateSupplierRequest) {
@@ -641,10 +689,50 @@ export function useOmniStockApp() {
     return response.supplier;
   }
 
+  async function updateSupplier(input: UpdateSupplierRequest) {
+    const response = await updateSupplierRecord(input);
+    await applyAdminSnapshot(response.snapshot);
+    return response.supplier;
+  }
+
+  async function removeSupplier(input: DeleteSupplierRequest) {
+    const response = await deleteSupplierRecord(input);
+    await applyAdminSnapshot(response.snapshot);
+  }
+
   async function createLocation(input: CreateLocationRequest) {
     const response = await createLocationRecord(input);
     await applyAdminSnapshot(response.snapshot);
     return response.location;
+  }
+
+  async function updateLocation(input: UpdateLocationRequest) {
+    const response = await updateLocationRecord(input);
+    await applyAdminSnapshot(response.snapshot);
+    return response.location;
+  }
+
+  async function removeLocation(input: DeleteLocationRequest) {
+    const response = await deleteLocationRecord(input);
+    await applyAdminSnapshot(response.snapshot);
+  }
+
+  async function reverseInventoryRequest(input: ReverseInventoryRequest) {
+    const response = await reverseInventoryRequestEntry(input);
+    await applyAdminSnapshot(response.snapshot);
+    return response.reversalRequest;
+  }
+
+  async function editInventoryRequest(input: EditOperationInput) {
+    const response = await editInventoryRequestEntry(input);
+    await applyAdminSnapshot(response.snapshot);
+    return response.replacementRequest;
+  }
+
+  async function removeInventoryRequest(input: DeleteInventoryRequest) {
+    const response = await deleteInventoryRequestEntry(input);
+    await applyAdminSnapshot(response.snapshot);
+    return response.reversalRequest;
   }
 
   async function initializeApp(input: InitializeSystemRequest) {
@@ -726,9 +814,20 @@ export function useOmniStockApp() {
     logoutUser,
     createOperation,
     createItem,
+    updateItem,
+    removeItem,
     createSupplier,
+    updateSupplier,
+    removeSupplier,
     createLocation,
+    updateLocation,
+    removeLocation,
     createMarketPrice,
+    updateMarketPrice,
+    removeMarketPrice,
+    reverseInventoryRequest,
+    editInventoryRequest,
+    removeInventoryRequest,
     initializeApp,
     updateProfile,
     changeProfilePassword,

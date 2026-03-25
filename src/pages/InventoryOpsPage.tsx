@@ -3,12 +3,14 @@ import { useLocation } from "react-router-dom";
 import { OPERATION_LABELS } from "../../shared/operations";
 import { findItemByBarcode } from "../../shared/selectors";
 import type {
+  InventoryRequest,
   InventorySnapshot,
   RequestKind,
   ShiftKey,
   User,
   WasteReason,
 } from "../../shared/types";
+import { DeleteIcon, EditIcon, ReverseIcon, ViewIcon } from "../components/AppIcons";
 import { BarcodeScanner } from "../components/BarcodeScanner";
 import {
   DATE_FILTER_OPTIONS,
@@ -16,13 +18,16 @@ import {
   matchesDateFilter,
 } from "../lib/dateFilters";
 import { formatDateTime } from "../lib/format";
-import type { CreateOperationInput, SyncState } from "../lib/useOmniStockApp";
+import type { CreateOperationInput, EditOperationInput, SyncState } from "../lib/useOmniStockApp";
 
 interface Props {
   snapshot: InventorySnapshot;
   currentUser: User;
   syncState: SyncState;
   onCreateOperation: (input: CreateOperationInput) => Promise<{ reference: string }>;
+  onEditOperation: (input: EditOperationInput) => Promise<{ reference: string } | undefined>;
+  onDeleteOperation: (input: { requestId: string }) => Promise<{ reference: string } | undefined>;
+  onReverseOperation: (input: { requestId: string; reason: string }) => Promise<{ reference: string } | undefined>;
 }
 
 interface FormState {
@@ -41,6 +46,8 @@ interface FormState {
   wasteShift: ShiftKey;
   wasteStation: string;
 }
+
+type InventoryDialogMode = "create" | "view" | "edit" | "delete" | "reverse";
 
 const INVENTORY_SECTIONS = [
   {
@@ -121,6 +128,9 @@ export function InventoryOpsPage({
   currentUser,
   syncState,
   onCreateOperation,
+  onEditOperation,
+  onDeleteOperation,
+  onReverseOperation,
 }: Props) {
   const location = useLocation();
   const activeSlug = location.pathname.split("/")[2] ?? INVENTORY_SECTIONS[0].slug;
@@ -136,7 +146,9 @@ export function InventoryOpsPage({
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   const [feedback, setFeedback] = useState<string>();
-  const [entryOpen, setEntryOpen] = useState(false);
+  const [dialogMode, setDialogMode] = useState<InventoryDialogMode | null>(null);
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+  const [actionReason, setActionReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const deferredLogSearch = useDeferredValue(logSearch);
@@ -144,18 +156,20 @@ export function InventoryOpsPage({
   useEffect(() => {
     setForm(defaultForm(snapshot, currentUser, activeSection.kind));
     setFeedback(undefined);
-    setEntryOpen(false);
+    setDialogMode(null);
+    setSelectedRequestId(null);
+    setActionReason("");
   }, [activeSection.kind, currentUser.id, snapshot.generatedAt]);
 
   useEffect(() => {
-    if (!entryOpen) {
+    if (!dialogMode) {
       return undefined;
     }
 
     const previousOverflow = document.body.style.overflow;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !submitting) {
-        setEntryOpen(false);
+        setDialogMode(null);
       }
     };
 
@@ -165,7 +179,7 @@ export function InventoryOpsPage({
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [entryOpen, submitting]);
+  }, [dialogMode, submitting]);
 
   const selectedItem = snapshot.items.find((item) => item.id === form.itemId);
   const needsSource =
@@ -196,6 +210,9 @@ export function InventoryOpsPage({
       return matchesKind && matchesStatus && matchesDate && matchesSearch;
     })
     .slice(0, 20);
+  const selectedRequest = selectedRequestId
+    ? snapshot.requests.find((request) => request.id === selectedRequestId)
+    : undefined;
   const logPanelId = `inventory-${activeSection.slug}-logs`;
   const visibleItems = snapshot.items.filter((item) => {
     if (!deferredSearchTerm.trim()) {
@@ -247,6 +264,66 @@ export function InventoryOpsPage({
     return fromLocationName ?? toLocationName ?? "Location not specified";
   }
 
+  function closeDialog(force = false) {
+    if (!force && submitting) {
+      return;
+    }
+
+    setDialogMode(null);
+    setSelectedRequestId(null);
+    setActionReason("");
+    setSearchTerm("");
+  }
+
+  function openCreateModal() {
+    setFeedback(undefined);
+    setForm(defaultForm(snapshot, currentUser, activeSection.kind));
+    setSearchTerm("");
+    setDialogMode("create");
+    setSelectedRequestId(null);
+    setActionReason("");
+  }
+
+  function fillFormFromRequest(request: InventoryRequest) {
+    setForm({
+      kind: request.kind,
+      itemId: request.itemId,
+      quantity: String(request.kind === "stock-count" ? request.quantity : request.quantity),
+      fromLocationId:
+        request.fromLocationId ??
+        currentUser.assignedLocationIds[0] ??
+        snapshot.locations[0]?.id ??
+        "",
+      toLocationId:
+        request.toLocationId ??
+        currentUser.assignedLocationIds[0] ??
+        snapshot.locations[0]?.id ??
+        "",
+      supplierId: request.supplierId ?? snapshot.suppliers[0]?.id ?? "",
+      note: request.note,
+      barcode: request.barcode,
+      lotCode: request.lotCode ?? "",
+      expiryDate: request.expiryDate ?? "",
+      receivedDate: request.receivedDate ?? new Date().toISOString().slice(0, 10),
+      wasteReason: request.wasteReason ?? "spoilage",
+      wasteShift: request.wasteShift ?? "morning",
+      wasteStation: request.wasteStation ?? request.fromLocationName ?? "",
+    });
+    setSearchTerm(request.itemName);
+  }
+
+  function openRequestModal(mode: Exclude<InventoryDialogMode, "create">, request: InventoryRequest) {
+    setFeedback(undefined);
+    setSelectedRequestId(request.id);
+    setActionReason("");
+
+    if (mode === "edit") {
+      fillFormFromRequest(request);
+    }
+
+    setDialogMode(mode);
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFeedback(undefined);
@@ -294,9 +371,116 @@ export function InventoryOpsPage({
           "",
       }));
       setSearchTerm("");
-      setEntryOpen(false);
+      closeDialog(true);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not create the inventory request.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleEditSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedRequest) {
+      return;
+    }
+
+    setFeedback(undefined);
+    if (!actionReason.trim()) {
+      setFeedback("Provide a reason before updating this inventory entry.");
+      return;
+    }
+    if (!form.itemId) {
+      setFeedback("Choose an item before updating the inventory operation.");
+      return;
+    }
+
+    setSubmitting(true);
+
+    try {
+      const updated = await onEditOperation({
+        requestId: selectedRequest.id,
+        reason: actionReason.trim(),
+        itemId: form.itemId,
+        quantity: Number(form.quantity),
+        note: form.note,
+        barcode: form.barcode || selectedItem?.barcode,
+        supplierId: needsSupplier ? form.supplierId : undefined,
+        fromLocationId: needsSource ? form.fromLocationId : undefined,
+        toLocationId: needsDestination ? form.toLocationId : undefined,
+        countedQuantity: form.kind === "stock-count" ? Number(form.quantity) : undefined,
+        lotCode: capturesBatchMetadata ? form.lotCode || undefined : undefined,
+        expiryDate: capturesBatchMetadata ? form.expiryDate || undefined : undefined,
+        receivedDate: capturesBatchMetadata ? form.receivedDate || undefined : undefined,
+        wasteReason: capturesWasteMetadata ? form.wasteReason : undefined,
+        wasteShift: capturesWasteMetadata ? form.wasteShift : undefined,
+        wasteStation: capturesWasteMetadata ? form.wasteStation : undefined,
+      });
+
+      setFeedback(
+        updated
+          ? `${selectedRequest.reference} was corrected through ${updated.reference}.`
+          : `${selectedRequest.reference} was corrected.`,
+      );
+      closeDialog(true);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not update this inventory entry.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleReverseSubmit() {
+    if (!selectedRequest) {
+      return;
+    }
+
+    setFeedback(undefined);
+    if (!actionReason.trim()) {
+      setFeedback("Provide a reason before reversing this inventory entry.");
+      return;
+    }
+
+    setSubmitting(true);
+
+    try {
+      const reversed = await onReverseOperation({
+        requestId: selectedRequest.id,
+        reason: actionReason.trim(),
+      });
+      setFeedback(
+        reversed
+          ? `${selectedRequest.reference} was reversed through ${reversed.reference}.`
+          : `${selectedRequest.reference} was reversed.`,
+      );
+      closeDialog(true);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not reverse this inventory entry.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDeleteSubmit() {
+    if (!selectedRequest) {
+      return;
+    }
+
+    setFeedback(undefined);
+    setSubmitting(true);
+
+    try {
+      const deleted = await onDeleteOperation({
+        requestId: selectedRequest.id,
+      });
+      setFeedback(
+        deleted
+          ? `${selectedRequest.reference} was removed after ${deleted.reference}.`
+          : `${selectedRequest.reference} was removed.`,
+      );
+      closeDialog(true);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not delete this inventory entry.");
     } finally {
       setSubmitting(false);
     }
@@ -336,7 +520,7 @@ export function InventoryOpsPage({
               <button
                 type="button"
                 className="primary-button"
-                onClick={() => setEntryOpen(true)}
+                onClick={openCreateModal}
               >
                 Add New {activeSection.navLabel}
               </button>
@@ -390,6 +574,7 @@ export function InventoryOpsPage({
                   <th>Quantity</th>
                   <th>Logged By</th>
                   <th>When</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -422,11 +607,53 @@ export function InventoryOpsPage({
                       </td>
                       <td>{request.requestedByName}</td>
                       <td>{formatDateTime(request.requestedAt)}</td>
+                      <td>
+                        <div className="row-actions">
+                          <button
+                            type="button"
+                            className="action-icon-button"
+                            onClick={() => openRequestModal("view", request)}
+                            aria-label={`View ${request.reference}`}
+                            title="View"
+                          >
+                            <ViewIcon size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            className="action-icon-button"
+                            onClick={() => openRequestModal("edit", request)}
+                            aria-label={`Edit ${request.reference}`}
+                            title="Edit"
+                            disabled={request.status !== "posted"}
+                          >
+                            <EditIcon size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            className="action-icon-button"
+                            onClick={() => openRequestModal("reverse", request)}
+                            aria-label={`Reverse ${request.reference}`}
+                            title="Cancel or reverse"
+                            disabled={request.status !== "posted"}
+                          >
+                            <ReverseIcon size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            className="action-icon-button danger"
+                            onClick={() => openRequestModal("delete", request)}
+                            aria-label={`Delete ${request.reference}`}
+                            title="Delete"
+                          >
+                            <DeleteIcon size={16} />
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={6}>
+                    <td colSpan={7}>
                       <span className="empty-copy">
                         No {activeSection.navLabel.toLowerCase()} records have been logged yet.
                       </span>
@@ -440,27 +667,45 @@ export function InventoryOpsPage({
 
       {feedback ? <p className="feedback-copy">{feedback}</p> : null}
 
-      {entryOpen ? (
+      {dialogMode ? (
         <div
           className="page-popup-scrim"
           onClick={() => {
             if (!submitting) {
-              setEntryOpen(false);
+              closeDialog();
             }
           }}
         >
           <div className="page-popup-card inventory-popup-card" onClick={(event) => event.stopPropagation()}>
             <div className="panel-heading">
               <div>
-                <p className="eyebrow">Operational Entry</p>
-                <h2>Add New {activeSection.navLabel}</h2>
+                <p className="eyebrow">
+                  {dialogMode === "view"
+                    ? "Entry Details"
+                    : dialogMode === "reverse"
+                      ? "Cancel or Reverse"
+                      : dialogMode === "delete"
+                        ? "Delete Entry"
+                        : "Operational Entry"}
+                </p>
+                <h2>
+                  {dialogMode === "create"
+                    ? `Add New ${activeSection.navLabel}`
+                    : dialogMode === "edit"
+                      ? `Edit ${activeSection.navLabel}`
+                      : dialogMode === "reverse"
+                        ? `Reverse ${activeSection.navLabel}`
+                        : dialogMode === "delete"
+                          ? `Delete ${activeSection.navLabel}`
+                          : `${activeSection.navLabel} Details`}
+                </h2>
               </div>
               <div className="button-row">
                 <span className="status-chip neutral">Realtime: {syncState.websocket}</span>
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={() => setEntryOpen(false)}
+                  onClick={() => closeDialog()}
                   disabled={submitting}
                 >
                   Close
@@ -468,9 +713,73 @@ export function InventoryOpsPage({
               </div>
             </div>
 
-            <BarcodeScanner onDetected={handleBarcode} />
+            {dialogMode === "view" && selectedRequest ? (
+              <dl className="detail-list">
+                <div><dt>ID</dt><dd>{selectedRequest.id}</dd></div>
+                <div><dt>Reference</dt><dd>{selectedRequest.reference}</dd></div>
+                <div><dt>Status</dt><dd>{selectedRequest.status}</dd></div>
+                <div><dt>Item</dt><dd>{selectedRequest.itemName}</dd></div>
+                <div><dt>Barcode</dt><dd>{selectedRequest.barcode || "No barcode"}</dd></div>
+                <div><dt>Quantity</dt><dd>{selectedRequest.quantity} {selectedRequest.unit}</dd></div>
+                <div><dt>Supplier</dt><dd>{selectedRequest.supplierName ?? "Not set"}</dd></div>
+                <div><dt>From</dt><dd>{selectedRequest.fromLocationName ?? "Not set"}</dd></div>
+                <div><dt>To</dt><dd>{selectedRequest.toLocationName ?? "Not set"}</dd></div>
+                <div><dt>Lot Code</dt><dd>{selectedRequest.lotCode ?? "Not set"}</dd></div>
+                <div><dt>Received</dt><dd>{selectedRequest.receivedDate ?? "Not set"}</dd></div>
+                <div><dt>Expiry</dt><dd>{selectedRequest.expiryDate ?? "Not set"}</dd></div>
+                <div><dt>Waste</dt><dd>{selectedRequest.wasteReason ? `${selectedRequest.wasteReason} / ${selectedRequest.wasteShift} / ${selectedRequest.wasteStation}` : "Not a wastage entry"}</dd></div>
+                <div><dt>Logged By</dt><dd>{selectedRequest.requestedByName}</dd></div>
+                <div><dt>Logged At</dt><dd>{formatDateTime(selectedRequest.requestedAt)}</dd></div>
+                <div className="detail-list-wide"><dt>Allocation</dt><dd>{selectedRequest.allocationSummary ?? "No allocation summary recorded."}</dd></div>
+                <div className="detail-list-wide"><dt>Note</dt><dd>{selectedRequest.note || "No note provided."}</dd></div>
+              </dl>
+            ) : null}
 
-            <form className="form-grid" onSubmit={handleSubmit}>
+            {dialogMode === "reverse" ? (
+              <div className="confirm-dialog">
+                <p className="confirm-copy">
+                  Reverse this inventory entry and create an audit-safe counter movement.
+                </p>
+                <label className="field field-wide">
+                  <span>Reason for reversal</span>
+                  <textarea
+                    rows={4}
+                    value={actionReason}
+                    onChange={(event) => setActionReason(event.target.value)}
+                    placeholder="Explain why this stock movement needs to be cancelled or reversed."
+                  />
+                </label>
+                <div className="button-row">
+                  <button type="button" className="secondary-button" onClick={() => closeDialog()} disabled={submitting}>
+                    Cancel
+                  </button>
+                  <button type="button" className="primary-button" onClick={() => void handleReverseSubmit()} disabled={submitting}>
+                    {submitting ? "Reversing..." : "Confirm Reverse"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {dialogMode === "delete" ? (
+              <div className="confirm-dialog">
+                <p className="confirm-copy">
+                  Delete this log entry. OmniStock will safely reverse the stock effect first if the entry is still posted.
+                </p>
+                <div className="button-row">
+                  <button type="button" className="secondary-button" onClick={() => closeDialog()} disabled={submitting}>
+                    Cancel
+                  </button>
+                  <button type="button" className="primary-button danger-button" onClick={() => void handleDeleteSubmit()} disabled={submitting}>
+                    {submitting ? "Deleting..." : "Confirm Delete"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {dialogMode === "create" || dialogMode === "edit" ? <BarcodeScanner onDetected={handleBarcode} /> : null}
+
+            {dialogMode === "create" || dialogMode === "edit" ? (
+            <form className="form-grid" onSubmit={dialogMode === "edit" ? handleEditSubmit : handleSubmit}>
               <label className="field">
                 <span>Search items</span>
                 <input
@@ -649,9 +958,25 @@ export function InventoryOpsPage({
                 />
               </label>
 
+              {dialogMode === "edit" ? (
+                <label className="field field-wide">
+                  <span>Reason for correction</span>
+                  <textarea
+                    rows={3}
+                    value={actionReason}
+                    onChange={(event) => setActionReason(event.target.value)}
+                    placeholder="Explain why this entry is being corrected."
+                  />
+                </label>
+              ) : null}
+
               <div className="button-row">
                 <button type="submit" className="primary-button" disabled={submitting}>
-                  {submitting ? "Saving..." : `Create ${OPERATION_LABELS[form.kind]}`}
+                  {submitting
+                    ? "Saving..."
+                    : dialogMode === "edit"
+                      ? `Update ${OPERATION_LABELS[form.kind]}`
+                      : `Create ${OPERATION_LABELS[form.kind]}`}
                 </button>
                 <span className="helper-text">
                   Changes save locally first, then sync through REST and realtime updates. FEFO is{" "}
@@ -659,6 +984,7 @@ export function InventoryOpsPage({
                 </span>
               </div>
             </form>
+            ) : null}
           </div>
         </div>
       ) : null}
