@@ -6,9 +6,15 @@ import type {
   ActivityLog,
   BootstrapPayload,
   ChangeOwnPasswordRequest,
+  CreateItemRequest,
+  CreateItemResponse,
+  CreateLocationRequest,
+  CreateLocationResponse,
   CreateUserRequest,
   CreateMarketPriceRequest,
   CreateMarketPriceResponse,
+  CreateSupplierRequest,
+  CreateSupplierResponse,
   InventorySnapshot,
   InitializeSystemRequest,
   InitializeSystemResponse,
@@ -436,6 +442,18 @@ export async function loadCurrentCursor(db: D1Database): Promise<number> {
 
 function rolePermissions(role: User["role"]): PermissionKey[] {
   return ROLE_PRESETS[role].permissions;
+}
+
+function userHasPermission(user: User, permission: PermissionKey): boolean {
+  return user.permissions.includes(permission);
+}
+
+function requirePermission(user: User | undefined, permission: PermissionKey, message: string): User {
+  if (!user || !userHasPermission(user, permission)) {
+    throw new Error(message);
+  }
+
+  return user;
 }
 
 async function seedReferenceData(db: D1Database): Promise<void> {
@@ -1357,6 +1375,50 @@ async function userExistsByUsername(
   return Boolean(row?.id);
 }
 
+async function itemExistsBySku(
+  db: D1Database,
+  sku: string,
+): Promise<boolean> {
+  const row = await first<{ id: string }>(db, "SELECT id FROM items WHERE sku = ? LIMIT 1", [sku]);
+  return Boolean(row?.id);
+}
+
+async function itemExistsByBarcode(
+  db: D1Database,
+  barcode: string,
+): Promise<boolean> {
+  const row = await first<{ id: string }>(
+    db,
+    "SELECT id FROM items WHERE barcode = ? LIMIT 1",
+    [barcode],
+  );
+  return Boolean(row?.id);
+}
+
+async function supplierExistsByCode(
+  db: D1Database,
+  code: string,
+): Promise<boolean> {
+  const row = await first<{ id: string }>(
+    db,
+    "SELECT id FROM suppliers WHERE code = ? LIMIT 1",
+    [code],
+  );
+  return Boolean(row?.id);
+}
+
+async function locationExistsByCode(
+  db: D1Database,
+  code: string,
+): Promise<boolean> {
+  const row = await first<{ id: string }>(
+    db,
+    "SELECT id FROM locations WHERE code = ? LIMIT 1",
+    [code],
+  );
+  return Boolean(row?.id);
+}
+
 async function countSuperadmins(db: D1Database, excludeUserId?: string): Promise<number> {
   const row = await first<CountRow>(
     db,
@@ -1381,9 +1443,10 @@ async function hasUserHistory(db: D1Database, userId: string): Promise<boolean> 
   );
 }
 
-async function appendAdminActivity(
+async function appendActivity(
   db: D1Database,
   actorId: string,
+  moduleKey: "administration" | "masterData",
   title: string,
   detail: string,
 ): Promise<void> {
@@ -1393,14 +1456,23 @@ async function appendAdminActivity(
   const createdAt = new Date().toISOString();
   await execute(
     db,
-    "INSERT INTO activity_logs (id, sequence_no, seq, title, detail, actor_id, module_key, severity, related_request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, 'administration', 'success', NULL, ?)",
-    [activityId, numberPart(activityId), nextSeq, title, detail, actorId, createdAt],
+    "INSERT INTO activity_logs (id, sequence_no, seq, title, detail, actor_id, module_key, severity, related_request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'success', NULL, ?)",
+    [activityId, numberPart(activityId), nextSeq, title, detail, actorId, moduleKey, createdAt],
   );
   await execute(
     db,
     "UPDATE system_state SET value_integer = ?, updated_at = ? WHERE key = 'latest_cursor'",
     [nextSeq, createdAt],
   );
+}
+
+async function appendAdminActivity(
+  db: D1Database,
+  actorId: string,
+  title: string,
+  detail: string,
+): Promise<void> {
+  await appendActivity(db, actorId, "administration", title, detail);
 }
 
 async function issueSessionForUser(db: D1Database, userId: string): Promise<string> {
@@ -2221,6 +2293,247 @@ export async function createMarketPriceEntryInD1(
 
   return {
     entry,
+    snapshot: await loadSnapshot(db),
+  };
+}
+
+export async function createItemInD1(
+  db: D1Database,
+  actorId: string,
+  input: CreateItemRequest,
+): Promise<CreateItemResponse> {
+  await ensureDatabaseReady(db);
+
+  const snapshot = await loadSnapshot(db);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "master.items",
+    "You do not have permission to add items.",
+  );
+
+  const name = input.name.trim();
+  const sku = input.sku.trim().toUpperCase();
+  const barcode = input.barcode.trim();
+  const category = input.category.trim();
+  const unit = input.unit.trim();
+  const status = input.status ?? "active";
+
+  if (!name || !sku || !barcode || !category || !unit) {
+    throw new Error("Name, SKU, barcode, category, and unit are required for items.");
+  }
+
+  if (await itemExistsBySku(db, sku)) {
+    throw new Error(`An item already exists with SKU ${sku}.`);
+  }
+
+  if (await itemExistsByBarcode(db, barcode)) {
+    throw new Error(`An item already exists with barcode ${barcode}.`);
+  }
+
+  const supplier = snapshot.suppliers.find((record) => record.id === input.supplierId);
+  if (!supplier) {
+    throw new Error("Select a valid supplier before creating the item.");
+  }
+
+  const costPrice = Number(input.costPrice);
+  const sellingPrice = Number(input.sellingPrice);
+  if (!Number.isFinite(costPrice) || costPrice < 0) {
+    throw new Error("Cost price must be zero or greater.");
+  }
+  if (!Number.isFinite(sellingPrice) || sellingPrice < 0) {
+    throw new Error("Selling price must be zero or greater.");
+  }
+
+  const createdAt = new Date().toISOString();
+  const id = await reserveNextId(db, "items", "itm");
+  await execute(
+    db,
+    "INSERT INTO items (id, sequence_no, sku, barcode, name, category, unit, supplier_id, cost_price, selling_price, status, updated_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [
+      id,
+      numberPart(id),
+      sku,
+      barcode,
+      name,
+      category,
+      unit,
+      supplier.id,
+      costPrice,
+      sellingPrice,
+      status,
+      createdAt,
+      createdAt,
+    ],
+  );
+
+  await appendActivity(
+    db,
+    actor.id,
+    "masterData",
+    "Item created",
+    `${name} (${sku}) was added to the item catalog.`,
+  );
+
+  return {
+    item: {
+      id,
+      sku,
+      barcode,
+      name,
+      category,
+      unit,
+      supplierId: supplier.id,
+      costPrice,
+      sellingPrice,
+      status,
+      stocks: [],
+      updatedAt: createdAt,
+    },
+    snapshot: await loadSnapshot(db),
+  };
+}
+
+export async function createSupplierInD1(
+  db: D1Database,
+  actorId: string,
+  input: CreateSupplierRequest,
+): Promise<CreateSupplierResponse> {
+  await ensureDatabaseReady(db);
+
+  const snapshot = await loadSnapshot(db);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "master.suppliers",
+    "You do not have permission to add suppliers.",
+  );
+
+  const name = input.name.trim();
+  const code = input.code.trim().toUpperCase();
+  const email = input.email.trim().toLowerCase();
+  const phone = input.phone.trim();
+  const status = input.status ?? "active";
+  const leadTimeDays = Number(input.leadTimeDays);
+
+  if (!name || !code || !email || !phone) {
+    throw new Error("Supplier name, code, email, and phone are required.");
+  }
+
+  if (await supplierExistsByCode(db, code)) {
+    throw new Error(`A supplier already exists with code ${code}.`);
+  }
+
+  if (!Number.isFinite(leadTimeDays) || leadTimeDays < 0) {
+    throw new Error("Lead time must be zero or greater.");
+  }
+
+  const createdAt = new Date().toISOString();
+  const id = await reserveNextId(db, "suppliers", "sup");
+  await execute(
+    db,
+    "INSERT INTO suppliers (id, sequence_no, code, name, email, phone, lead_time_days, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [
+      id,
+      numberPart(id),
+      code,
+      name,
+      email,
+      phone,
+      leadTimeDays,
+      status,
+      createdAt,
+      createdAt,
+    ],
+  );
+
+  await appendActivity(
+    db,
+    actor.id,
+    "masterData",
+    "Supplier created",
+    `${name} (${code}) was added to the supplier directory.`,
+  );
+
+  return {
+    supplier: {
+      id,
+      code,
+      name,
+      email,
+      phone,
+      leadTimeDays,
+      status,
+    },
+    snapshot: await loadSnapshot(db),
+  };
+}
+
+export async function createLocationInD1(
+  db: D1Database,
+  actorId: string,
+  input: CreateLocationRequest,
+): Promise<CreateLocationResponse> {
+  await ensureDatabaseReady(db);
+
+  const snapshot = await loadSnapshot(db);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "master.locations",
+    "You do not have permission to add warehouse or outlet records.",
+  );
+
+  const name = input.name.trim();
+  const code = input.code.trim().toUpperCase();
+  const city = input.city.trim();
+  const type = input.type;
+  const status = input.status ?? "active";
+
+  if (!name || !code) {
+    throw new Error("Location name and code are required.");
+  }
+
+  if (type !== "warehouse" && type !== "outlet") {
+    throw new Error("Location type must be warehouse or outlet.");
+  }
+
+  if (await locationExistsByCode(db, code)) {
+    throw new Error(`A location already exists with code ${code}.`);
+  }
+
+  const createdAt = new Date().toISOString();
+  const id = await reserveNextId(db, "locations", "loc");
+  await execute(
+    db,
+    "INSERT INTO locations (id, sequence_no, code, name, type, city, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [
+      id,
+      numberPart(id),
+      code,
+      name,
+      type,
+      city,
+      status,
+      createdAt,
+      createdAt,
+    ],
+  );
+
+  await appendActivity(
+    db,
+    actor.id,
+    "masterData",
+    "Location created",
+    `${name} (${code}) was added as a ${type}.`,
+  );
+
+  return {
+    location: {
+      id,
+      code,
+      name,
+      type,
+      city,
+      status,
+    },
     snapshot: await loadSnapshot(db),
   };
 }

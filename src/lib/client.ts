@@ -2,9 +2,15 @@ import type {
   ActivateSuperadminRequest,
   BootstrapPayload,
   ChangeOwnPasswordRequest,
+  CreateItemRequest,
+  CreateItemResponse,
+  CreateLocationRequest,
+  CreateLocationResponse,
   CreateUserRequest,
   CreateMarketPriceRequest,
   CreateMarketPriceResponse,
+  CreateSupplierRequest,
+  CreateSupplierResponse,
   InitializeSystemRequest,
   InitializeSystemResponse,
   LoginRequest,
@@ -91,6 +97,46 @@ export async function createMarketPriceEntry(
   });
 
   return parseJson<CreateMarketPriceResponse>(response);
+}
+
+export async function createItemRecord(input: CreateItemRequest): Promise<CreateItemResponse> {
+  const response = await fetch("/api/items", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<CreateItemResponse>(response);
+}
+
+export async function createSupplierRecord(
+  input: CreateSupplierRequest,
+): Promise<CreateSupplierResponse> {
+  const response = await fetch("/api/suppliers", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<CreateSupplierResponse>(response);
+}
+
+export async function createLocationRecord(
+  input: CreateLocationRequest,
+): Promise<CreateLocationResponse> {
+  const response = await fetch("/api/locations", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<CreateLocationResponse>(response);
 }
 
 export async function initializeSystem(

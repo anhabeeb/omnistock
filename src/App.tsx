@@ -151,6 +151,9 @@ export default function App() {
     activateSuperadminPassword,
     logoutUser,
     createOperation,
+    createItem,
+    createSupplier,
+    createLocation,
     createMarketPrice,
     initializeApp,
     updateProfile,
@@ -754,6 +757,9 @@ export default function App() {
                         <MasterDataPage
                           snapshot={snapshot}
                           currentUser={currentUser}
+                          onCreateItem={createItem}
+                          onCreateSupplier={createSupplier}
+                          onCreateLocation={createLocation}
                           onCreateMarketPrice={createMarketPrice}
                         />
                       }

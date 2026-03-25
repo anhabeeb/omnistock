@@ -5,7 +5,10 @@ import { buildBootstrapPayload } from "../../shared/selectors";
 import type {
   BootstrapPayload,
   ChangeOwnPasswordRequest,
+  CreateItemRequest,
+  CreateLocationRequest,
   CreateMarketPriceRequest,
+  CreateSupplierRequest,
   CreateUserRequest,
   InitializeSystemRequest,
   MutationEnvelope,
@@ -20,7 +23,10 @@ import type {
 import {
   activateSuperadmin,
   changeOwnPassword,
+  createItemRecord,
+  createLocationRecord,
   createMarketPriceEntry,
+  createSupplierRecord,
   createUser,
   fetchBootstrap,
   initializeSystem,
@@ -623,6 +629,24 @@ export function useOmniStockApp() {
     return response.entry;
   }
 
+  async function createItem(input: CreateItemRequest) {
+    const response = await createItemRecord(input);
+    await applyAdminSnapshot(response.snapshot);
+    return response.item;
+  }
+
+  async function createSupplier(input: CreateSupplierRequest) {
+    const response = await createSupplierRecord(input);
+    await applyAdminSnapshot(response.snapshot);
+    return response.supplier;
+  }
+
+  async function createLocation(input: CreateLocationRequest) {
+    const response = await createLocationRecord(input);
+    await applyAdminSnapshot(response.snapshot);
+    return response.location;
+  }
+
   async function initializeApp(input: InitializeSystemRequest) {
     if (!navigator.onLine) {
       throw new Error("Initial setup needs an online connection to create the first workspace.");
@@ -701,6 +725,9 @@ export function useOmniStockApp() {
     activateSuperadminPassword,
     logoutUser,
     createOperation,
+    createItem,
+    createSupplier,
+    createLocation,
     createMarketPrice,
     initializeApp,
     updateProfile,

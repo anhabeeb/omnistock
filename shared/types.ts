@@ -369,6 +369,50 @@ export interface CreateMarketPriceResponse {
   snapshot: InventorySnapshot;
 }
 
+export interface CreateItemRequest {
+  sku: string;
+  barcode: string;
+  name: string;
+  category: string;
+  unit: string;
+  supplierId: string;
+  costPrice: number;
+  sellingPrice: number;
+  status: RecordStatus;
+}
+
+export interface CreateItemResponse {
+  item: Item;
+  snapshot: InventorySnapshot;
+}
+
+export interface CreateSupplierRequest {
+  code: string;
+  name: string;
+  email: string;
+  phone: string;
+  leadTimeDays: number;
+  status: RecordStatus;
+}
+
+export interface CreateSupplierResponse {
+  supplier: Supplier;
+  snapshot: InventorySnapshot;
+}
+
+export interface CreateLocationRequest {
+  code: string;
+  name: string;
+  type: LocationType;
+  city: string;
+  status: RecordStatus;
+}
+
+export interface CreateLocationResponse {
+  location: Location;
+  snapshot: InventorySnapshot;
+}
+
 export interface InitializationLocationInput {
   name: string;
   code: string;
@@ -466,7 +510,11 @@ export type RealtimeMessage =
   | { type: "hello"; cursor: number }
   | { type: "event"; event: SyncEvent }
   | { type: "pong"; cursor: number }
-  | { type: "snapshot-refresh"; scope: "market-prices"; triggeredAt: string }
+  | {
+      type: "snapshot-refresh";
+      scope: "market-prices" | "master-data";
+      triggeredAt: string;
+    }
   | { type: "error"; message: string };
 
 export interface CachedBootstrapRecord {

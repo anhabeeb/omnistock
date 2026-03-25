@@ -2,10 +2,18 @@ import { useDeferredValue, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { totalOnHand } from "../../shared/selectors";
 import type {
+  CreateItemRequest,
+  CreateLocationRequest,
   CreateMarketPriceRequest,
+  CreateSupplierRequest,
+  Item,
   InventorySnapshot,
+  Location,
+  LocationType,
   MarketPriceEntry,
   PriceCategory,
+  RecordStatus,
+  Supplier,
   User,
 } from "../../shared/types";
 import { exportMarketPrices } from "../lib/export";
@@ -14,6 +22,9 @@ import { formatCurrency, formatDateTime } from "../lib/format";
 interface Props {
   snapshot: InventorySnapshot;
   currentUser: User;
+  onCreateItem: (input: CreateItemRequest) => Promise<Item>;
+  onCreateSupplier: (input: CreateSupplierRequest) => Promise<Supplier>;
+  onCreateLocation: (input: CreateLocationRequest) => Promise<Location>;
   onCreateMarketPrice: (input: CreateMarketPriceRequest) => Promise<MarketPriceEntry>;
 }
 
@@ -26,6 +37,35 @@ interface PriceFormState {
   sourceName: string;
   marketDate: string;
   note: string;
+}
+
+interface ItemFormState {
+  sku: string;
+  barcode: string;
+  name: string;
+  category: string;
+  unit: string;
+  supplierId: string;
+  costPrice: string;
+  sellingPrice: string;
+  status: RecordStatus;
+}
+
+interface SupplierFormState {
+  code: string;
+  name: string;
+  email: string;
+  phone: string;
+  leadTimeDays: string;
+  status: RecordStatus;
+}
+
+interface LocationFormState {
+  code: string;
+  name: string;
+  type: LocationType;
+  city: string;
+  status: RecordStatus;
 }
 
 const MASTER_SECTIONS = [
@@ -98,6 +138,8 @@ const PRICE_CATEGORIES: PriceCategory[] = [
   "oil",
 ];
 
+const CREATE_STATUSES: Array<Exclude<RecordStatus, "archived">> = ["active", "inactive"];
+
 function labelForCategory(category: PriceCategory): string {
   return category
     .split("-")
@@ -105,13 +147,78 @@ function labelForCategory(category: PriceCategory): string {
     .join(" ");
 }
 
-export function MasterDataPage({ snapshot, currentUser, onCreateMarketPrice }: Props) {
+function singularLabelForSection(slug: (typeof MASTER_SECTIONS)[number]["slug"]): string {
+  if (slug === "items") {
+    return "Item";
+  }
+  if (slug === "suppliers") {
+    return "Supplier";
+  }
+  if (slug === "locations") {
+    return "Location";
+  }
+  return "Market Price";
+}
+
+function addButtonLabelForSection(slug: (typeof MASTER_SECTIONS)[number]["slug"]): string {
+  return `Add New ${singularLabelForSection(slug)}`;
+}
+
+function defaultItemForm(snapshot: InventorySnapshot): ItemFormState {
+  const supplier = snapshot.suppliers[0];
+  return {
+    sku: "",
+    barcode: "",
+    name: "",
+    category: "",
+    unit: "pcs",
+    supplierId: supplier?.id ?? "",
+    costPrice: "0",
+    sellingPrice: "0",
+    status: "active",
+  };
+}
+
+function defaultSupplierForm(): SupplierFormState {
+  return {
+    code: "",
+    name: "",
+    email: "",
+    phone: "",
+    leadTimeDays: "0",
+    status: "active",
+  };
+}
+
+function defaultLocationForm(): LocationFormState {
+  return {
+    code: "",
+    name: "",
+    type: "warehouse",
+    city: "",
+    status: "active",
+  };
+}
+
+export function MasterDataPage({
+  snapshot,
+  currentUser,
+  onCreateItem,
+  onCreateSupplier,
+  onCreateLocation,
+  onCreateMarketPrice,
+}: Props) {
   const location = useLocation();
   const activeSlug = location.pathname.split("/")[2] ?? MASTER_SECTIONS[0].slug;
   const activeSection = MASTER_SECTIONS.find((section) => section.slug === activeSlug) ?? MASTER_SECTIONS[0];
   const [search, setSearch] = useState("");
+  const [entryOpen, setEntryOpen] = useState(false);
+  const [itemForm, setItemForm] = useState<ItemFormState>(() => defaultItemForm(snapshot));
+  const [supplierForm, setSupplierForm] = useState<SupplierFormState>(defaultSupplierForm);
+  const [locationForm, setLocationForm] = useState<LocationFormState>(defaultLocationForm);
   const [priceForm, setPriceForm] = useState<PriceFormState>(() => defaultPriceForm(snapshot));
   const [feedback, setFeedback] = useState<string>();
+  const [submittingEntry, setSubmittingEntry] = useState(false);
   const [savingPrice, setSavingPrice] = useState(false);
   const [exporting, setExporting] = useState(false);
   const deferredSearch = useDeferredValue(search);
@@ -122,8 +229,32 @@ export function MasterDataPage({ snapshot, currentUser, onCreateMarketPrice }: P
       }
       return defaultPriceForm(snapshot);
     });
+    setItemForm(defaultItemForm(snapshot));
+    setSupplierForm(defaultSupplierForm());
+    setLocationForm(defaultLocationForm());
+    setEntryOpen(false);
     setFeedback(undefined);
-  }, [snapshot.generatedAt]);
+  }, [activeSection.slug, snapshot.generatedAt]);
+
+  useEffect(() => {
+    if (!entryOpen) {
+      return undefined;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !submittingEntry) {
+        setEntryOpen(false);
+      }
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [entryOpen, submittingEntry]);
 
   const filteredItems = snapshot.items.filter((item) => {
     if (!deferredSearch.trim()) {
@@ -178,6 +309,38 @@ export function MasterDataPage({ snapshot, currentUser, onCreateMarketPrice }: P
 
   function patch<K extends keyof PriceFormState>(key: K, value: PriceFormState[K]) {
     setPriceForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function patchItem<K extends keyof ItemFormState>(key: K, value: ItemFormState[K]) {
+    setItemForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function patchSupplier<K extends keyof SupplierFormState>(
+    key: K,
+    value: SupplierFormState[K],
+  ) {
+    setSupplierForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function patchLocation<K extends keyof LocationFormState>(
+    key: K,
+    value: LocationFormState[K],
+  ) {
+    setLocationForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function openEntryModal() {
+    setFeedback(undefined);
+
+    if (activeSection.slug === "items") {
+      setItemForm(defaultItemForm(snapshot));
+    } else if (activeSection.slug === "suppliers") {
+      setSupplierForm(defaultSupplierForm());
+    } else if (activeSection.slug === "locations") {
+      setLocationForm(defaultLocationForm());
+    }
+
+    setEntryOpen(true);
   }
 
   function handleItemSelection(itemId: string) {
@@ -244,6 +407,83 @@ export function MasterDataPage({ snapshot, currentUser, onCreateMarketPrice }: P
       setFeedback(error instanceof Error ? error.message : "Could not export market prices.");
     } finally {
       setExporting(false);
+    }
+  }
+
+  async function handleCreateItem(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFeedback(undefined);
+    setSubmittingEntry(true);
+
+    try {
+      const item = await onCreateItem({
+        sku: itemForm.sku,
+        barcode: itemForm.barcode,
+        name: itemForm.name,
+        category: itemForm.category,
+        unit: itemForm.unit,
+        supplierId: itemForm.supplierId,
+        costPrice: Number(itemForm.costPrice),
+        sellingPrice: Number(itemForm.sellingPrice),
+        status: itemForm.status,
+      });
+
+      setFeedback(`${item.name} was added to the item catalog.`);
+      setItemForm(defaultItemForm(snapshot));
+      setEntryOpen(false);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not create the item.");
+    } finally {
+      setSubmittingEntry(false);
+    }
+  }
+
+  async function handleCreateSupplier(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFeedback(undefined);
+    setSubmittingEntry(true);
+
+    try {
+      const supplier = await onCreateSupplier({
+        code: supplierForm.code,
+        name: supplierForm.name,
+        email: supplierForm.email,
+        phone: supplierForm.phone,
+        leadTimeDays: Number(supplierForm.leadTimeDays),
+        status: supplierForm.status,
+      });
+
+      setFeedback(`${supplier.name} was added to the supplier directory.`);
+      setSupplierForm(defaultSupplierForm());
+      setEntryOpen(false);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not create the supplier.");
+    } finally {
+      setSubmittingEntry(false);
+    }
+  }
+
+  async function handleCreateLocation(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFeedback(undefined);
+    setSubmittingEntry(true);
+
+    try {
+      const createdLocation = await onCreateLocation({
+        code: locationForm.code,
+        name: locationForm.name,
+        type: locationForm.type,
+        city: locationForm.city,
+        status: locationForm.status,
+      });
+
+      setFeedback(`${createdLocation.name} was added to the location directory.`);
+      setLocationForm(defaultLocationForm());
+      setEntryOpen(false);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not create the location.");
+    } finally {
+      setSubmittingEntry(false);
     }
   }
 
@@ -339,12 +579,17 @@ export function MasterDataPage({ snapshot, currentUser, onCreateMarketPrice }: P
               <p className="eyebrow">Item Catalog</p>
               <h2>SKU Registry</h2>
             </div>
-            <input
-              className="table-search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Filter by item, SKU, or barcode"
-            />
+            <div className="button-row">
+              <input
+                className="table-search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Filter by item, SKU, or barcode"
+              />
+              <button type="button" className="primary-button" onClick={openEntryModal}>
+                {addButtonLabelForSection(activeSection.slug)}
+              </button>
+            </div>
           </div>
           <div className="table-wrap">
             <table className="data-table">
@@ -387,12 +632,17 @@ export function MasterDataPage({ snapshot, currentUser, onCreateMarketPrice }: P
               <p className="eyebrow">Suppliers</p>
               <h2>Approved Vendor Directory</h2>
             </div>
-            <input
-              className="table-search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search supplier, code, email, or phone"
-            />
+            <div className="button-row">
+              <input
+                className="table-search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search supplier, code, email, or phone"
+              />
+              <button type="button" className="primary-button" onClick={openEntryModal}>
+                {addButtonLabelForSection(activeSection.slug)}
+              </button>
+            </div>
           </div>
           <div className="table-wrap">
             <table className="data-table">
@@ -431,12 +681,17 @@ export function MasterDataPage({ snapshot, currentUser, onCreateMarketPrice }: P
               <p className="eyebrow">Facilities</p>
               <h2>Warehouses & Outlets</h2>
             </div>
-            <input
-              className="table-search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search code, location, city, or type"
-            />
+            <div className="button-row">
+              <input
+                className="table-search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search code, location, city, or type"
+              />
+              <button type="button" className="primary-button" onClick={openEntryModal}>
+                {addButtonLabelForSection(activeSection.slug)}
+              </button>
+            </div>
           </div>
           <div className="table-wrap">
             <table className="data-table">
@@ -642,6 +897,278 @@ export function MasterDataPage({ snapshot, currentUser, onCreateMarketPrice }: P
             </article>
           </section>
         </>
+      ) : null}
+
+      {entryOpen && activeSection.slug !== "market-prices" ? (
+        <div
+          className="page-popup-scrim"
+          onClick={() => {
+            if (!submittingEntry) {
+              setEntryOpen(false);
+            }
+          }}
+        >
+          <div className="page-popup-card" onClick={(event) => event.stopPropagation()}>
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Master Data Entry</p>
+                <h2>Add New {singularLabelForSection(activeSection.slug)}</h2>
+              </div>
+              <div className="button-row">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setEntryOpen(false)}
+                  disabled={submittingEntry}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            {activeSection.slug === "items" ? (
+              <form className="form-grid compact-form" onSubmit={handleCreateItem}>
+                <label className="field">
+                  <span>Item name</span>
+                  <input
+                    value={itemForm.name}
+                    onChange={(event) => patchItem("name", event.target.value)}
+                    placeholder="Chicken Breast Fillet"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>SKU</span>
+                  <input
+                    value={itemForm.sku}
+                    onChange={(event) => patchItem("sku", event.target.value)}
+                    placeholder="CHK-BRST-001"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Barcode</span>
+                  <input
+                    value={itemForm.barcode}
+                    onChange={(event) => patchItem("barcode", event.target.value)}
+                    placeholder="1234567890123"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Category</span>
+                  <input
+                    value={itemForm.category}
+                    onChange={(event) => patchItem("category", event.target.value)}
+                    placeholder="Meat"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Unit</span>
+                  <input
+                    value={itemForm.unit}
+                    onChange={(event) => patchItem("unit", event.target.value)}
+                    placeholder="kg"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Supplier</span>
+                  <select
+                    value={itemForm.supplierId}
+                    onChange={(event) => patchItem("supplierId", event.target.value)}
+                  >
+                    <option value="">Select a supplier</option>
+                    {snapshot.suppliers.map((supplier) => (
+                      <option key={supplier.id} value={supplier.id}>
+                        {supplier.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field">
+                  <span>Cost price</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={itemForm.costPrice}
+                    onChange={(event) => patchItem("costPrice", event.target.value)}
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Selling price</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={itemForm.sellingPrice}
+                    onChange={(event) => patchItem("sellingPrice", event.target.value)}
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Status</span>
+                  <select
+                    value={itemForm.status}
+                    onChange={(event) => patchItem("status", event.target.value as RecordStatus)}
+                  >
+                    {CREATE_STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="button-row field-wide">
+                  <button type="submit" className="primary-button" disabled={submittingEntry}>
+                    {submittingEntry ? "Saving..." : "Save Item"}
+                  </button>
+                </div>
+              </form>
+            ) : null}
+
+            {activeSection.slug === "suppliers" ? (
+              <form className="form-grid compact-form" onSubmit={handleCreateSupplier}>
+                <label className="field">
+                  <span>Supplier name</span>
+                  <input
+                    value={supplierForm.name}
+                    onChange={(event) => patchSupplier("name", event.target.value)}
+                    placeholder="Fresh Farms"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Code</span>
+                  <input
+                    value={supplierForm.code}
+                    onChange={(event) => patchSupplier("code", event.target.value)}
+                    placeholder="SUP-FF"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Email</span>
+                  <input
+                    type="email"
+                    value={supplierForm.email}
+                    onChange={(event) => patchSupplier("email", event.target.value)}
+                    placeholder="orders@freshfarms.com"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Phone</span>
+                  <input
+                    value={supplierForm.phone}
+                    onChange={(event) => patchSupplier("phone", event.target.value)}
+                    placeholder="+92 300 0000000"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Lead time (days)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={supplierForm.leadTimeDays}
+                    onChange={(event) => patchSupplier("leadTimeDays", event.target.value)}
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Status</span>
+                  <select
+                    value={supplierForm.status}
+                    onChange={(event) => patchSupplier("status", event.target.value as RecordStatus)}
+                  >
+                    {CREATE_STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="button-row field-wide">
+                  <button type="submit" className="primary-button" disabled={submittingEntry}>
+                    {submittingEntry ? "Saving..." : "Save Supplier"}
+                  </button>
+                </div>
+              </form>
+            ) : null}
+
+            {activeSection.slug === "locations" ? (
+              <form className="form-grid compact-form" onSubmit={handleCreateLocation}>
+                <label className="field">
+                  <span>Location name</span>
+                  <input
+                    value={locationForm.name}
+                    onChange={(event) => patchLocation("name", event.target.value)}
+                    placeholder="Central Warehouse"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Code</span>
+                  <input
+                    value={locationForm.code}
+                    onChange={(event) => patchLocation("code", event.target.value)}
+                    placeholder="WH-001"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Type</span>
+                  <select
+                    value={locationForm.type}
+                    onChange={(event) => patchLocation("type", event.target.value as LocationType)}
+                  >
+                    <option value="warehouse">Warehouse</option>
+                    <option value="outlet">Outlet</option>
+                  </select>
+                </label>
+
+                <label className="field">
+                  <span>City</span>
+                  <input
+                    value={locationForm.city}
+                    onChange={(event) => patchLocation("city", event.target.value)}
+                    placeholder="Karachi"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Status</span>
+                  <select
+                    value={locationForm.status}
+                    onChange={(event) => patchLocation("status", event.target.value as RecordStatus)}
+                  >
+                    {CREATE_STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="button-row field-wide">
+                  <button type="submit" className="primary-button" disabled={submittingEntry}>
+                    {submittingEntry ? "Saving..." : "Save Location"}
+                  </button>
+                </div>
+              </form>
+            ) : null}
+
+            {feedback ? <p className="feedback-copy">{feedback}</p> : null}
+          </div>
+        </div>
       ) : null}
     </div>
   );

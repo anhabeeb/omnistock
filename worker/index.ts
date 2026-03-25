@@ -4,8 +4,11 @@ import {
   applyMutationsToD1,
   authenticateUserInD1,
   changeOwnPasswordInD1,
+  createItemInD1,
+  createLocationInD1,
   createUserInD1,
   createMarketPriceEntryInD1,
+  createSupplierInD1,
   ensureDatabaseReady,
   initializeSystemInD1,
   isSystemInitialized,
@@ -22,8 +25,11 @@ import {
 import type {
   ActivateSuperadminRequest,
   ChangeOwnPasswordRequest,
+  CreateItemRequest,
+  CreateLocationRequest,
   CreateUserRequest,
   CreateMarketPriceRequest,
+  CreateSupplierRequest,
   InitializeSystemRequest,
   LoginRequest,
   RemoveUserRequest,
@@ -248,6 +254,72 @@ export class OmniStockHub extends DurableObject<Env> {
     return json(response);
   }
 
+  private async handleCreateItem(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<CreateItemRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      createItemInD1(this.env.OMNISTOCK_DB, actorId, body),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "master-data",
+      triggeredAt: response.item.updatedAt,
+    });
+
+    return json(response);
+  }
+
+  private async handleCreateSupplier(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<CreateSupplierRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      createSupplierInD1(this.env.OMNISTOCK_DB, actorId, body),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "master-data",
+      triggeredAt: new Date().toISOString(),
+    });
+
+    return json(response);
+  }
+
+  private async handleCreateLocation(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<CreateLocationRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      createLocationInD1(this.env.OMNISTOCK_DB, actorId, body),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "master-data",
+      triggeredAt: new Date().toISOString(),
+    });
+
+    return json(response);
+  }
+
   private async handleLogin(request: Request): Promise<Response> {
     const body = await readJson<LoginRequest>(request);
     const result = await this.ctx.blockConcurrencyWhile(() =>
@@ -465,6 +537,18 @@ export class OmniStockHub extends DurableObject<Env> {
 
       if (request.method === "POST" && url.pathname === "/market-prices") {
         return this.handleCreateMarketPrice(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/items") {
+        return this.handleCreateItem(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/suppliers") {
+        return this.handleCreateSupplier(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/locations") {
+        return this.handleCreateLocation(request);
       }
 
       if (request.method === "POST" && url.pathname === "/auth/login") {

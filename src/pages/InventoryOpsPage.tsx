@@ -303,25 +303,19 @@ export function InventoryOpsPage({
       <section className="panel" id={logPanelId}>
           <div className="panel-heading">
             <div>
-              <div className="button-row" style={{ marginBottom: "12px" }}>
-                <button
-                  type="button"
-                  className="secondary-button"
-                >
-                  Logs
-                </button>
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={() => setEntryOpen(true)}
-                >
-                  Add New {activeSection.navLabel}
-                </button>
-              </div>
               <p className="eyebrow">Operation Logs</p>
               <h2>{activeSection.navLabel} Entries</h2>
             </div>
-            <span className="status-chip neutral">{sectionRequests.length} recent records</span>
+            <div className="button-row">
+              <span className="status-chip neutral">{sectionRequests.length} recent records</span>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => setEntryOpen(true)}
+              >
+                Add New {activeSection.navLabel}
+              </button>
+            </div>
           </div>
 
           <div className="table-wrap">
