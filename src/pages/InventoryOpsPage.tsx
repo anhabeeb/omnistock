@@ -126,13 +126,35 @@ export function InventoryOpsPage({
   );
   const [searchTerm, setSearchTerm] = useState("");
   const [feedback, setFeedback] = useState<string>();
+  const [entryOpen, setEntryOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const deferredSearchTerm = useDeferredValue(searchTerm);
 
   useEffect(() => {
     setForm(defaultForm(snapshot, currentUser, activeSection.kind));
     setFeedback(undefined);
+    setEntryOpen(false);
   }, [activeSection.kind, currentUser.id, snapshot.generatedAt]);
+
+  useEffect(() => {
+    if (!entryOpen) {
+      return undefined;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !submitting) {
+        setEntryOpen(false);
+      }
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [entryOpen, submitting]);
 
   const selectedItem = snapshot.items.find((item) => item.id === form.itemId);
   const needsSource =
@@ -149,7 +171,6 @@ export function InventoryOpsPage({
   const sectionRequests = snapshot.requests
     .filter((request) => request.kind === activeSection.kind)
     .slice(0, 12);
-  const formPanelId = `inventory-${activeSection.slug}-entry`;
   const logPanelId = `inventory-${activeSection.slug}-logs`;
   const visibleItems = snapshot.items.filter((item) => {
     if (!deferredSearchTerm.trim()) {
@@ -180,10 +201,6 @@ export function InventoryOpsPage({
     }
 
     setFeedback(`No exact match found for ${value}. You can still search or pick manually.`);
-  }
-
-  function scrollToPanel(panelId: string) {
-    document.getElementById(panelId)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function requestRouteLabel(request: (typeof sectionRequests)[number]) {
@@ -252,6 +269,7 @@ export function InventoryOpsPage({
           "",
       }));
       setSearchTerm("");
+      setEntryOpen(false);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not create the inventory request.");
     } finally {
@@ -282,226 +300,20 @@ export function InventoryOpsPage({
         </div>
       </section>
 
-      <section className="split-grid">
-        <article className="panel" id={formPanelId}>
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">Operational Entry</p>
-              <h2>{activeSection.title}</h2>
-            </div>
-            <span className="status-chip neutral">Realtime: {syncState.websocket}</span>
-          </div>
-
-          <BarcodeScanner onDetected={handleBarcode} />
-
-          <form className="form-grid" onSubmit={handleSubmit}>
-            <label className="field">
-              <span>Search items</span>
-              <input
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                placeholder="Type item name, SKU, or barcode"
-              />
-            </label>
-
-            <label className="field">
-              <span>Selected item</span>
-              <select value={form.itemId} onChange={(event) => patch("itemId", event.target.value)}>
-                <option value="">Select an item</option>
-                {visibleItems.slice(0, 50).map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} ({item.sku})
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="field">
-              <span>
-                {form.kind === "stock-count"
-                  ? "Counted quantity"
-                  : form.kind === "adjustment"
-                    ? "Adjustment quantity (+/-)"
-                    : "Quantity"}
-              </span>
-              <input
-                type="number"
-                step="1"
-                value={form.quantity}
-                onChange={(event) => patch("quantity", event.target.value)}
-              />
-            </label>
-
-            {needsSource ? (
-              <label className="field">
-                <span>{form.kind === "transfer" ? "From warehouse" : "Source / counted location"}</span>
-                <select
-                  value={form.fromLocationId}
-                  onChange={(event) => {
-                    const nextLocationId = event.target.value;
-                    patch("fromLocationId", nextLocationId);
-                    if (form.kind === "wastage") {
-                      patch(
-                        "wasteStation",
-                        snapshot.locations.find((locationEntry) => locationEntry.id === nextLocationId)?.name ??
-                          "",
-                      );
-                    }
-                  }}
-                >
-                  {snapshot.locations.map((locationEntry) => (
-                    <option key={locationEntry.id} value={locationEntry.id}>
-                      {locationEntry.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-
-            {needsDestination ? (
-              <label className="field">
-                <span>{form.kind === "grn" ? "Receive into" : "Transfer to"}</span>
-                <select
-                  value={form.toLocationId}
-                  onChange={(event) => patch("toLocationId", event.target.value)}
-                >
-                  {snapshot.locations.map((locationEntry) => (
-                    <option key={locationEntry.id} value={locationEntry.id}>
-                      {locationEntry.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-
-            {needsSupplier ? (
-              <label className="field">
-                <span>Supplier</span>
-                <select
-                  value={form.supplierId}
-                  onChange={(event) => patch("supplierId", event.target.value)}
-                >
-                  {snapshot.suppliers.map((supplier) => (
-                    <option key={supplier.id} value={supplier.id}>
-                      {supplier.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-
-            {capturesBatchMetadata ? (
-              <>
-                <label className="field">
-                  <span>Lot / batch code</span>
-                  <input
-                    value={form.lotCode}
-                    onChange={(event) => patch("lotCode", event.target.value)}
-                    placeholder="Optional inbound lot reference"
-                  />
-                </label>
-
-                <label className="field">
-                  <span>Received date</span>
-                  <input
-                    type="date"
-                    value={form.receivedDate}
-                    onChange={(event) => patch("receivedDate", event.target.value)}
-                  />
-                </label>
-
-                <label className="field">
-                  <span>Expiry date</span>
-                  <input
-                    type="date"
-                    value={form.expiryDate}
-                    onChange={(event) => patch("expiryDate", event.target.value)}
-                  />
-                </label>
-              </>
-            ) : null}
-
-            {capturesWasteMetadata ? (
-              <>
-                <label className="field">
-                  <span>Waste reason</span>
-                  <select
-                    value={form.wasteReason}
-                    onChange={(event) => patch("wasteReason", event.target.value as WasteReason)}
-                  >
-                    <option value="spoilage">Spoilage</option>
-                    <option value="expiry">Expiry</option>
-                    <option value="overproduction">Overproduction</option>
-                    <option value="prep-loss">Prep loss</option>
-                    <option value="damage">Damage</option>
-                    <option value="staff-meal">Staff meal</option>
-                    <option value="qc-rejection">QC rejection</option>
-                  </select>
-                </label>
-
-                <label className="field">
-                  <span>Shift</span>
-                  <select
-                    value={form.wasteShift}
-                    onChange={(event) => patch("wasteShift", event.target.value as ShiftKey)}
-                  >
-                    <option value="morning">Morning</option>
-                    <option value="lunch">Lunch</option>
-                    <option value="dinner">Dinner</option>
-                    <option value="night">Night</option>
-                  </select>
-                </label>
-
-                <label className="field">
-                  <span>Station / area</span>
-                  <input
-                    value={form.wasteStation}
-                    onChange={(event) => patch("wasteStation", event.target.value)}
-                    placeholder="Prep kitchen, pantry, cold room, or outlet line"
-                  />
-                </label>
-              </>
-            ) : null}
-
-            <label className="field field-wide">
-              <span>Note / reason</span>
-              <textarea
-                rows={4}
-                value={form.note}
-                onChange={(event) => patch("note", event.target.value)}
-                placeholder="Explain the movement, discrepancy, or receiving context."
-              />
-            </label>
-
-            <div className="button-row">
-              <button type="submit" className="primary-button" disabled={submitting}>
-                {submitting ? "Saving..." : `Create ${OPERATION_LABELS[form.kind]}`}
-              </button>
-              <span className="helper-text">
-                Changes save locally first, then sync through REST and realtime updates. FEFO is{" "}
-                {snapshot.settings.strictFefo ? "enforced" : "guided"} for outbound movements.
-              </span>
-            </div>
-          </form>
-
-          {feedback ? <p className="feedback-copy">{feedback}</p> : null}
-        </article>
-
-        <article className="panel" id={logPanelId}>
+      <section className="panel" id={logPanelId}>
           <div className="panel-heading">
             <div>
               <div className="button-row" style={{ marginBottom: "12px" }}>
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={() => scrollToPanel(logPanelId)}
                 >
                   Logs
                 </button>
                 <button
                   type="button"
                   className="primary-button"
-                  onClick={() => scrollToPanel(formPanelId)}
+                  onClick={() => setEntryOpen(true)}
                 >
                   Add New {activeSection.navLabel}
                 </button>
@@ -568,8 +380,232 @@ export function InventoryOpsPage({
               </tbody>
             </table>
           </div>
-        </article>
       </section>
+
+      {feedback ? <p className="feedback-copy">{feedback}</p> : null}
+
+      {entryOpen ? (
+        <div
+          className="page-popup-scrim"
+          onClick={() => {
+            if (!submitting) {
+              setEntryOpen(false);
+            }
+          }}
+        >
+          <div className="page-popup-card inventory-popup-card" onClick={(event) => event.stopPropagation()}>
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Operational Entry</p>
+                <h2>Add New {activeSection.navLabel}</h2>
+              </div>
+              <div className="button-row">
+                <span className="status-chip neutral">Realtime: {syncState.websocket}</span>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setEntryOpen(false)}
+                  disabled={submitting}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <BarcodeScanner onDetected={handleBarcode} />
+
+            <form className="form-grid" onSubmit={handleSubmit}>
+              <label className="field">
+                <span>Search items</span>
+                <input
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder="Type item name, SKU, or barcode"
+                />
+              </label>
+
+              <label className="field">
+                <span>Selected item</span>
+                <select value={form.itemId} onChange={(event) => patch("itemId", event.target.value)}>
+                  <option value="">Select an item</option>
+                  {visibleItems.slice(0, 50).map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} ({item.sku})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field">
+                <span>
+                  {form.kind === "stock-count"
+                    ? "Counted quantity"
+                    : form.kind === "adjustment"
+                      ? "Adjustment quantity (+/-)"
+                      : "Quantity"}
+                </span>
+                <input
+                  type="number"
+                  step="1"
+                  value={form.quantity}
+                  onChange={(event) => patch("quantity", event.target.value)}
+                />
+              </label>
+
+              {needsSource ? (
+                <label className="field">
+                  <span>{form.kind === "transfer" ? "From warehouse" : "Source / counted location"}</span>
+                  <select
+                    value={form.fromLocationId}
+                    onChange={(event) => {
+                      const nextLocationId = event.target.value;
+                      patch("fromLocationId", nextLocationId);
+                      if (form.kind === "wastage") {
+                        patch(
+                          "wasteStation",
+                          snapshot.locations.find((locationEntry) => locationEntry.id === nextLocationId)?.name ??
+                            "",
+                        );
+                      }
+                    }}
+                  >
+                    {snapshot.locations.map((locationEntry) => (
+                      <option key={locationEntry.id} value={locationEntry.id}>
+                        {locationEntry.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+
+              {needsDestination ? (
+                <label className="field">
+                  <span>{form.kind === "grn" ? "Receive into" : "Transfer to"}</span>
+                  <select
+                    value={form.toLocationId}
+                    onChange={(event) => patch("toLocationId", event.target.value)}
+                  >
+                    {snapshot.locations.map((locationEntry) => (
+                      <option key={locationEntry.id} value={locationEntry.id}>
+                        {locationEntry.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+
+              {needsSupplier ? (
+                <label className="field">
+                  <span>Supplier</span>
+                  <select
+                    value={form.supplierId}
+                    onChange={(event) => patch("supplierId", event.target.value)}
+                  >
+                    {snapshot.suppliers.map((supplier) => (
+                      <option key={supplier.id} value={supplier.id}>
+                        {supplier.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+
+              {capturesBatchMetadata ? (
+                <>
+                  <label className="field">
+                    <span>Lot / batch code</span>
+                    <input
+                      value={form.lotCode}
+                      onChange={(event) => patch("lotCode", event.target.value)}
+                      placeholder="Optional inbound lot reference"
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Received date</span>
+                    <input
+                      type="date"
+                      value={form.receivedDate}
+                      onChange={(event) => patch("receivedDate", event.target.value)}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Expiry date</span>
+                    <input
+                      type="date"
+                      value={form.expiryDate}
+                      onChange={(event) => patch("expiryDate", event.target.value)}
+                    />
+                  </label>
+                </>
+              ) : null}
+
+              {capturesWasteMetadata ? (
+                <>
+                  <label className="field">
+                    <span>Waste reason</span>
+                    <select
+                      value={form.wasteReason}
+                      onChange={(event) => patch("wasteReason", event.target.value as WasteReason)}
+                    >
+                      <option value="spoilage">Spoilage</option>
+                      <option value="expiry">Expiry</option>
+                      <option value="overproduction">Overproduction</option>
+                      <option value="prep-loss">Prep loss</option>
+                      <option value="damage">Damage</option>
+                      <option value="staff-meal">Staff meal</option>
+                      <option value="qc-rejection">QC rejection</option>
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    <span>Shift</span>
+                    <select
+                      value={form.wasteShift}
+                      onChange={(event) => patch("wasteShift", event.target.value as ShiftKey)}
+                    >
+                      <option value="morning">Morning</option>
+                      <option value="lunch">Lunch</option>
+                      <option value="dinner">Dinner</option>
+                      <option value="night">Night</option>
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    <span>Station / area</span>
+                    <input
+                      value={form.wasteStation}
+                      onChange={(event) => patch("wasteStation", event.target.value)}
+                      placeholder="Prep kitchen, pantry, cold room, or outlet line"
+                    />
+                  </label>
+                </>
+              ) : null}
+
+              <label className="field field-wide">
+                <span>Note / reason</span>
+                <textarea
+                  rows={4}
+                  value={form.note}
+                  onChange={(event) => patch("note", event.target.value)}
+                  placeholder="Explain the movement, discrepancy, or receiving context."
+                />
+              </label>
+
+              <div className="button-row">
+                <button type="submit" className="primary-button" disabled={submitting}>
+                  {submitting ? "Saving..." : `Create ${OPERATION_LABELS[form.kind]}`}
+                </button>
+                <span className="helper-text">
+                  Changes save locally first, then sync through REST and realtime updates. FEFO is{" "}
+                  {snapshot.settings.strictFefo ? "enforced" : "guided"} for outbound movements.
+                </span>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
