@@ -160,7 +160,7 @@ export const PERMISSION_CATALOG: Array<{
     code: "admin.environment.edit",
     moduleKey: "administration",
     label: "Edit environment settings",
-    description: "Change environment toggles, FEFO behavior, thresholds, and timezone settings.",
+    description: "Change environment toggles, time source, print defaults, FEFO behavior, thresholds, and timezone settings.",
   },
   {
     code: "admin.permissions.edit",

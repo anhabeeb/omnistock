@@ -75,6 +75,10 @@ import {
   removeOutbox,
   saveCachedBootstrap,
 } from "./indexedDb";
+import {
+  getCurrentTimestampIso,
+  rememberWorkspaceTimePreferences,
+} from "./time";
 
 const LAST_USER_ID_KEY = "omnistock:last-user-id";
 
@@ -143,6 +147,12 @@ export function useOmniStockApp() {
 
   function rememberPayload(nextPayload: BootstrapPayload, source: SyncState["source"]) {
     const normalizedPayload = normalizePayload(nextPayload);
+    rememberWorkspaceTimePreferences({
+      timeZone: normalizedPayload.snapshot.settings.timezone,
+      timeSource: normalizedPayload.snapshot.settings.timeSource,
+      serverGeneratedAt:
+        source === "server" ? normalizedPayload.snapshot.generatedAt : undefined,
+    });
     payloadRef.current = normalizedPayload;
     setPayload(normalizedPayload);
     setAuthRequired(false);
@@ -151,7 +161,7 @@ export function useOmniStockApp() {
     void saveCachedBootstrap({
       userId: normalizedPayload.currentUser.id,
       payload: normalizedPayload,
-      cachedAt: new Date().toISOString(),
+      cachedAt: getCurrentTimestampIso(),
     });
     setSyncState((current) => ({
       ...current,
@@ -198,7 +208,7 @@ export function useOmniStockApp() {
       ...current,
       loading: false,
       online: true,
-      lastSyncedAt: syncedAt ?? new Date().toISOString(),
+      lastSyncedAt: syncedAt ?? getCurrentTimestampIso(),
       error: undefined,
     }));
     await refreshQueueCount(remotePayload.currentUser.id);
@@ -219,7 +229,7 @@ export function useOmniStockApp() {
       rememberPayload(buildBootstrapPayload(nextSnapshot, currentPayload.currentUser.id), "server");
       setSyncState((current) => ({
         ...current,
-        lastSyncedAt: new Date().toISOString(),
+        lastSyncedAt: getCurrentTimestampIso(),
         error: undefined,
       }));
       await refreshQueueCount(currentPayload.currentUser.id);
@@ -252,7 +262,7 @@ export function useOmniStockApp() {
       rememberPayload(buildBootstrapPayload(response.snapshot, currentPayload.currentUser.id), "server");
       setSyncState((current) => ({
         ...current,
-        lastSyncedAt: new Date().toISOString(),
+        lastSyncedAt: getCurrentTimestampIso(),
         error:
           response.rejected.length > 0
             ? response.rejected.map((entry) => entry.reason).join(" | ")
@@ -541,7 +551,7 @@ export function useOmniStockApp() {
       ...current,
       loading: false,
       online: navigator.onLine,
-      lastSyncedAt: new Date().toISOString(),
+      lastSyncedAt: getCurrentTimestampIso(),
       error: undefined,
     }));
     await refreshQueueCount(response.payload.currentUser.id);
@@ -554,7 +564,7 @@ export function useOmniStockApp() {
       ...current,
       loading: false,
       online: navigator.onLine,
-      lastSyncedAt: new Date().toISOString(),
+      lastSyncedAt: getCurrentTimestampIso(),
       error: undefined,
     }));
     await refreshQueueCount(response.payload.currentUser.id);
@@ -586,7 +596,7 @@ export function useOmniStockApp() {
       throw new Error("OmniStock is still loading.");
     }
 
-    const createdAt = new Date().toISOString();
+    const createdAt = getCurrentTimestampIso();
     const mutation: MutationEnvelope = {
       clientMutationId: crypto.randomUUID(),
       actorId: currentPayload.currentUser.id,
@@ -761,7 +771,7 @@ export function useOmniStockApp() {
     rememberPayload(buildBootstrapPayload(snapshot, currentPayload.currentUser.id), "server");
     setSyncState((current) => ({
       ...current,
-      lastSyncedAt: lastSyncedAt ?? new Date().toISOString(),
+      lastSyncedAt: lastSyncedAt ?? getCurrentTimestampIso(),
       error: undefined,
     }));
   }
@@ -796,7 +806,7 @@ export function useOmniStockApp() {
     rememberPayload(response.payload, "server");
     setSyncState((current) => ({
       ...current,
-      lastSyncedAt: new Date().toISOString(),
+      lastSyncedAt: getCurrentTimestampIso(),
       error: undefined,
     }));
     await refreshQueueCount(response.payload.currentUser.id);
@@ -807,7 +817,7 @@ export function useOmniStockApp() {
     rememberPayload(response.payload, "server");
     setSyncState((current) => ({
       ...current,
-      lastSyncedAt: new Date().toISOString(),
+      lastSyncedAt: getCurrentTimestampIso(),
       error: undefined,
     }));
     await refreshQueueCount(response.payload.currentUser.id);

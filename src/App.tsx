@@ -22,10 +22,10 @@ import {
   Typography,
   useMediaQuery,
 } from "@mui/material";
+import AccessTimeRoundedIcon from "@mui/icons-material/AccessTimeRounded";
 import CalendarMonthRoundedIcon from "@mui/icons-material/CalendarMonthRounded";
 import ChevronRightRoundedIcon from "@mui/icons-material/ChevronRightRounded";
 import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
-import PersonOutlineRoundedIcon from "@mui/icons-material/PersonOutlineRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 import { MODULES, ROLE_PRESETS, can, canAccessModule } from "../shared/permissions";
@@ -46,6 +46,7 @@ import {
 } from "./components/AppIcons";
 import { formatDateTime } from "./lib/format";
 import { buildMuiTheme } from "./lib/muiTheme";
+import { formatWithWorkspaceClock } from "./lib/time";
 import { useOmniStockApp } from "./lib/useOmniStockApp";
 import { useThemePreference } from "./lib/useThemePreference";
 import { AdminPage } from "./pages/AdminPage";
@@ -151,6 +152,7 @@ export default function App() {
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileMenuAnchor, setProfileMenuAnchor] = useState<HTMLElement | null>(null);
+  const [clockNow, setClockNow] = useState(() => Date.now());
   const {
     payload,
     syncState,
@@ -206,6 +208,14 @@ export default function App() {
       document.body.style.overflow = previousOverflow;
     };
   }, [mobileMenuOpen]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setClockNow(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
 
   let content: ReactNode;
 
@@ -305,21 +315,21 @@ export default function App() {
       const liveStatusLabel = syncState.online
         ? `Live sync${syncState.queued ? ` · ${syncState.queued} queued` : ""}`
         : `Offline${syncState.queued ? ` · ${syncState.queued} queued` : ""}`;
-      const currentDateLabel = new Intl.DateTimeFormat("en-US", {
+      const currentDateLabel = formatWithWorkspaceClock(clockNow, {
         month: "short",
         day: "numeric",
         year: "numeric",
-      }).format(new Date());
+      }, "en-US");
+      const currentTimeLabel = formatWithWorkspaceClock(clockNow, {
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+      }, "en-US");
       const utilityLinks = [
         {
           label: "Settings",
           to: canViewSettings ? "/administration/settings" : "/profile",
           icon: <SettingsRoundedIcon sx={{ fontSize: 18 }} />,
-        },
-        {
-          label: "Profile",
-          to: "/profile",
-          icon: <PersonOutlineRoundedIcon sx={{ fontSize: 18 }} />,
         },
         ...(canViewUsers
           ? [
@@ -693,6 +703,20 @@ export default function App() {
                     }}
                   >
                     {currentDateLabel}
+                  </Button>
+
+                  <Button
+                    variant="outlined"
+                    color="inherit"
+                    startIcon={<AccessTimeRoundedIcon sx={{ fontSize: 18 }} />}
+                    sx={{
+                      minHeight: 40,
+                      borderRadius: 2.5,
+                      color: "text.primary",
+                      borderColor: alpha(muiTheme.palette.divider, 0.95),
+                    }}
+                  >
+                    {currentTimeLabel}
                   </Button>
 
                   <AppNotificationCenter snapshot={snapshot} />

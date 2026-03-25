@@ -1,4 +1,5 @@
 import type { MarketPriceEntry, MovementLedgerEntry, WasteEntry } from "../../shared/types";
+import { getFileDateStampForWorkspace } from "./time";
 
 export interface WorkbookSheet {
   name: string;
@@ -36,7 +37,7 @@ export async function exportMovementLedger(entries: MovementLedgerEntry[]) {
         })),
       },
     ],
-    `omnistock-movement-ledger-${new Date().toISOString().slice(0, 10)}.xlsx`,
+    `omnistock-movement-ledger-${getFileDateStampForWorkspace()}.xlsx`,
   );
 }
 
@@ -62,7 +63,7 @@ export async function exportMarketPrices(entries: MarketPriceEntry[]) {
         })),
       },
     ],
-    `omnistock-market-prices-${new Date().toISOString().slice(0, 10)}.xlsx`,
+    `omnistock-market-prices-${getFileDateStampForWorkspace()}.xlsx`,
   );
 }
 
@@ -88,7 +89,7 @@ export async function exportWasteEntries(entries: WasteEntry[]) {
         })),
       },
     ],
-    `omnistock-waste-tracker-${new Date().toISOString().slice(0, 10)}.xlsx`,
+    `omnistock-waste-tracker-${getFileDateStampForWorkspace()}.xlsx`,
   );
 }
 

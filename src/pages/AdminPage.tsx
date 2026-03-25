@@ -58,7 +58,25 @@ interface CreateFormState {
 }
 
 type SettingsFormState = UpdateSettingsRequest;
-type SettingsTabKey = "environment" | "permissions";
+type SettingsTabKey = "environment" | "print" | "permissions";
+type UserTabKey = "directory" | "controls";
+
+const FALLBACK_TIMEZONES = [
+  "UTC",
+  "Asia/Karachi",
+  "Asia/Dubai",
+  "Asia/Riyadh",
+  "Asia/Kolkata",
+  "Asia/Singapore",
+  "Asia/Bangkok",
+  "Europe/London",
+  "Europe/Paris",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "Australia/Sydney",
+] as const;
 
 const ADMIN_SECTIONS = [
   {
@@ -157,13 +175,23 @@ function permissionCountLabel(permissions: PermissionKey[]): string {
 function buildSettingsState(snapshot: InventorySnapshot): SettingsFormState {
   return {
     timezone: snapshot.settings.timezone,
+    timeSource: snapshot.settings.timeSource,
     lowStockThreshold: snapshot.settings.lowStockThreshold,
     expiryAlertDays: snapshot.settings.expiryAlertDays,
     enableOffline: snapshot.settings.enableOffline,
     enableRealtime: snapshot.settings.enableRealtime,
     enableBarcode: snapshot.settings.enableBarcode,
     strictFefo: snapshot.settings.strictFefo,
+    reportPrintTemplate: { ...snapshot.settings.reportPrintTemplate },
   };
+}
+
+function getTimezoneOptions(currentTimeZone: string): string[] {
+  const supportedValuesOf = (
+    Intl as typeof Intl & { supportedValuesOf?: (key: "timeZone") => string[] }
+  ).supportedValuesOf;
+  const base = supportedValuesOf ? supportedValuesOf("timeZone") : [...FALLBACK_TIMEZONES];
+  return currentTimeZone && !base.includes(currentTimeZone) ? [currentTimeZone, ...base] : base;
 }
 
 export function AdminPage({
@@ -212,6 +240,7 @@ export function AdminPage({
     buildSettingsState(snapshot),
   );
   const [settingsTab, setSettingsTab] = useState<SettingsTabKey>("environment");
+  const [userTab, setUserTab] = useState<UserTabKey>("directory");
   const [selectedRoleDraft, setSelectedRoleDraft] = useState<Role>(currentUser.role);
   const [settingsFeedback, setSettingsFeedback] = useState<string>();
   const [newPassword, setNewPassword] = useState("");
@@ -234,13 +263,29 @@ export function AdminPage({
     canResetUserPasswords ||
     canRemoveUsers ||
     canManagePermissionOverrides;
-  const selectedUser = useMemo(() => {
-    const preferredUsers =
+  const manageableUsers = useMemo(
+    () =>
       currentUser.role === "superadmin"
         ? snapshot.users
-        : snapshot.users.filter((user) => user.role !== "superadmin");
-    return preferredUsers.find((user) => user.id === selectedUserId) ?? preferredUsers[0] ?? null;
-  }, [currentUser.role, selectedUserId, snapshot.users]);
+        : snapshot.users.filter((user) => user.role !== "superadmin"),
+    [currentUser.role, snapshot.users],
+  );
+  const selectedUser = useMemo(
+    () => manageableUsers.find((user) => user.id === selectedUserId) ?? manageableUsers[0] ?? null,
+    [manageableUsers, selectedUserId],
+  );
+  const userTabs = useMemo(
+    () =>
+      [
+        { key: "directory", label: "User Directory" },
+        { key: "controls", label: canManageUsers ? "Access Controls" : "Access Notice" },
+      ] satisfies Array<{ key: UserTabKey; label: string }>,
+    [canManageUsers],
+  );
+  const timezoneOptions = useMemo(
+    () => getTimezoneOptions(settingsForm.timezone || snapshot.settings.timezone),
+    [settingsForm.timezone, snapshot.settings.timezone],
+  );
   const filteredUsers = useMemo(() => {
     const normalizedSearch = userSearch.trim().toLowerCase();
     return snapshot.users.filter((user) => {
@@ -295,21 +340,19 @@ export function AdminPage({
 
   useEffect(() => {
     setSettingsForm(buildSettingsState(snapshot));
-  }, [
-    snapshot.settings.timezone,
-    snapshot.settings.lowStockThreshold,
-    snapshot.settings.expiryAlertDays,
-    snapshot.settings.enableOffline,
-    snapshot.settings.enableRealtime,
-    snapshot.settings.enableBarcode,
-    snapshot.settings.strictFefo,
-  ]);
+  }, [snapshot.generatedAt]);
 
   useEffect(() => {
     setSelectedRoleDraft((current) =>
       (Object.keys(ROLE_PRESETS) as Role[]).includes(current) ? current : currentUser.role,
     );
   }, [currentUser.role]);
+
+  useEffect(() => {
+    if (!userTabs.some((tab) => tab.key === userTab)) {
+      setUserTab(userTabs[0]?.key ?? "directory");
+    }
+  }, [userTab, userTabs]);
 
   function patchCreate<K extends keyof CreateFormState>(key: K, value: CreateFormState[K]) {
     setCreateForm((current) => ({ ...current, [key]: value }));
@@ -321,6 +364,19 @@ export function AdminPage({
 
   function patchSettings<K extends keyof SettingsFormState>(key: K, value: SettingsFormState[K]) {
     setSettingsForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function patchPrintTemplate<K extends keyof SettingsFormState["reportPrintTemplate"]>(
+    key: K,
+    value: SettingsFormState["reportPrintTemplate"][K],
+  ) {
+    setSettingsForm((current) => ({
+      ...current,
+      reportPrintTemplate: {
+        ...current.reportPrintTemplate,
+        [key]: value,
+      },
+    }));
   }
 
   function setCreateRole(role: Role) {
@@ -414,13 +470,7 @@ export function AdminPage({
   }
 
   const settingsDirty =
-    settingsForm.timezone !== snapshot.settings.timezone ||
-    settingsForm.lowStockThreshold !== snapshot.settings.lowStockThreshold ||
-    settingsForm.expiryAlertDays !== snapshot.settings.expiryAlertDays ||
-    settingsForm.enableOffline !== snapshot.settings.enableOffline ||
-    settingsForm.enableRealtime !== snapshot.settings.enableRealtime ||
-    settingsForm.enableBarcode !== snapshot.settings.enableBarcode ||
-    settingsForm.strictFefo !== snapshot.settings.strictFefo;
+    JSON.stringify(settingsForm) !== JSON.stringify(buildSettingsState(snapshot));
 
   async function handleSaveSettings() {
     if (!canEditEnvironmentSettings) {
@@ -431,7 +481,7 @@ export function AdminPage({
     setSettingsFeedback(undefined);
     try {
       await onUpdateSettings(settingsForm);
-      setSettingsFeedback("Environment settings updated successfully.");
+      setSettingsFeedback("Settings updated successfully.");
     } catch (error) {
       setSettingsFeedback(
         error instanceof Error ? error.message : "Could not update the environment settings.",
@@ -581,7 +631,7 @@ export function AdminPage({
         </div>
 
         {!isLockedRole ? (
-          <div className="button-row">
+          <div className="button-row role-editor-actions">
             <button
               type="button"
               className="secondary-button"
@@ -773,7 +823,23 @@ export function AdminPage({
       </section>
 
       {activeSection.slug === "users" ? (
-        <section className="split-grid">
+        <section className="page-stack">
+          <div className="settings-tab-row" role="tablist" aria-label="User management views">
+            {userTabs.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={userTab === tab.key}
+                className={`settings-tab-button${userTab === tab.key ? " is-active" : ""}`}
+                onClick={() => setUserTab(tab.key)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {userTab === "directory" ? (
           <article className="panel">
             <div className="panel-heading">
               <div>
@@ -838,7 +904,10 @@ export function AdminPage({
                           <button
                             type="button"
                             className={selectedUserId === user.id ? "chip-button active" : "chip-button"}
-                            onClick={() => setSelectedUserId(user.id)}
+                            onClick={() => {
+                              setSelectedUserId(user.id);
+                              setUserTab("controls");
+                            }}
                             disabled={user.role === "superadmin" && currentUser.role !== "superadmin"}
                           >
                             {user.role === "superadmin" && currentUser.role !== "superadmin"
@@ -855,7 +924,9 @@ export function AdminPage({
               </table>
             </div>
           </article>
+          ) : null}
 
+          {userTab === "controls" ? (
           <article className="panel">
             <div className="panel-heading">
               <div>
@@ -866,6 +937,25 @@ export function AdminPage({
 
             {canManageUsers ? (
               <div className="page-stack">
+                <div className="settings-role-toolbar">
+                  <label className="settings-role-picker">
+                    <span className="settings-field-label">User</span>
+                    <select
+                      value={selectedUserId}
+                      onChange={(event) => setSelectedUserId(event.target.value)}
+                    >
+                      {manageableUsers.map((user) => (
+                        <option key={user.id} value={user.id}>
+                          {user.name} ({user.username})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {selectedUser ? (
+                    <span className="status-chip neutral">{ROLE_PRESETS[selectedUser.role].label}</span>
+                  ) : null}
+                </div>
+
                 {canCreateUsers ? (
                 <form className="page-stack" onSubmit={handleCreateUser}>
                   <div className="panel-heading compact-heading">
@@ -1163,6 +1253,7 @@ export function AdminPage({
               </div>
             )}
           </article>
+          ) : null}
         </section>
       ) : null}
 
@@ -1177,6 +1268,15 @@ export function AdminPage({
               onClick={() => setSettingsTab("environment")}
             >
               Environment Controls
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={settingsTab === "print"}
+              className={`settings-tab-button${settingsTab === "print" ? " is-active" : ""}`}
+              onClick={() => setSettingsTab("print")}
+            >
+              Print Designer
             </button>
             <button
               type="button"
@@ -1207,17 +1307,36 @@ export function AdminPage({
               <div className="page-stack">
                 <p className="helper-text">
                   Control the live environment behavior used by offline mode, realtime sync,
-                  barcode workflows, FEFO enforcement, and alert thresholds.
+                  barcode workflows, FEFO enforcement, alert thresholds, and which clock source
+                  OmniStock should trust.
                 </p>
                 <div className="settings-fields-grid">
                   <label className="settings-field-card">
                     <span className="settings-field-label">Timezone</span>
-                    <input
+                    <select
                       value={settingsForm.timezone}
                       disabled={!canEditEnvironmentSettings || submitting === "settings"}
                       onChange={(event) => patchSettings("timezone", event.target.value)}
-                      placeholder="Timezone"
-                    />
+                    >
+                      {timezoneOptions.map((timeZone) => (
+                        <option key={timeZone} value={timeZone}>
+                          {timeZone}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Time Source</span>
+                    <select
+                      value={settingsForm.timeSource}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchSettings("timeSource", event.target.value as SettingsFormState["timeSource"])
+                      }
+                    >
+                      <option value="system">System time</option>
+                      <option value="browser">Browser time</option>
+                    </select>
                   </label>
                   <label className="settings-field-card">
                     <span className="settings-field-label">Low Stock Threshold</span>
@@ -1323,6 +1442,363 @@ export function AdminPage({
                   <p className="helper-text">
                     Grant <strong>Edit environment settings</strong> to let this user change these
                     controls.
+                  </p>
+                )}
+              </div>
+            </article>
+          ) : null}
+
+          {settingsTab === "print" ? (
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="eyebrow">Settings</p>
+                  <h2>Default Print Designer</h2>
+                </div>
+                <span className="status-chip neutral">
+                  {canEditEnvironmentSettings
+                    ? settingsDirty
+                      ? "Unsaved changes"
+                      : "Editable"
+                    : "View only"}
+                </span>
+              </div>
+              <div className="page-stack">
+                <p className="helper-text">
+                  Design the default report template used when OmniStock generates or prints
+                  reports. This becomes the workspace-wide template for report output.
+                </p>
+
+                <div className="settings-fields-grid">
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Template Name</span>
+                    <input
+                      value={settingsForm.reportPrintTemplate.templateName}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchPrintTemplate("templateName", event.target.value)
+                      }
+                      placeholder="OmniStock Standard"
+                    />
+                  </label>
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Accent Color</span>
+                    <input
+                      type="color"
+                      value={settingsForm.reportPrintTemplate.accentColor}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchPrintTemplate("accentColor", event.target.value)
+                      }
+                    />
+                  </label>
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Paper Size</span>
+                    <select
+                      value={settingsForm.reportPrintTemplate.paperSize}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchPrintTemplate(
+                          "paperSize",
+                          event.target.value as SettingsFormState["reportPrintTemplate"]["paperSize"],
+                        )
+                      }
+                    >
+                      <option value="a4">A4</option>
+                      <option value="letter">Letter</option>
+                    </select>
+                  </label>
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Orientation</span>
+                    <select
+                      value={settingsForm.reportPrintTemplate.orientation}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchPrintTemplate(
+                          "orientation",
+                          event.target.value as SettingsFormState["reportPrintTemplate"]["orientation"],
+                        )
+                      }
+                    >
+                      <option value="portrait">Portrait</option>
+                      <option value="landscape">Landscape</option>
+                    </select>
+                  </label>
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Density</span>
+                    <select
+                      value={settingsForm.reportPrintTemplate.density}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchPrintTemplate(
+                          "density",
+                          event.target.value as SettingsFormState["reportPrintTemplate"]["density"],
+                        )
+                      }
+                    >
+                      <option value="comfortable">Comfortable</option>
+                      <option value="compact">Compact</option>
+                    </select>
+                  </label>
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Margin (mm)</span>
+                    <input
+                      type="number"
+                      min="6"
+                      max="30"
+                      value={settingsForm.reportPrintTemplate.marginMm}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchPrintTemplate("marginMm", Number(event.target.value || 0))
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div className="form-grid">
+                  <label className="field field-wide">
+                    <span>Header Note</span>
+                    <input
+                      value={settingsForm.reportPrintTemplate.headerNote}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchPrintTemplate("headerNote", event.target.value)
+                      }
+                      placeholder="Warehouse Intelligence Report"
+                    />
+                  </label>
+                  <label className="field field-wide">
+                    <span>Footer Note</span>
+                    <input
+                      value={settingsForm.reportPrintTemplate.footerNote}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchPrintTemplate("footerNote", event.target.value)
+                      }
+                      placeholder="Prepared in OmniStock"
+                    />
+                  </label>
+                </div>
+
+                <div className="settings-toggle-grid">
+                  <label className="settings-toggle-card">
+                    <div>
+                      <strong>Show Company Name</strong>
+                      <p>Place the company name in the print header.</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.reportPrintTemplate.showCompanyName}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchPrintTemplate("showCompanyName", event.target.checked)
+                      }
+                    />
+                  </label>
+                  <label className="settings-toggle-card">
+                    <div>
+                      <strong>Show Generated By</strong>
+                      <p>Show the report owner in the header meta block.</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.reportPrintTemplate.showGeneratedBy}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchPrintTemplate("showGeneratedBy", event.target.checked)
+                      }
+                    />
+                  </label>
+                  <label className="settings-toggle-card">
+                    <div>
+                      <strong>Show Generated At</strong>
+                      <p>Include the report timestamp in the template header.</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.reportPrintTemplate.showGeneratedAt}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchPrintTemplate("showGeneratedAt", event.target.checked)
+                      }
+                    />
+                  </label>
+                  <label className="settings-toggle-card">
+                    <div>
+                      <strong>Show Filters</strong>
+                      <p>Display the active report filters in the header summary.</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.reportPrintTemplate.showFilters}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchPrintTemplate("showFilters", event.target.checked)
+                      }
+                    />
+                  </label>
+                  <label className="settings-toggle-card">
+                    <div>
+                      <strong>Show Summary</strong>
+                      <p>Lift the summary metrics to the top of the report output.</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.reportPrintTemplate.showSummary}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchPrintTemplate("showSummary", event.target.checked)
+                      }
+                    />
+                  </label>
+                  <label className="settings-toggle-card">
+                    <div>
+                      <strong>Show Signatures</strong>
+                      <p>Add prepared-by and approved-by sign-off lines at the end.</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.reportPrintTemplate.showSignatures}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchPrintTemplate("showSignatures", event.target.checked)
+                      }
+                    />
+                  </label>
+                </div>
+
+                {settingsForm.reportPrintTemplate.showSignatures ? (
+                  <div className="settings-fields-grid">
+                    <label className="settings-field-card">
+                      <span className="settings-field-label">Left Signature Label</span>
+                      <input
+                        value={settingsForm.reportPrintTemplate.signatureLabelLeft}
+                        disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                        onChange={(event) =>
+                          patchPrintTemplate("signatureLabelLeft", event.target.value)
+                        }
+                        placeholder="Prepared by"
+                      />
+                    </label>
+                    <label className="settings-field-card">
+                      <span className="settings-field-label">Right Signature Label</span>
+                      <input
+                        value={settingsForm.reportPrintTemplate.signatureLabelRight}
+                        disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                        onChange={(event) =>
+                          patchPrintTemplate("signatureLabelRight", event.target.value)
+                        }
+                        placeholder="Approved by"
+                      />
+                    </label>
+                  </div>
+                ) : null}
+
+                <div
+                  style={{
+                    border: "1px solid var(--border-subtle, rgba(148, 163, 184, 0.28))",
+                    borderRadius: "18px",
+                    padding: "18px",
+                    background: "rgba(37, 99, 235, 0.05)",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: "12px",
+                      alignItems: "flex-start",
+                      flexWrap: "wrap",
+                      borderBottom: `2px solid ${settingsForm.reportPrintTemplate.accentColor}`,
+                      paddingBottom: "14px",
+                    }}
+                  >
+                    <div>
+                      <p className="eyebrow" style={{ color: settingsForm.reportPrintTemplate.accentColor }}>
+                        {settingsForm.reportPrintTemplate.templateName}
+                      </p>
+                      <h3 style={{ marginTop: "8px" }}>Report Preview</h3>
+                      <p className="helper-text" style={{ marginTop: "6px" }}>
+                        {settingsForm.reportPrintTemplate.headerNote || "Warehouse Intelligence Report"}
+                      </p>
+                    </div>
+                    <span className="status-chip neutral">
+                      {settingsForm.reportPrintTemplate.paperSize.toUpperCase()} · {settingsForm.reportPrintTemplate.orientation}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: "12px",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                      marginTop: "16px",
+                    }}
+                  >
+                    {settingsForm.reportPrintTemplate.showCompanyName ? (
+                      <div className="list-row">
+                        <div>
+                          <strong>Company</strong>
+                          <p>{snapshot.settings.companyName}</p>
+                        </div>
+                      </div>
+                    ) : null}
+                    {settingsForm.reportPrintTemplate.showGeneratedBy ? (
+                      <div className="list-row">
+                        <div>
+                          <strong>Generated by</strong>
+                          <p>{currentUser.name}</p>
+                        </div>
+                      </div>
+                    ) : null}
+                    {settingsForm.reportPrintTemplate.showGeneratedAt ? (
+                      <div className="list-row">
+                        <div>
+                          <strong>Generated at</strong>
+                          <p>{settingsForm.timeSource === "system" ? "System clock" : "Browser clock"}</p>
+                        </div>
+                      </div>
+                    ) : null}
+                    {settingsForm.reportPrintTemplate.showFilters ? (
+                      <div className="list-row">
+                        <div>
+                          <strong>Filters</strong>
+                          <p>Visible in report header</p>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                  <p className="helper-text" style={{ marginTop: "16px" }}>
+                    Footer: {settingsForm.reportPrintTemplate.footerNote || "OmniStock report output"}
+                  </p>
+                </div>
+
+                {settingsFeedback ? <p className="feedback-copy">{settingsFeedback}</p> : null}
+                {canEditEnvironmentSettings ? (
+                  <div className="button-row">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={!settingsDirty || submitting === "settings"}
+                      onClick={() => {
+                        setSettingsForm(buildSettingsState(snapshot));
+                        setSettingsFeedback(undefined);
+                      }}
+                    >
+                      Reset
+                    </button>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      disabled={!settingsDirty || submitting === "settings"}
+                      onClick={() => void handleSaveSettings()}
+                    >
+                      {submitting === "settings" ? "Saving..." : "Save print template"}
+                    </button>
+                  </div>
+                ) : (
+                  <p className="helper-text">
+                    Grant <strong>Edit environment settings</strong> to let this user change the
+                    default report template.
                   </p>
                 )}
               </div>

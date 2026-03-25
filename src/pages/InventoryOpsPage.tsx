@@ -20,6 +20,7 @@ import {
   matchesDateFilter,
 } from "../lib/dateFilters";
 import { formatDateTime } from "../lib/format";
+import { getDateInputValueForWorkspace } from "../lib/time";
 import type { CreateOperationInput, EditOperationInput, SyncState } from "../lib/useOmniStockApp";
 
 interface Props {
@@ -134,7 +135,7 @@ function defaultForm(snapshot: InventorySnapshot, currentUser: User, kind: Reque
     barcode: "",
     lotCode: "",
     expiryDate: "",
-    receivedDate: new Date().toISOString().slice(0, 10),
+    receivedDate: getDateInputValueForWorkspace(),
     wasteReason: "spoilage",
     wasteShift: "morning",
     wasteStation:
@@ -331,7 +332,7 @@ export function InventoryOpsPage({
       barcode: request.barcode,
       lotCode: request.lotCode ?? "",
       expiryDate: request.expiryDate ?? "",
-      receivedDate: request.receivedDate ?? new Date().toISOString().slice(0, 10),
+      receivedDate: request.receivedDate ?? getDateInputValueForWorkspace(),
       wasteReason: request.wasteReason ?? "spoilage",
       wasteShift: request.wasteShift ?? "morning",
       wasteStation: request.wasteStation ?? request.fromLocationName ?? "",
@@ -402,7 +403,7 @@ export function InventoryOpsPage({
         barcode: "",
         lotCode: "",
         expiryDate: "",
-        receivedDate: new Date().toISOString().slice(0, 10),
+        receivedDate: getDateInputValueForWorkspace(),
         wasteReason: "spoilage",
         wasteShift: "morning",
         wasteStation:

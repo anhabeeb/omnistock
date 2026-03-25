@@ -7,6 +7,11 @@ export type ModuleKey =
   | "reports"
   | "administration";
 
+export type TimeSource = "system" | "browser";
+export type PrintPaperSize = "a4" | "letter";
+export type PrintOrientation = "portrait" | "landscape";
+export type PrintDensity = "comfortable" | "compact";
+
 export type PermissionKey =
   | "dashboard.view"
   | "inventory.view"
@@ -66,6 +71,25 @@ export type WasteReason =
   | "staff-meal"
   | "qc-rejection";
 export type ShiftKey = "morning" | "lunch" | "dinner" | "night";
+
+export interface ReportPrintTemplate {
+  templateName: string;
+  accentColor: string;
+  paperSize: PrintPaperSize;
+  orientation: PrintOrientation;
+  density: PrintDensity;
+  marginMm: number;
+  headerNote: string;
+  footerNote: string;
+  showCompanyName: boolean;
+  showGeneratedAt: boolean;
+  showGeneratedBy: boolean;
+  showFilters: boolean;
+  showSummary: boolean;
+  showSignatures: boolean;
+  signatureLabelLeft: string;
+  signatureLabelRight: string;
+}
 
 export interface Location {
   id: string;
@@ -238,12 +262,14 @@ export interface AppSettings {
   companyName: string;
   currency: string;
   timezone: string;
+  timeSource: TimeSource;
   lowStockThreshold: number;
   expiryAlertDays: number;
   enableOffline: boolean;
   enableRealtime: boolean;
   enableBarcode: boolean;
   strictFefo: boolean;
+  reportPrintTemplate: ReportPrintTemplate;
 }
 
 export interface InventorySnapshot {
@@ -531,12 +557,14 @@ export interface InitializeSystemRequest {
   companyName: string;
   currency: string;
   timezone: string;
+  timeSource?: TimeSource;
   lowStockThreshold: number;
   expiryAlertDays: number;
   enableOffline: boolean;
   enableRealtime: boolean;
   enableBarcode: boolean;
   strictFefo: boolean;
+  reportPrintTemplate?: ReportPrintTemplate;
   locations: InitializationLocationInput[];
   users: InitializationUserInput[];
 }
@@ -605,12 +633,14 @@ export interface UserAdminResponse {
 
 export interface UpdateSettingsRequest {
   timezone: string;
+  timeSource: TimeSource;
   lowStockThreshold: number;
   expiryAlertDays: number;
   enableOffline: boolean;
   enableRealtime: boolean;
   enableBarcode: boolean;
   strictFefo: boolean;
+  reportPrintTemplate: ReportPrintTemplate;
 }
 
 export interface SettingsResponse {

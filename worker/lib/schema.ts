@@ -283,20 +283,22 @@ CREATE TABLE IF NOT EXISTS waste_entries (
   FOREIGN KEY (reported_by) REFERENCES users(id)
 ) STRICT;
 
-CREATE TABLE IF NOT EXISTS app_settings (
-  id TEXT PRIMARY KEY,
-  sequence_no INTEGER NOT NULL UNIQUE,
-  company_name TEXT NOT NULL,
-  currency TEXT NOT NULL,
-  timezone TEXT NOT NULL,
-  low_stock_threshold INTEGER NOT NULL,
-  expiry_alert_days INTEGER NOT NULL,
-  enable_offline INTEGER NOT NULL CHECK (enable_offline IN (0, 1)),
-  enable_realtime INTEGER NOT NULL CHECK (enable_realtime IN (0, 1)),
-  enable_barcode INTEGER NOT NULL CHECK (enable_barcode IN (0, 1)),
-  strict_fefo INTEGER NOT NULL CHECK (strict_fefo IN (0, 1)),
-  updated_at TEXT NOT NULL
-) STRICT;
+  CREATE TABLE IF NOT EXISTS app_settings (
+    id TEXT PRIMARY KEY,
+    sequence_no INTEGER NOT NULL UNIQUE,
+    company_name TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    timezone TEXT NOT NULL,
+    time_source TEXT NOT NULL DEFAULT 'system',
+    low_stock_threshold INTEGER NOT NULL,
+    expiry_alert_days INTEGER NOT NULL,
+    enable_offline INTEGER NOT NULL CHECK (enable_offline IN (0, 1)),
+    enable_realtime INTEGER NOT NULL CHECK (enable_realtime IN (0, 1)),
+    enable_barcode INTEGER NOT NULL CHECK (enable_barcode IN (0, 1)),
+    strict_fefo INTEGER NOT NULL CHECK (strict_fefo IN (0, 1)),
+    report_print_template_json TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL
+  ) STRICT;
 
 CREATE TABLE IF NOT EXISTS sync_events (
   id TEXT PRIMARY KEY,

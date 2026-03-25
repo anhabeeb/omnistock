@@ -35,6 +35,7 @@ import {
 } from "../lib/dateFilters";
 import { exportMarketPrices } from "../lib/export";
 import { formatCurrency, formatDateTime } from "../lib/format";
+import { getDateInputValueForWorkspace } from "../lib/time";
 
 interface Props {
   snapshot: InventorySnapshot;
@@ -151,7 +152,7 @@ function defaultPriceForm(snapshot: InventorySnapshot): PriceFormState {
     supplierId: item?.supplierId ?? snapshot.suppliers[0]?.id ?? "",
     quotedPrice: item ? String(item.costPrice) : "",
     sourceName: "Daily market sheet",
-    marketDate: new Date().toISOString().slice(0, 10),
+    marketDate: getDateInputValueForWorkspace(),
     note: "",
   };
 }
@@ -451,7 +452,7 @@ export function MasterDataPage({
     );
   });
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getDateInputValueForWorkspace();
   const todayPrices = snapshot.marketPrices.filter((entry) => entry.marketDate === today);
   const volatilePrices = snapshot.marketPrices.filter(
     (entry) => Math.abs(entry.variancePct ?? 0) >= 5,

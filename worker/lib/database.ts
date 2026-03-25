@@ -1,4 +1,8 @@
 import {
+  DEFAULT_TIME_SOURCE,
+  createDefaultReportPrintTemplate,
+} from "../../shared/defaults";
+import {
   ALL_PERMISSIONS,
   PERMISSION_CATALOG,
   ROLE_PRESETS,
@@ -44,6 +48,7 @@ import type {
   PullResponse,
   PushResponse,
   RequestKind,
+  ReportPrintTemplate,
   ReverseInventoryRequest,
   ResetUserPasswordRequest,
   RemoveUserRequest,
@@ -63,6 +68,7 @@ import type {
   UpdateRolePermissionsRequest,
   UpdateSupplierRequest,
   UpdateSupplierResponse,
+  TimeSource,
   UpdateUserRequest,
   User,
   WasteEntry,
@@ -525,7 +531,10 @@ function ensurePrivilegedUserManagementAllowed(
   }
 }
 
-function validateEnvironmentSettings(input: UpdateSettingsRequest): UpdateSettingsRequest {
+function validateEnvironmentSettings(
+  input: UpdateSettingsRequest,
+  companyName = "OmniStock",
+): UpdateSettingsRequest {
   const timezone = input.timezone.trim();
   if (!timezone) {
     throw new Error("Timezone is required.");
@@ -541,14 +550,87 @@ function validateEnvironmentSettings(input: UpdateSettingsRequest): UpdateSettin
     throw new Error("Expiry alert days must be zero or greater.");
   }
 
+  const timeSource: TimeSource = input.timeSource === "browser" ? "browser" : DEFAULT_TIME_SOURCE;
+  const fallbackTemplate = createDefaultReportPrintTemplate(companyName);
+  const template = input.reportPrintTemplate;
+  const accentColor =
+    typeof template?.accentColor === "string" && /^#[0-9a-fA-F]{6}$/.test(template.accentColor)
+      ? template.accentColor
+      : fallbackTemplate.accentColor;
+  const reportPrintTemplate: ReportPrintTemplate = {
+    templateName:
+      typeof template?.templateName === "string" && template.templateName.trim()
+        ? template.templateName.trim()
+        : fallbackTemplate.templateName,
+    accentColor,
+    paperSize:
+      template?.paperSize === "letter" || template?.paperSize === "a4"
+        ? template.paperSize
+        : fallbackTemplate.paperSize,
+    orientation:
+      template?.orientation === "landscape" || template?.orientation === "portrait"
+        ? template.orientation
+        : fallbackTemplate.orientation,
+    density:
+      template?.density === "compact" || template?.density === "comfortable"
+        ? template.density
+        : fallbackTemplate.density,
+    marginMm:
+      Number.isFinite(Number(template?.marginMm)) && Number(template?.marginMm) >= 6
+        ? Number(template.marginMm)
+        : fallbackTemplate.marginMm,
+    headerNote:
+      typeof template?.headerNote === "string"
+        ? template.headerNote.trim()
+        : fallbackTemplate.headerNote,
+    footerNote:
+      typeof template?.footerNote === "string"
+        ? template.footerNote.trim()
+        : fallbackTemplate.footerNote,
+    showCompanyName:
+      typeof template?.showCompanyName === "boolean"
+        ? template.showCompanyName
+        : fallbackTemplate.showCompanyName,
+    showGeneratedAt:
+      typeof template?.showGeneratedAt === "boolean"
+        ? template.showGeneratedAt
+        : fallbackTemplate.showGeneratedAt,
+    showGeneratedBy:
+      typeof template?.showGeneratedBy === "boolean"
+        ? template.showGeneratedBy
+        : fallbackTemplate.showGeneratedBy,
+    showFilters:
+      typeof template?.showFilters === "boolean"
+        ? template.showFilters
+        : fallbackTemplate.showFilters,
+    showSummary:
+      typeof template?.showSummary === "boolean"
+        ? template.showSummary
+        : fallbackTemplate.showSummary,
+    showSignatures:
+      typeof template?.showSignatures === "boolean"
+        ? template.showSignatures
+        : fallbackTemplate.showSignatures,
+    signatureLabelLeft:
+      typeof template?.signatureLabelLeft === "string" && template.signatureLabelLeft.trim()
+        ? template.signatureLabelLeft.trim()
+        : fallbackTemplate.signatureLabelLeft,
+    signatureLabelRight:
+      typeof template?.signatureLabelRight === "string" && template.signatureLabelRight.trim()
+        ? template.signatureLabelRight.trim()
+        : fallbackTemplate.signatureLabelRight,
+  };
+
   return {
     timezone,
+    timeSource,
     lowStockThreshold,
     expiryAlertDays,
     enableOffline: Boolean(input.enableOffline),
     enableRealtime: Boolean(input.enableRealtime),
     enableBarcode: Boolean(input.enableBarcode),
     strictFefo: Boolean(input.strictFefo),
+    reportPrintTemplate,
   };
 }
 
@@ -737,6 +819,18 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
     await execute(
       db,
       "ALTER TABLE app_settings ADD COLUMN strict_fefo INTEGER NOT NULL DEFAULT 1",
+    );
+  }
+  if (!(await columnExists(db, "app_settings", "time_source"))) {
+    await execute(
+      db,
+      `ALTER TABLE app_settings ADD COLUMN time_source TEXT NOT NULL DEFAULT '${DEFAULT_TIME_SOURCE}'`,
+    );
+  }
+  if (!(await columnExists(db, "app_settings", "report_print_template_json"))) {
+    await execute(
+      db,
+      "ALTER TABLE app_settings ADD COLUMN report_print_template_json TEXT NOT NULL DEFAULT '{}'",
     );
   }
   if (!(await tableExists(db, "market_price_entries"))) {
@@ -1086,12 +1180,14 @@ interface SettingsRow {
   company_name: string;
   currency: string;
   timezone: string;
+  time_source: TimeSource;
   low_stock_threshold: number;
   expiry_alert_days: number;
   enable_offline: number;
   enable_realtime: number;
   enable_barcode: number;
   strict_fefo: number;
+  report_print_template_json: string;
 }
 
 interface ExistingEventRow {
@@ -1402,7 +1498,7 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
     ),
     first<SettingsRow>(
       db,
-      "SELECT company_name, currency, timezone, low_stock_threshold, expiry_alert_days, enable_offline, enable_realtime, enable_barcode, strict_fefo FROM app_settings LIMIT 1",
+        "SELECT company_name, currency, timezone, time_source, low_stock_threshold, expiry_alert_days, enable_offline, enable_realtime, enable_barcode, strict_fefo, report_print_template_json FROM app_settings LIMIT 1",
     ),
   ]);
 
@@ -1573,17 +1669,40 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
       module: row.module_key,
       severity: row.severity,
     })),
-    settings: {
-      companyName: settingsRow?.company_name ?? "OmniStock",
-      currency: settingsRow?.currency ?? "PKR",
-      timezone: settingsRow?.timezone ?? "Asia/Karachi",
-      lowStockThreshold: Number(settingsRow?.low_stock_threshold ?? 1),
-      expiryAlertDays: Number(settingsRow?.expiry_alert_days ?? 14),
-      enableOffline: Boolean(settingsRow?.enable_offline ?? 1),
-      enableRealtime: Boolean(settingsRow?.enable_realtime ?? 1),
-      enableBarcode: Boolean(settingsRow?.enable_barcode ?? 1),
-      strictFefo: Boolean(settingsRow?.strict_fefo ?? 1),
-    },
+      settings: {
+        companyName: settingsRow?.company_name ?? "OmniStock",
+        currency: settingsRow?.currency ?? "PKR",
+        timezone: settingsRow?.timezone ?? "Asia/Karachi",
+        timeSource: settingsRow?.time_source === "browser" ? "browser" : DEFAULT_TIME_SOURCE,
+        lowStockThreshold: Number(settingsRow?.low_stock_threshold ?? 1),
+        expiryAlertDays: Number(settingsRow?.expiry_alert_days ?? 14),
+        enableOffline: Boolean(settingsRow?.enable_offline ?? 1),
+        enableRealtime: Boolean(settingsRow?.enable_realtime ?? 1),
+        enableBarcode: Boolean(settingsRow?.enable_barcode ?? 1),
+        strictFefo: Boolean(settingsRow?.strict_fefo ?? 1),
+        reportPrintTemplate: (() => {
+          try {
+            const parsed = settingsRow?.report_print_template_json
+              ? (JSON.parse(settingsRow.report_print_template_json) as Partial<ReportPrintTemplate>)
+              : undefined;
+            return validateEnvironmentSettings({
+              timezone: settingsRow?.timezone ?? "Asia/Karachi",
+              timeSource: settingsRow?.time_source === "browser" ? "browser" : DEFAULT_TIME_SOURCE,
+              lowStockThreshold: Number(settingsRow?.low_stock_threshold ?? 1),
+              expiryAlertDays: Number(settingsRow?.expiry_alert_days ?? 14),
+              enableOffline: Boolean(settingsRow?.enable_offline ?? 1),
+              enableRealtime: Boolean(settingsRow?.enable_realtime ?? 1),
+              enableBarcode: Boolean(settingsRow?.enable_barcode ?? 1),
+              strictFefo: Boolean(settingsRow?.strict_fefo ?? 1),
+              reportPrintTemplate:
+                (parsed as ReportPrintTemplate | undefined) ??
+                createDefaultReportPrintTemplate(settingsRow?.company_name ?? "OmniStock"),
+            }, settingsRow?.company_name ?? "OmniStock").reportPrintTemplate;
+          } catch {
+            return createDefaultReportPrintTemplate(settingsRow?.company_name ?? "OmniStock");
+          }
+        })(),
+      },
   };
 }
 
@@ -2326,29 +2445,33 @@ export async function updateSettingsInD1(
     "admin.environment.edit",
     "You do not have permission to edit environment settings.",
   );
-  const nextSettings = validateEnvironmentSettings(input);
+  const nextSettings = validateEnvironmentSettings(input, snapshot.settings.companyName);
   const now = new Date().toISOString();
 
   await execute(
     db,
     `UPDATE app_settings
       SET timezone = ?,
+          time_source = ?,
           low_stock_threshold = ?,
           expiry_alert_days = ?,
           enable_offline = ?,
           enable_realtime = ?,
           enable_barcode = ?,
           strict_fefo = ?,
+          report_print_template_json = ?,
           updated_at = ?
       WHERE id = ?`,
     [
       nextSettings.timezone,
+      nextSettings.timeSource,
       nextSettings.lowStockThreshold,
       nextSettings.expiryAlertDays,
       nextSettings.enableOffline ? 1 : 0,
       nextSettings.enableRealtime ? 1 : 0,
       nextSettings.enableBarcode ? 1 : 0,
       nextSettings.strictFefo ? 1 : 0,
+      JSON.stringify(nextSettings.reportPrintTemplate),
       now,
       SETTINGS_ID,
     ],
@@ -2358,7 +2481,7 @@ export async function updateSettingsInD1(
     db,
     actor.id,
     "Environment settings updated",
-    `${actor.name} updated timezone, alert thresholds, and runtime environment controls.`,
+    `${actor.name} updated time preferences, print defaults, and runtime environment controls.`,
   );
 
   return { snapshot: await loadSnapshot(db) };
@@ -3691,6 +3814,18 @@ export async function initializeSystemInD1(
   if (!companyName) {
     throw new Error("Company name is required to initialize OmniStock.");
   }
+  const initialSettings = validateEnvironmentSettings({
+    timezone: input.timezone,
+    timeSource: input.timeSource ?? DEFAULT_TIME_SOURCE,
+    lowStockThreshold: input.lowStockThreshold,
+    expiryAlertDays: input.expiryAlertDays,
+    enableOffline: input.enableOffline,
+    enableRealtime: input.enableRealtime,
+    enableBarcode: input.enableBarcode,
+    strictFefo: input.strictFefo,
+    reportPrintTemplate:
+      input.reportPrintTemplate ?? createDefaultReportPrintTemplate(companyName),
+  }, companyName);
 
   const locations = input.locations
     .map((location) => ({
@@ -3792,19 +3927,21 @@ export async function initializeSystemInD1(
 
   await execute(
     db,
-    "INSERT INTO app_settings (id, sequence_no, company_name, currency, timezone, low_stock_threshold, expiry_alert_days, enable_offline, enable_realtime, enable_barcode, strict_fefo, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO app_settings (id, sequence_no, company_name, currency, timezone, time_source, low_stock_threshold, expiry_alert_days, enable_offline, enable_realtime, enable_barcode, strict_fefo, report_print_template_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       SETTINGS_ID,
       numberPart(SETTINGS_ID),
       companyName,
       input.currency,
-      input.timezone,
-      Number(input.lowStockThreshold),
-      Number(input.expiryAlertDays),
-      input.enableOffline ? 1 : 0,
-      input.enableRealtime ? 1 : 0,
-      input.enableBarcode ? 1 : 0,
-      input.strictFefo ? 1 : 0,
+      initialSettings.timezone,
+      initialSettings.timeSource,
+      initialSettings.lowStockThreshold,
+      initialSettings.expiryAlertDays,
+      initialSettings.enableOffline ? 1 : 0,
+      initialSettings.enableRealtime ? 1 : 0,
+      initialSettings.enableBarcode ? 1 : 0,
+      initialSettings.strictFefo ? 1 : 0,
+      JSON.stringify(initialSettings.reportPrintTemplate),
       now,
     ],
   );

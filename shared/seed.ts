@@ -1,3 +1,4 @@
+import { createDefaultReportPrintTemplate, DEFAULT_TIME_SOURCE } from "./defaults";
 import { ROLE_PRESETS } from "./permissions";
 import type {
   AppSettings,
@@ -689,12 +690,14 @@ const settings: AppSettings = {
   companyName: "OmniStock Demo Holdings",
   currency: "PKR",
   timezone: "Asia/Karachi",
+  timeSource: DEFAULT_TIME_SOURCE,
   lowStockThreshold: 1,
   expiryAlertDays: 14,
   enableOffline: true,
   enableRealtime: true,
   enableBarcode: true,
   strictFefo: true,
+  reportPrintTemplate: createDefaultReportPrintTemplate("OmniStock Demo Holdings"),
 };
 
 export function createSeedSnapshot(): InventorySnapshot {
@@ -816,12 +819,14 @@ export function createEmptySnapshot(): InventorySnapshot {
       companyName: "OmniStock",
       currency: "PKR",
       timezone: "Asia/Karachi",
+      timeSource: DEFAULT_TIME_SOURCE,
       lowStockThreshold: 5,
       expiryAlertDays: 14,
       enableOffline: true,
       enableRealtime: true,
       enableBarcode: true,
       strictFefo: true,
+      reportPrintTemplate: createDefaultReportPrintTemplate("OmniStock"),
     },
   };
 }

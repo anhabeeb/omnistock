@@ -37,14 +37,15 @@ import {
   exportMovementLedger,
   exportWasteEntries,
   exportWorkbook,
-  printCurrentPage,
 } from "../lib/export";
 import { formatCurrency, formatDateTime } from "../lib/format";
+import { openReportDocument } from "../lib/reportPrint";
 import {
   DATE_FILTER_OPTIONS,
   type DateFilterPreset,
   matchesDateFilter,
 } from "../lib/dateFilters";
+import { getCurrentTimestampIso, getFileDateStampForWorkspace } from "../lib/time";
 
 interface Props {
   snapshot: InventorySnapshot;
@@ -972,6 +973,15 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
       : activeSection.slug === "waste-tracker"
         ? "Generate waste report"
         : "Generate movement report";
+  const activeLocationLabel =
+    locationFilter === "all"
+      ? "All locations"
+      : snapshot.locations.find((entry) => entry.id === locationFilter)?.name ?? "Selected location";
+  const activeFilterSummary = [
+    activeLocationLabel,
+    `Date: ${activeDateLabel}`,
+    normalizedSearch ? `Search: ${deferredSearch.trim()}` : "Search: none",
+  ].join(" · ");
 
   function buildAnalyticsSheets(): WorkbookSheet[] {
     return [
@@ -1149,7 +1159,7 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
       if (activeSection.slug === "analytics") {
         await exportWorkbook(
           buildAnalyticsSheets(),
-          `omnistock-analytics-export-${new Date().toISOString().slice(0, 10)}.xlsx`,
+          `omnistock-analytics-export-${getFileDateStampForWorkspace()}.xlsx`,
         );
         setFeedback("Analytics data exported to Excel.");
       } else if (activeSection.slug === "waste-tracker") {
@@ -1174,21 +1184,56 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
     setGeneratingReport(true);
     setFeedback(undefined);
     try {
-      const sheets =
-        activeSection.slug === "analytics"
-          ? buildAnalyticsSheets()
-          : activeSection.slug === "waste-tracker"
-            ? buildWasteSheets()
-            : buildMovementSheets();
-      await exportWorkbook(
-        sheets,
-        `omnistock-${activeSection.slug}-report-${new Date().toISOString().slice(0, 10)}.xlsx`,
-      );
-      setFeedback(`${activeSection.label} report generated successfully.`);
+      openReportDocument({
+        title: activeSection.title,
+        subtitle: activeSection.description,
+        companyName: snapshot.settings.companyName,
+        generatedBy: currentUser.name,
+        generatedAt: formatDateTime(getCurrentTimestampIso()),
+        filtersLabel: activeFilterSummary,
+        settings: snapshot.settings,
+        sheets:
+          activeSection.slug === "analytics"
+            ? buildAnalyticsSheets()
+            : activeSection.slug === "waste-tracker"
+              ? buildWasteSheets()
+              : buildMovementSheets(),
+      });
+      setFeedback(`${activeSection.label} report preview opened using the default print template.`);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not generate the report.");
     } finally {
       setGeneratingReport(false);
+    }
+  }
+
+  function handlePrintReport() {
+    if (!canPrintReports) {
+      setFeedback("You do not have permission to print reports.");
+      return;
+    }
+
+    setFeedback(undefined);
+
+    try {
+      openReportDocument({
+        title: activeSection.title,
+        subtitle: activeSection.description,
+        companyName: snapshot.settings.companyName,
+        generatedBy: currentUser.name,
+        generatedAt: formatDateTime(getCurrentTimestampIso()),
+        filtersLabel: activeFilterSummary,
+        settings: snapshot.settings,
+        sheets:
+          activeSection.slug === "analytics"
+            ? buildAnalyticsSheets()
+            : activeSection.slug === "waste-tracker"
+              ? buildWasteSheets()
+              : buildMovementSheets(),
+        autoPrint: true,
+      });
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not open the print view.");
     }
   }
 
@@ -1320,7 +1365,7 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
             >
               {generatingReport ? "Generating..." : activeGenerateLabel}
             </Button>
-            <Button variant="text" onClick={printCurrentPage} disabled={!canPrintReports}>
+            <Button variant="text" onClick={handlePrintReport} disabled={!canPrintReports}>
               Print report
             </Button>
           </Stack>

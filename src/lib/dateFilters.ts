@@ -1,3 +1,11 @@
+import {
+  getCurrentTimeMs,
+  getDateKeyForWorkspace,
+  getMonthKeyForWorkspace,
+  shiftDateKey,
+  shiftMonthKey,
+} from "./time";
+
 export type DateFilterPreset =
   | "all"
   | "yesterday"
@@ -23,71 +31,56 @@ export const DATE_FILTER_OPTIONS: Array<{ value: DateFilterPreset; label: string
   { value: "custom", label: "Custom date" },
 ];
 
-function startOfDay(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-}
-
-function startOfMonth(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
-}
-
-function addDays(date: Date, days: number): Date {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
-}
-
-function addMonths(date: Date, months: number): Date {
-  return new Date(date.getFullYear(), date.getMonth() + months, 1);
-}
-
-function parseDateOnly(value?: string): Date | null {
-  if (!value) {
+function normalizeDateKey(value?: string): string | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return null;
   }
 
-  const parsed = new Date(`${value}T00:00:00`);
-  return Number.isFinite(parsed.getTime()) ? parsed : null;
+  return value;
 }
 
 export function resolveDateFilterRange(
   filter: DateFilterState,
-  referenceDate = new Date(),
-): { start: number | null; end: number | null } {
-  const todayStart = startOfDay(referenceDate);
+  referenceTime = getCurrentTimeMs(),
+): { start: string | null; end: string | null } {
+  const todayKey = getDateKeyForWorkspace(referenceTime);
+  const currentMonthKey = getMonthKeyForWorkspace(referenceTime);
+  const nextMonthFirstDate = `${shiftMonthKey(currentMonthKey, 1)}-01`;
 
   switch (filter.preset) {
     case "yesterday": {
-      const start = addDays(todayStart, -1);
-      return { start: start.getTime(), end: todayStart.getTime() };
+      const yesterdayKey = shiftDateKey(todayKey, -1);
+      return { start: yesterdayKey, end: yesterdayKey };
     }
     case "last-7-days": {
-      const start = addDays(todayStart, -6);
-      const end = addDays(todayStart, 1);
-      return { start: start.getTime(), end: end.getTime() };
+      return { start: shiftDateKey(todayKey, -6), end: todayKey };
     }
     case "this-month": {
-      const start = startOfMonth(referenceDate);
-      const end = addMonths(start, 1);
-      return { start: start.getTime(), end: end.getTime() };
+      return {
+        start: `${currentMonthKey}-01`,
+        end: shiftDateKey(nextMonthFirstDate, -1),
+      };
     }
     case "last-month": {
-      const end = startOfMonth(referenceDate);
-      const start = addMonths(end, -1);
-      return { start: start.getTime(), end: end.getTime() };
+      const lastMonthKey = shiftMonthKey(currentMonthKey, -1);
+      return {
+        start: `${lastMonthKey}-01`,
+        end: shiftDateKey(`${currentMonthKey}-01`, -1),
+      };
     }
     case "last-6-months": {
-      const currentMonthStart = startOfMonth(referenceDate);
-      const start = addMonths(currentMonthStart, -5);
-      const end = addMonths(currentMonthStart, 1);
-      return { start: start.getTime(), end: end.getTime() };
+      const startMonthKey = shiftMonthKey(currentMonthKey, -5);
+      return {
+        start: `${startMonthKey}-01`,
+        end: shiftDateKey(nextMonthFirstDate, -1),
+      };
     }
     case "custom": {
-      const startDate = parseDateOnly(filter.customStartDate);
-      const endDate = parseDateOnly(filter.customEndDate);
+      const startDate = normalizeDateKey(filter.customStartDate);
+      const endDate = normalizeDateKey(filter.customEndDate);
       return {
-        start: startDate ? startDate.getTime() : null,
-        end: endDate ? addDays(endDate, 1).getTime() : null,
+        start: startDate,
+        end: endDate,
       };
     }
     case "all":
@@ -99,7 +92,7 @@ export function resolveDateFilterRange(
 export function matchesDateFilter(
   value: string | undefined,
   filter: DateFilterState,
-  referenceDate = new Date(),
+  referenceTime = getCurrentTimeMs(),
 ): boolean {
   if (filter.preset === "all") {
     return true;
@@ -109,16 +102,12 @@ export function matchesDateFilter(
     return false;
   }
 
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) {
+  const dateKey = getDateKeyForWorkspace(value);
+  const { start, end } = resolveDateFilterRange(filter, referenceTime);
+  if (start !== null && dateKey < start) {
     return false;
   }
-
-  const { start, end } = resolveDateFilterRange(filter, referenceDate);
-  if (start !== null && timestamp < start) {
-    return false;
-  }
-  if (end !== null && timestamp >= end) {
+  if (end !== null && dateKey > end) {
     return false;
   }
   return true;

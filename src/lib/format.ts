@@ -1,8 +1,10 @@
+import { formatWithWorkspaceClock } from "./time";
+
 export function formatDateTime(value: string): string {
-  return new Intl.DateTimeFormat("en-PK", {
+  return formatWithWorkspaceClock(value, {
     dateStyle: "medium",
     timeStyle: "short",
-  }).format(new Date(value));
+  });
 }
 
 export function formatCurrency(value: number, currency: string): string {
