@@ -1,5 +1,6 @@
 import { ROLE_PRESETS } from "../../shared/permissions";
 import { applyMutation } from "../../shared/operations";
+import type { MutationResult } from "../../shared/operations";
 import { buildBootstrapPayload } from "../../shared/selectors";
 import type {
   ActivateSuperadminRequest,
@@ -15,7 +16,16 @@ import type {
   CreateMarketPriceResponse,
   CreateSupplierRequest,
   CreateSupplierResponse,
+  DeleteInventoryRequest,
+  DeleteItemRequest,
+  DeleteLocationRequest,
+  DeleteMarketPriceRequest,
+  DeleteSnapshotResponse,
+  DeleteSupplierRequest,
+  EditInventoryRequest,
   InventorySnapshot,
+  InventoryActionResponse,
+  InventoryRequest,
   InitializeSystemRequest,
   InitializeSystemResponse,
   Item,
@@ -29,13 +39,22 @@ import type {
   PullResponse,
   PushResponse,
   RequestKind,
+  ReverseInventoryRequest,
   ResetUserPasswordRequest,
   RemoveUserRequest,
   ProfileResponse,
   StockBatch,
   Supplier,
   SyncEvent,
+  UpdateItemRequest,
+  UpdateItemResponse,
+  UpdateLocationRequest,
+  UpdateLocationResponse,
+  UpdateMarketPriceRequest,
+  UpdateMarketPriceResponse,
   UpdateOwnProfileRequest,
+  UpdateSupplierRequest,
+  UpdateSupplierResponse,
   UpdateUserRequest,
   User,
   WasteEntry,
@@ -572,6 +591,12 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
   if (!(await columnExists(db, "inventory_request_lines", "waste_station"))) {
     await execute(db, "ALTER TABLE inventory_request_lines ADD COLUMN waste_station TEXT");
   }
+  if (!(await columnExists(db, "inventory_requests", "deleted_at"))) {
+    await execute(db, "ALTER TABLE inventory_requests ADD COLUMN deleted_at TEXT");
+  }
+  if (!(await columnExists(db, "inventory_requests", "deleted_by"))) {
+    await execute(db, "ALTER TABLE inventory_requests ADD COLUMN deleted_by TEXT");
+  }
   if (!(await columnExists(db, "movement_ledger", "allocation_summary"))) {
     await execute(db, "ALTER TABLE movement_ledger ADD COLUMN allocation_summary TEXT");
   }
@@ -824,6 +849,30 @@ interface RequestRow {
   requested_at: string;
 }
 
+interface InventoryRequestActionRow {
+  id: string;
+  reference: string;
+  kind: RequestKind;
+  status: InventoryRequest["status"];
+  item_id: string;
+  barcode: string;
+  quantity: number;
+  counted_quantity: number | null;
+  lot_code: string | null;
+  expiry_date: string | null;
+  received_at: string | null;
+  waste_reason: WasteEntry["reason"] | null;
+  waste_shift: WasteEntry["shift"] | null;
+  waste_station: string | null;
+  unit: string;
+  supplier_id: string | null;
+  from_location_id: string | null;
+  to_location_id: string | null;
+  note: string;
+  requested_by: string;
+  requested_at: string;
+}
+
 interface MarketPriceRow {
   id: string;
   market_date: string;
@@ -1061,6 +1110,7 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
       LEFT JOIN suppliers s ON s.id = r.supplier_id
       LEFT JOIN locations lf ON lf.id = r.from_location_id
       LEFT JOIN locations lt ON lt.id = r.to_location_id
+      WHERE r.deleted_at IS NULL
       ORDER BY r.requested_at DESC, r.sequence_no DESC
       LIMIT 160`,
     ),
@@ -1383,6 +1433,19 @@ async function itemExistsBySku(
   return Boolean(row?.id);
 }
 
+async function itemExistsBySkuExcludingId(
+  db: D1Database,
+  sku: string,
+  itemId: string,
+): Promise<boolean> {
+  const row = await first<{ id: string }>(
+    db,
+    "SELECT id FROM items WHERE sku = ? AND id <> ? LIMIT 1",
+    [sku, itemId],
+  );
+  return Boolean(row?.id);
+}
+
 async function itemExistsByBarcode(
   db: D1Database,
   barcode: string,
@@ -1391,6 +1454,19 @@ async function itemExistsByBarcode(
     db,
     "SELECT id FROM items WHERE barcode = ? LIMIT 1",
     [barcode],
+  );
+  return Boolean(row?.id);
+}
+
+async function itemExistsByBarcodeExcludingId(
+  db: D1Database,
+  barcode: string,
+  itemId: string,
+): Promise<boolean> {
+  const row = await first<{ id: string }>(
+    db,
+    "SELECT id FROM items WHERE barcode = ? AND id <> ? LIMIT 1",
+    [barcode, itemId],
   );
   return Boolean(row?.id);
 }
@@ -1407,6 +1483,19 @@ async function supplierExistsByCode(
   return Boolean(row?.id);
 }
 
+async function supplierExistsByCodeExcludingId(
+  db: D1Database,
+  code: string,
+  supplierId: string,
+): Promise<boolean> {
+  const row = await first<{ id: string }>(
+    db,
+    "SELECT id FROM suppliers WHERE code = ? AND id <> ? LIMIT 1",
+    [code, supplierId],
+  );
+  return Boolean(row?.id);
+}
+
 async function locationExistsByCode(
   db: D1Database,
   code: string,
@@ -1417,6 +1506,36 @@ async function locationExistsByCode(
     [code],
   );
   return Boolean(row?.id);
+}
+
+async function locationExistsByCodeExcludingId(
+  db: D1Database,
+  code: string,
+  locationId: string,
+): Promise<boolean> {
+  const row = await first<{ id: string }>(
+    db,
+    "SELECT id FROM locations WHERE code = ? AND id <> ? LIMIT 1",
+    [code, locationId],
+  );
+  return Boolean(row?.id);
+}
+
+function inventoryPermissionForKind(kind: RequestKind): PermissionKey {
+  switch (kind) {
+    case "grn":
+      return "inventory.grn";
+    case "gin":
+      return "inventory.gin";
+    case "transfer":
+      return "inventory.transfer";
+    case "adjustment":
+      return "inventory.adjustment";
+    case "stock-count":
+      return "inventory.count";
+    case "wastage":
+      return "inventory.wastage";
+  }
 }
 
 async function countSuperadmins(db: D1Database, excludeUserId?: string): Promise<number> {
@@ -2197,6 +2316,225 @@ async function persistMutationResult(
   );
 }
 
+async function recordInventoryMutation(
+  db: D1Database,
+  snapshot: InventorySnapshot,
+  mutation: MutationEnvelope,
+): Promise<MutationResult> {
+  const nextSeq = snapshot.syncCursor + 1;
+  const previewCounters = new Map<string, number>();
+  applyMutation(snapshot, mutation, {
+    idFactory: (prefix: string) => {
+      const nextValue = (previewCounters.get(prefix) ?? 0) + 1;
+      previewCounters.set(prefix, nextValue);
+      return `${prefix}-preview-${nextValue}`;
+    },
+    referenceFactory: () => `PREVIEW-${nextSeq}`,
+    nextSeq,
+  });
+
+  const context = await buildMutationContext(db, mutation, previewCounters);
+  const result = applyMutation(snapshot, mutation, {
+    idFactory: context.idFactory,
+    referenceFactory: () => context.reference,
+    nextSeq,
+  });
+
+  await persistMutationResult(db, mutation, result.event, context);
+  return result;
+}
+
+async function loadInventoryRequestActionRow(
+  db: D1Database,
+  requestId: string,
+): Promise<InventoryRequestActionRow | null> {
+  return first<InventoryRequestActionRow>(
+    db,
+    `SELECT
+      r.id,
+      r.reference,
+      r.kind,
+      r.status,
+      rl.item_id,
+      rl.barcode,
+      rl.quantity,
+      rl.counted_quantity,
+      rl.lot_code,
+      rl.expiry_date,
+      rl.received_at,
+      rl.waste_reason,
+      rl.waste_shift,
+      rl.waste_station,
+      rl.unit,
+      r.supplier_id,
+      r.from_location_id,
+      r.to_location_id,
+      r.note,
+      r.requested_by,
+      r.requested_at
+    FROM inventory_requests r
+    JOIN inventory_request_lines rl ON rl.request_id = r.id AND rl.line_no = 1
+    WHERE r.id = ? AND r.deleted_at IS NULL
+    LIMIT 1`,
+    [requestId],
+  );
+}
+
+async function loadFirstLedgerBefore(db: D1Database, requestId: string): Promise<number | null> {
+  const row = await first<{ quantity_before: number }>(
+    db,
+    "SELECT quantity_before FROM movement_ledger WHERE request_id = ? ORDER BY sequence_no ASC LIMIT 1",
+    [requestId],
+  );
+  return row ? Number(row.quantity_before) : null;
+}
+
+async function markInventoryRequestRejected(
+  db: D1Database,
+  requestId: string,
+  note: string,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await execute(
+    db,
+    "UPDATE inventory_requests SET status = 'rejected', note = ?, updated_at = ? WHERE id = ?",
+    [note, now, requestId],
+  );
+}
+
+async function markInventoryRequestDeleted(
+  db: D1Database,
+  requestId: string,
+  actorId: string,
+  note: string,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await execute(
+    db,
+    "UPDATE inventory_requests SET status = 'rejected', note = ?, deleted_at = ?, deleted_by = ?, updated_at = ? WHERE id = ?",
+    [note, now, actorId, now, requestId],
+  );
+}
+
+function buildInventoryActionNote(
+  originalNote: string,
+  prefix: string,
+  actorName: string,
+  reason: string,
+  relatedReference?: string,
+): string {
+  const base = originalNote.trim();
+  const suffix = relatedReference
+    ? `[${prefix}] ${actorName}: ${reason}. Related reference ${relatedReference}.`
+    : `[${prefix}] ${actorName}: ${reason}.`;
+  return base ? `${base}\n${suffix}` : suffix;
+}
+
+function buildReversalMutation(
+  actorId: string,
+  request: InventoryRequestActionRow,
+  reason: string,
+  quantityBefore?: number | null,
+): MutationEnvelope {
+  const createdAt = new Date().toISOString();
+  const note = `Reversal for ${request.reference}: ${reason}`;
+
+  switch (request.kind) {
+    case "grn":
+      return {
+        clientMutationId: crypto.randomUUID(),
+        actorId,
+        createdAt,
+        kind: "adjustment",
+        payload: {
+          itemId: request.item_id,
+          quantity: -Math.abs(Number(request.quantity)),
+          note,
+          barcode: request.barcode,
+          fromLocationId: request.to_location_id ?? undefined,
+        },
+      };
+    case "gin":
+      return {
+        clientMutationId: crypto.randomUUID(),
+        actorId,
+        createdAt,
+        kind: "adjustment",
+        payload: {
+          itemId: request.item_id,
+          quantity: Math.abs(Number(request.quantity)),
+          note,
+          barcode: request.barcode,
+          fromLocationId: request.from_location_id ?? undefined,
+          lotCode: request.lot_code ?? undefined,
+          expiryDate: request.expiry_date ?? undefined,
+          receivedDate: request.received_at ?? undefined,
+        },
+      };
+    case "transfer":
+      return {
+        clientMutationId: crypto.randomUUID(),
+        actorId,
+        createdAt,
+        kind: "transfer",
+        payload: {
+          itemId: request.item_id,
+          quantity: Math.abs(Number(request.quantity)),
+          note,
+          barcode: request.barcode,
+          fromLocationId: request.to_location_id ?? undefined,
+          toLocationId: request.from_location_id ?? undefined,
+        },
+      };
+    case "adjustment":
+      return {
+        clientMutationId: crypto.randomUUID(),
+        actorId,
+        createdAt,
+        kind: "adjustment",
+        payload: {
+          itemId: request.item_id,
+          quantity: -Number(request.quantity),
+          note,
+          barcode: request.barcode,
+          fromLocationId: request.from_location_id ?? undefined,
+        },
+      };
+    case "stock-count":
+      return {
+        clientMutationId: crypto.randomUUID(),
+        actorId,
+        createdAt,
+        kind: "stock-count",
+        payload: {
+          itemId: request.item_id,
+          quantity: Math.max(0, Number(quantityBefore ?? request.quantity)),
+          countedQuantity: Math.max(0, Number(quantityBefore ?? request.quantity)),
+          note,
+          barcode: request.barcode,
+          fromLocationId: request.from_location_id ?? undefined,
+        },
+      };
+    case "wastage":
+      return {
+        clientMutationId: crypto.randomUUID(),
+        actorId,
+        createdAt,
+        kind: "adjustment",
+        payload: {
+          itemId: request.item_id,
+          quantity: Math.abs(Number(request.quantity)),
+          note,
+          barcode: request.barcode,
+          fromLocationId: request.from_location_id ?? undefined,
+          lotCode: request.lot_code ?? undefined,
+          expiryDate: request.expiry_date ?? undefined,
+          receivedDate: request.received_at ?? undefined,
+        },
+      };
+  }
+}
+
 export async function createMarketPriceEntryInD1(
   db: D1Database,
   actorId: string,
@@ -2297,6 +2635,142 @@ export async function createMarketPriceEntryInD1(
   };
 }
 
+export async function updateMarketPriceEntryInD1(
+  db: D1Database,
+  actorId: string,
+  input: UpdateMarketPriceRequest,
+): Promise<UpdateMarketPriceResponse> {
+  await ensureDatabaseReady(db);
+
+  const snapshot = await loadSnapshot(db);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "master.items",
+    "You do not have permission to edit market prices.",
+  );
+  const existing = snapshot.marketPrices.find((entry) => entry.id === input.marketPriceId);
+  if (!existing) {
+    throw new Error("The selected market price entry could not be found.");
+  }
+
+  const item = snapshot.items.find((record) => record.id === input.itemId);
+  if (!item) {
+    throw new Error("Market price entry requires a valid item.");
+  }
+  const location = snapshot.locations.find((record) => record.id === input.locationId);
+  if (!location) {
+    throw new Error("Market price entry requires a valid warehouse or outlet.");
+  }
+  const supplier = input.supplierId
+    ? snapshot.suppliers.find((record) => record.id === input.supplierId)
+    : undefined;
+  if (input.supplierId && !supplier) {
+    throw new Error("Selected supplier was not found.");
+  }
+
+  const quotedPrice = Number(input.quotedPrice);
+  if (!Number.isFinite(quotedPrice) || quotedPrice <= 0) {
+    throw new Error("Quoted price must be greater than zero.");
+  }
+
+  const sourceName = input.sourceName.trim();
+  const note = input.note.trim();
+  if (!sourceName) {
+    throw new Error("Provide the market source or supplier reference.");
+  }
+
+  const previousEntry = snapshot.marketPrices.find(
+    (entry) =>
+      entry.id !== input.marketPriceId &&
+      entry.itemId === item.id &&
+      entry.locationId === location.id,
+  );
+  const previousPrice = previousEntry?.quotedPrice;
+  const variancePct =
+    previousPrice && previousPrice > 0
+      ? Number((((quotedPrice - previousPrice) / previousPrice) * 100).toFixed(2))
+      : undefined;
+
+  await execute(
+    db,
+    "UPDATE market_price_entries SET market_date = ?, category = ?, item_id = ?, location_id = ?, supplier_id = ?, unit = ?, quoted_price = ?, previous_price = ?, variance_pct = ?, source_name = ?, note = ? WHERE id = ?",
+    [
+      input.marketDate,
+      input.category,
+      item.id,
+      location.id,
+      supplier?.id ?? null,
+      item.unit,
+      quotedPrice,
+      previousPrice ?? null,
+      variancePct ?? null,
+      sourceName,
+      note,
+      input.marketPriceId,
+    ],
+  );
+
+  await appendActivity(
+    db,
+    actor.id,
+    "masterData",
+    "Market price updated",
+    `${item.name} market price was updated for ${location.name}.`,
+  );
+
+  return {
+    entry: {
+      ...existing,
+      marketDate: input.marketDate,
+      category: input.category,
+      itemId: item.id,
+      itemName: item.name,
+      locationId: location.id,
+      locationName: location.name,
+      supplierId: supplier?.id,
+      supplierName: supplier?.name,
+      unit: item.unit,
+      quotedPrice,
+      previousPrice,
+      variancePct,
+      sourceName,
+      note,
+    },
+    snapshot: await loadSnapshot(db),
+  };
+}
+
+export async function deleteMarketPriceEntryInD1(
+  db: D1Database,
+  actorId: string,
+  input: DeleteMarketPriceRequest,
+): Promise<DeleteSnapshotResponse> {
+  await ensureDatabaseReady(db);
+
+  const snapshot = await loadSnapshot(db);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "master.items",
+    "You do not have permission to delete market prices.",
+  );
+  const existing = snapshot.marketPrices.find((entry) => entry.id === input.marketPriceId);
+  if (!existing) {
+    throw new Error("The selected market price entry could not be found.");
+  }
+
+  await execute(db, "DELETE FROM market_price_entries WHERE id = ?", [input.marketPriceId]);
+
+  await appendActivity(
+    db,
+    actor.id,
+    "masterData",
+    "Market price deleted",
+    `${existing.itemName} market price dated ${existing.marketDate} was deleted.`,
+  );
+
+  return { snapshot: await loadSnapshot(db) };
+}
+
 export async function createItemInD1(
   db: D1Database,
   actorId: string,
@@ -2393,6 +2867,135 @@ export async function createItemInD1(
   };
 }
 
+export async function updateItemInD1(
+  db: D1Database,
+  actorId: string,
+  input: UpdateItemRequest,
+): Promise<UpdateItemResponse> {
+  await ensureDatabaseReady(db);
+
+  const snapshot = await loadSnapshot(db);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "master.items",
+    "You do not have permission to edit items.",
+  );
+  const existing = snapshot.items.find((item) => item.id === input.itemId);
+  if (!existing) {
+    throw new Error("The selected item could not be found.");
+  }
+
+  const name = input.name.trim();
+  const sku = input.sku.trim().toUpperCase();
+  const barcode = input.barcode.trim();
+  const category = input.category.trim();
+  const unit = input.unit.trim();
+  const status = input.status ?? existing.status;
+  if (!name || !sku || !barcode || !category || !unit) {
+    throw new Error("Name, SKU, barcode, category, and unit are required for items.");
+  }
+  if (await itemExistsBySkuExcludingId(db, sku, input.itemId)) {
+    throw new Error(`An item already exists with SKU ${sku}.`);
+  }
+  if (await itemExistsByBarcodeExcludingId(db, barcode, input.itemId)) {
+    throw new Error(`An item already exists with barcode ${barcode}.`);
+  }
+
+  const supplier = snapshot.suppliers.find((record) => record.id === input.supplierId);
+  if (!supplier) {
+    throw new Error("Select a valid supplier before saving the item.");
+  }
+
+  const costPrice = Number(input.costPrice);
+  const sellingPrice = Number(input.sellingPrice);
+  if (!Number.isFinite(costPrice) || costPrice < 0) {
+    throw new Error("Cost price must be zero or greater.");
+  }
+  if (!Number.isFinite(sellingPrice) || sellingPrice < 0) {
+    throw new Error("Selling price must be zero or greater.");
+  }
+
+  const updatedAt = new Date().toISOString();
+  await execute(
+    db,
+    "UPDATE items SET sku = ?, barcode = ?, name = ?, category = ?, unit = ?, supplier_id = ?, cost_price = ?, selling_price = ?, status = ?, updated_at = ? WHERE id = ?",
+    [
+      sku,
+      barcode,
+      name,
+      category,
+      unit,
+      supplier.id,
+      costPrice,
+      sellingPrice,
+      status,
+      updatedAt,
+      input.itemId,
+    ],
+  );
+
+  await appendActivity(
+    db,
+    actor.id,
+    "masterData",
+    "Item updated",
+    `${name} (${sku}) was updated in the item catalog.`,
+  );
+
+  return {
+    item: {
+      ...existing,
+      sku,
+      barcode,
+      name,
+      category,
+      unit,
+      supplierId: supplier.id,
+      costPrice,
+      sellingPrice,
+      status,
+      updatedAt,
+    },
+    snapshot: await loadSnapshot(db),
+  };
+}
+
+export async function deleteItemInD1(
+  db: D1Database,
+  actorId: string,
+  input: DeleteItemRequest,
+): Promise<DeleteSnapshotResponse> {
+  await ensureDatabaseReady(db);
+
+  const snapshot = await loadSnapshot(db);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "master.items",
+    "You do not have permission to delete items.",
+  );
+  const existing = snapshot.items.find((item) => item.id === input.itemId);
+  if (!existing) {
+    throw new Error("The selected item could not be found.");
+  }
+
+  const updatedAt = new Date().toISOString();
+  await execute(
+    db,
+    "UPDATE items SET status = 'archived', updated_at = ? WHERE id = ?",
+    [updatedAt, input.itemId],
+  );
+
+  await appendActivity(
+    db,
+    actor.id,
+    "masterData",
+    "Item archived",
+    `${existing.name} (${existing.sku}) was removed from the active item list.`,
+  );
+
+  return { snapshot: await loadSnapshot(db) };
+}
+
 export async function createSupplierInD1(
   db: D1Database,
   actorId: string,
@@ -2467,6 +3070,106 @@ export async function createSupplierInD1(
   };
 }
 
+export async function updateSupplierInD1(
+  db: D1Database,
+  actorId: string,
+  input: UpdateSupplierRequest,
+): Promise<UpdateSupplierResponse> {
+  await ensureDatabaseReady(db);
+
+  const snapshot = await loadSnapshot(db);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "master.suppliers",
+    "You do not have permission to edit suppliers.",
+  );
+  const existing = snapshot.suppliers.find((supplier) => supplier.id === input.supplierId);
+  if (!existing) {
+    throw new Error("The selected supplier could not be found.");
+  }
+
+  const name = input.name.trim();
+  const code = input.code.trim().toUpperCase();
+  const email = input.email.trim().toLowerCase();
+  const phone = input.phone.trim();
+  const status = input.status ?? existing.status;
+  const leadTimeDays = Number(input.leadTimeDays);
+
+  if (!name || !code || !email || !phone) {
+    throw new Error("Supplier name, code, email, and phone are required.");
+  }
+  if (await supplierExistsByCodeExcludingId(db, code, input.supplierId)) {
+    throw new Error(`A supplier already exists with code ${code}.`);
+  }
+  if (!Number.isFinite(leadTimeDays) || leadTimeDays < 0) {
+    throw new Error("Lead time must be zero or greater.");
+  }
+
+  const updatedAt = new Date().toISOString();
+  await execute(
+    db,
+    "UPDATE suppliers SET code = ?, name = ?, email = ?, phone = ?, lead_time_days = ?, status = ?, updated_at = ? WHERE id = ?",
+    [code, name, email, phone, leadTimeDays, status, updatedAt, input.supplierId],
+  );
+
+  await appendActivity(
+    db,
+    actor.id,
+    "masterData",
+    "Supplier updated",
+    `${name} (${code}) was updated in the supplier directory.`,
+  );
+
+  return {
+    supplier: {
+      ...existing,
+      code,
+      name,
+      email,
+      phone,
+      leadTimeDays,
+      status,
+    },
+    snapshot: await loadSnapshot(db),
+  };
+}
+
+export async function deleteSupplierInD1(
+  db: D1Database,
+  actorId: string,
+  input: DeleteSupplierRequest,
+): Promise<DeleteSnapshotResponse> {
+  await ensureDatabaseReady(db);
+
+  const snapshot = await loadSnapshot(db);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "master.suppliers",
+    "You do not have permission to delete suppliers.",
+  );
+  const existing = snapshot.suppliers.find((supplier) => supplier.id === input.supplierId);
+  if (!existing) {
+    throw new Error("The selected supplier could not be found.");
+  }
+
+  const updatedAt = new Date().toISOString();
+  await execute(
+    db,
+    "UPDATE suppliers SET status = 'archived', updated_at = ? WHERE id = ?",
+    [updatedAt, input.supplierId],
+  );
+
+  await appendActivity(
+    db,
+    actor.id,
+    "masterData",
+    "Supplier archived",
+    `${existing.name} (${existing.code}) was removed from the active supplier list.`,
+  );
+
+  return { snapshot: await loadSnapshot(db) };
+}
+
 export async function createLocationInD1(
   db: D1Database,
   actorId: string,
@@ -2536,6 +3239,103 @@ export async function createLocationInD1(
     },
     snapshot: await loadSnapshot(db),
   };
+}
+
+export async function updateLocationInD1(
+  db: D1Database,
+  actorId: string,
+  input: UpdateLocationRequest,
+): Promise<UpdateLocationResponse> {
+  await ensureDatabaseReady(db);
+
+  const snapshot = await loadSnapshot(db);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "master.locations",
+    "You do not have permission to edit locations.",
+  );
+  const existing = snapshot.locations.find((location) => location.id === input.locationId);
+  if (!existing) {
+    throw new Error("The selected location could not be found.");
+  }
+
+  const name = input.name.trim();
+  const code = input.code.trim().toUpperCase();
+  const city = input.city.trim();
+  const type = input.type;
+  const status = input.status ?? existing.status;
+  if (!name || !code) {
+    throw new Error("Location name and code are required.");
+  }
+  if (type !== "warehouse" && type !== "outlet") {
+    throw new Error("Location type must be warehouse or outlet.");
+  }
+  if (await locationExistsByCodeExcludingId(db, code, input.locationId)) {
+    throw new Error(`A location already exists with code ${code}.`);
+  }
+
+  const updatedAt = new Date().toISOString();
+  await execute(
+    db,
+    "UPDATE locations SET code = ?, name = ?, type = ?, city = ?, status = ?, updated_at = ? WHERE id = ?",
+    [code, name, type, city, status, updatedAt, input.locationId],
+  );
+
+  await appendActivity(
+    db,
+    actor.id,
+    "masterData",
+    "Location updated",
+    `${name} (${code}) was updated in the location directory.`,
+  );
+
+  return {
+    location: {
+      ...existing,
+      code,
+      name,
+      type,
+      city,
+      status,
+    },
+    snapshot: await loadSnapshot(db),
+  };
+}
+
+export async function deleteLocationInD1(
+  db: D1Database,
+  actorId: string,
+  input: DeleteLocationRequest,
+): Promise<DeleteSnapshotResponse> {
+  await ensureDatabaseReady(db);
+
+  const snapshot = await loadSnapshot(db);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "master.locations",
+    "You do not have permission to delete locations.",
+  );
+  const existing = snapshot.locations.find((location) => location.id === input.locationId);
+  if (!existing) {
+    throw new Error("The selected location could not be found.");
+  }
+
+  const updatedAt = new Date().toISOString();
+  await execute(
+    db,
+    "UPDATE locations SET status = 'archived', updated_at = ? WHERE id = ?",
+    [updatedAt, input.locationId],
+  );
+
+  await appendActivity(
+    db,
+    actor.id,
+    "masterData",
+    "Location archived",
+    `${existing.name} (${existing.code}) was removed from the active location list.`,
+  );
+
+  return { snapshot: await loadSnapshot(db) };
 }
 
 export async function initializeSystemInD1(
@@ -2708,6 +3508,189 @@ export async function initializeSystemInD1(
   };
 }
 
+export async function reverseInventoryRequestInD1(
+  db: D1Database,
+  actorId: string,
+  input: ReverseInventoryRequest,
+): Promise<InventoryActionResponse> {
+  await ensureDatabaseReady(db);
+
+  let snapshot = await loadSnapshot(db);
+  const request = await loadInventoryRequestActionRow(db, input.requestId);
+  if (!request) {
+    throw new Error("The selected inventory entry could not be found.");
+  }
+  if (request.status !== "posted") {
+    throw new Error("Only posted inventory entries can be reversed.");
+  }
+
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    inventoryPermissionForKind(request.kind),
+    "You do not have permission to reverse this inventory entry.",
+  );
+  const reason = input.reason.trim();
+  if (!reason) {
+    throw new Error("Provide a reason before reversing an inventory entry.");
+  }
+
+  const quantityBefore =
+    request.kind === "stock-count" ? await loadFirstLedgerBefore(db, request.id) : null;
+  const reversalMutation = buildReversalMutation(actor.id, request, reason, quantityBefore);
+  const reversalResult = await recordInventoryMutation(db, snapshot, reversalMutation);
+  snapshot = reversalResult.snapshot;
+
+  await markInventoryRequestRejected(
+    db,
+    request.id,
+    buildInventoryActionNote(
+      request.note,
+      "Reversed",
+      actor.name,
+      reason,
+      reversalResult.event.request.reference,
+    ),
+  );
+
+  return {
+    snapshot: await loadSnapshot(db),
+    reversalRequest: reversalResult.event.request,
+  };
+}
+
+export async function editInventoryRequestInD1(
+  db: D1Database,
+  actorId: string,
+  input: EditInventoryRequest,
+): Promise<InventoryActionResponse> {
+  await ensureDatabaseReady(db);
+
+  let snapshot = await loadSnapshot(db);
+  const request = await loadInventoryRequestActionRow(db, input.requestId);
+  if (!request) {
+    throw new Error("The selected inventory entry could not be found.");
+  }
+  if (request.status !== "posted") {
+    throw new Error("Only posted inventory entries can be edited.");
+  }
+
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    inventoryPermissionForKind(request.kind),
+    "You do not have permission to edit this inventory entry.",
+  );
+  const reason = input.reason.trim();
+  if (!reason) {
+    throw new Error("Provide a correction reason before editing an inventory entry.");
+  }
+
+  const quantityBefore =
+    request.kind === "stock-count" ? await loadFirstLedgerBefore(db, request.id) : null;
+  const reversalMutation = buildReversalMutation(actor.id, request, reason, quantityBefore);
+  const reversalResult = await recordInventoryMutation(db, snapshot, reversalMutation);
+  snapshot = reversalResult.snapshot;
+
+  const correctedMutation: MutationEnvelope = {
+    clientMutationId: crypto.randomUUID(),
+    actorId,
+    createdAt: new Date().toISOString(),
+    kind: request.kind,
+    payload: {
+      itemId: input.itemId,
+      quantity: Number(input.quantity),
+      note: input.note.trim(),
+      barcode: input.barcode?.trim() || undefined,
+      supplierId: input.supplierId?.trim() || undefined,
+      fromLocationId: input.fromLocationId?.trim() || undefined,
+      toLocationId: input.toLocationId?.trim() || undefined,
+      countedQuantity:
+        request.kind === "stock-count"
+          ? Number(input.countedQuantity ?? input.quantity)
+          : undefined,
+      lotCode: input.lotCode?.trim() || undefined,
+      expiryDate: input.expiryDate?.trim() || undefined,
+      receivedDate: input.receivedDate?.trim() || undefined,
+      wasteReason: request.kind === "wastage" ? input.wasteReason : undefined,
+      wasteShift: request.kind === "wastage" ? input.wasteShift : undefined,
+      wasteStation:
+        request.kind === "wastage" ? input.wasteStation?.trim() || undefined : undefined,
+    },
+  };
+
+  const correctedResult = await recordInventoryMutation(db, snapshot, correctedMutation);
+
+  await markInventoryRequestRejected(
+    db,
+    request.id,
+    buildInventoryActionNote(
+      request.note,
+      "Corrected",
+      actor.name,
+      reason,
+      correctedResult.event.request.reference,
+    ),
+  );
+
+  return {
+    snapshot: await loadSnapshot(db),
+    replacementRequest: correctedResult.event.request,
+    reversalRequest: reversalResult.event.request,
+  };
+}
+
+export async function deleteInventoryRequestInD1(
+  db: D1Database,
+  actorId: string,
+  input: DeleteInventoryRequest,
+): Promise<InventoryActionResponse> {
+  await ensureDatabaseReady(db);
+
+  let snapshot = await loadSnapshot(db);
+  const request = await loadInventoryRequestActionRow(db, input.requestId);
+  if (!request) {
+    throw new Error("The selected inventory entry could not be found.");
+  }
+
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    inventoryPermissionForKind(request.kind),
+    "You do not have permission to delete this inventory entry.",
+  );
+
+  let reversalRequest: InventoryRequest | undefined;
+  if (request.status === "posted") {
+    const quantityBefore =
+      request.kind === "stock-count" ? await loadFirstLedgerBefore(db, request.id) : null;
+    const reversalMutation = buildReversalMutation(
+      actor.id,
+      request,
+      "Deleted from Inventory OPS.",
+      quantityBefore,
+    );
+    const reversalResult = await recordInventoryMutation(db, snapshot, reversalMutation);
+    snapshot = reversalResult.snapshot;
+    reversalRequest = reversalResult.event.request;
+  }
+
+  await markInventoryRequestDeleted(
+    db,
+    request.id,
+    actor.id,
+    buildInventoryActionNote(
+      request.note,
+      "Deleted",
+      actor.name,
+      "Entry was removed from Inventory OPS.",
+      reversalRequest?.reference,
+    ),
+  );
+
+  return {
+    snapshot: await loadSnapshot(db),
+    reversalRequest,
+  };
+}
+
 export async function applyMutationsToD1(
   db: D1Database,
   mutations: MutationEnvelope[],
@@ -2732,26 +3715,7 @@ export async function applyMutationsToD1(
     }
 
     try {
-      const nextSeq = snapshot.syncCursor + 1;
-      const previewCounters = new Map<string, number>();
-      applyMutation(snapshot, mutation, {
-        idFactory: (prefix: string) => {
-          const nextValue = (previewCounters.get(prefix) ?? 0) + 1;
-          previewCounters.set(prefix, nextValue);
-          return `${prefix}-preview-${nextValue}`;
-        },
-        referenceFactory: () => `PREVIEW-${nextSeq}`,
-        nextSeq,
-      });
-
-      const context = await buildMutationContext(db, mutation, previewCounters);
-      const result = applyMutation(snapshot, mutation, {
-        idFactory: context.idFactory,
-        referenceFactory: () => context.reference,
-        nextSeq,
-      });
-
-      await persistMutationResult(db, mutation, result.event, context);
+      const result = await recordInventoryMutation(db, snapshot, mutation);
       snapshot = result.snapshot;
       appliedMutationIds.push(mutation.clientMutationId);
       events.push(result.event);

@@ -386,6 +386,28 @@ export interface CreateItemResponse {
   snapshot: InventorySnapshot;
 }
 
+export interface UpdateItemRequest {
+  itemId: string;
+  sku: string;
+  barcode: string;
+  name: string;
+  category: string;
+  unit: string;
+  supplierId: string;
+  costPrice: number;
+  sellingPrice: number;
+  status: RecordStatus;
+}
+
+export interface UpdateItemResponse {
+  item: Item;
+  snapshot: InventorySnapshot;
+}
+
+export interface DeleteItemRequest {
+  itemId: string;
+}
+
 export interface CreateSupplierRequest {
   code: string;
   name: string;
@@ -400,6 +422,25 @@ export interface CreateSupplierResponse {
   snapshot: InventorySnapshot;
 }
 
+export interface UpdateSupplierRequest {
+  supplierId: string;
+  code: string;
+  name: string;
+  email: string;
+  phone: string;
+  leadTimeDays: number;
+  status: RecordStatus;
+}
+
+export interface UpdateSupplierResponse {
+  supplier: Supplier;
+  snapshot: InventorySnapshot;
+}
+
+export interface DeleteSupplierRequest {
+  supplierId: string;
+}
+
 export interface CreateLocationRequest {
   code: string;
   name: string;
@@ -410,6 +451,49 @@ export interface CreateLocationRequest {
 
 export interface CreateLocationResponse {
   location: Location;
+  snapshot: InventorySnapshot;
+}
+
+export interface UpdateLocationRequest {
+  locationId: string;
+  code: string;
+  name: string;
+  type: LocationType;
+  city: string;
+  status: RecordStatus;
+}
+
+export interface UpdateLocationResponse {
+  location: Location;
+  snapshot: InventorySnapshot;
+}
+
+export interface DeleteLocationRequest {
+  locationId: string;
+}
+
+export interface UpdateMarketPriceRequest {
+  marketPriceId: string;
+  itemId: string;
+  category: PriceCategory;
+  locationId: string;
+  supplierId?: string;
+  quotedPrice: number;
+  sourceName: string;
+  marketDate: string;
+  note: string;
+}
+
+export interface UpdateMarketPriceResponse {
+  entry: MarketPriceEntry;
+  snapshot: InventorySnapshot;
+}
+
+export interface DeleteMarketPriceRequest {
+  marketPriceId: string;
+}
+
+export interface DeleteSnapshotResponse {
   snapshot: InventorySnapshot;
 }
 
@@ -506,13 +590,47 @@ export interface ProfileResponse {
   payload: BootstrapPayload;
 }
 
+export interface ReverseInventoryRequest {
+  requestId: string;
+  reason: string;
+}
+
+export interface DeleteInventoryRequest {
+  requestId: string;
+}
+
+export interface EditInventoryRequest {
+  requestId: string;
+  reason: string;
+  itemId: string;
+  quantity: number;
+  note: string;
+  barcode?: string;
+  supplierId?: string;
+  fromLocationId?: string;
+  toLocationId?: string;
+  countedQuantity?: number;
+  lotCode?: string;
+  expiryDate?: string;
+  receivedDate?: string;
+  wasteReason?: WasteReason;
+  wasteShift?: ShiftKey;
+  wasteStation?: string;
+}
+
+export interface InventoryActionResponse {
+  snapshot: InventorySnapshot;
+  replacementRequest?: InventoryRequest;
+  reversalRequest?: InventoryRequest;
+}
+
 export type RealtimeMessage =
   | { type: "hello"; cursor: number }
   | { type: "event"; event: SyncEvent }
   | { type: "pong"; cursor: number }
   | {
       type: "snapshot-refresh";
-      scope: "market-prices" | "master-data";
+      scope: "inventory-ops" | "market-prices" | "master-data";
       triggeredAt: string;
     }
   | { type: "error"; message: string };

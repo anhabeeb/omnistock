@@ -9,6 +9,12 @@ import {
   createUserInD1,
   createMarketPriceEntryInD1,
   createSupplierInD1,
+  deleteInventoryRequestInD1,
+  deleteItemInD1,
+  deleteLocationInD1,
+  deleteMarketPriceEntryInD1,
+  deleteSupplierInD1,
+  editInventoryRequestInD1,
   ensureDatabaseReady,
   initializeSystemInD1,
   isSystemInitialized,
@@ -18,18 +24,29 @@ import {
   logoutSessionInD1,
   pullChangesFromD1,
   removeUserInD1,
+  reverseInventoryRequestInD1,
   resetUserPasswordInD1,
+  updateItemInD1,
+  updateLocationInD1,
+  updateMarketPriceEntryInD1,
   updateOwnProfileInD1,
+  updateSupplierInD1,
   updateUserInD1,
 } from "./lib/database";
 import type {
   ActivateSuperadminRequest,
   ChangeOwnPasswordRequest,
+  DeleteInventoryRequest,
+  DeleteItemRequest,
+  DeleteLocationRequest,
+  DeleteMarketPriceRequest,
+  DeleteSupplierRequest,
   CreateItemRequest,
   CreateLocationRequest,
   CreateUserRequest,
   CreateMarketPriceRequest,
   CreateSupplierRequest,
+  EditInventoryRequest,
   InitializeSystemRequest,
   LoginRequest,
   RemoveUserRequest,
@@ -37,7 +54,12 @@ import type {
   PullRequest,
   PushRequest,
   RealtimeMessage,
+  ReverseInventoryRequest,
+  UpdateItemRequest,
+  UpdateLocationRequest,
+  UpdateMarketPriceRequest,
   UpdateOwnProfileRequest,
+  UpdateSupplierRequest,
   UpdateUserRequest,
 } from "../shared/types";
 
@@ -276,6 +298,50 @@ export class OmniStockHub extends DurableObject<Env> {
     return json(response);
   }
 
+  private async handleUpdateItem(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<UpdateItemRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      updateItemInD1(this.env.OMNISTOCK_DB, actorId, body),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "master-data",
+      triggeredAt: response.item.updatedAt,
+    });
+
+    return json(response);
+  }
+
+  private async handleDeleteItem(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<DeleteItemRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      deleteItemInD1(this.env.OMNISTOCK_DB, actorId, body),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "master-data",
+      triggeredAt: new Date().toISOString(),
+    });
+
+    return json(response);
+  }
+
   private async handleCreateSupplier(request: Request): Promise<Response> {
     let actorId = "";
     try {
@@ -287,6 +353,50 @@ export class OmniStockHub extends DurableObject<Env> {
     const body = await readJson<CreateSupplierRequest>(request);
     const response = await this.ctx.blockConcurrencyWhile(() =>
       createSupplierInD1(this.env.OMNISTOCK_DB, actorId, body),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "master-data",
+      triggeredAt: new Date().toISOString(),
+    });
+
+    return json(response);
+  }
+
+  private async handleUpdateSupplier(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<UpdateSupplierRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      updateSupplierInD1(this.env.OMNISTOCK_DB, actorId, body),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "master-data",
+      triggeredAt: new Date().toISOString(),
+    });
+
+    return json(response);
+  }
+
+  private async handleDeleteSupplier(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<DeleteSupplierRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      deleteSupplierInD1(this.env.OMNISTOCK_DB, actorId, body),
     );
 
     this.broadcast({
@@ -314,6 +424,160 @@ export class OmniStockHub extends DurableObject<Env> {
     this.broadcast({
       type: "snapshot-refresh",
       scope: "master-data",
+      triggeredAt: new Date().toISOString(),
+    });
+
+    return json(response);
+  }
+
+  private async handleUpdateLocation(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<UpdateLocationRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      updateLocationInD1(this.env.OMNISTOCK_DB, actorId, body),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "master-data",
+      triggeredAt: new Date().toISOString(),
+    });
+
+    return json(response);
+  }
+
+  private async handleDeleteLocation(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<DeleteLocationRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      deleteLocationInD1(this.env.OMNISTOCK_DB, actorId, body),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "master-data",
+      triggeredAt: new Date().toISOString(),
+    });
+
+    return json(response);
+  }
+
+  private async handleUpdateMarketPrice(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<UpdateMarketPriceRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      updateMarketPriceEntryInD1(this.env.OMNISTOCK_DB, actorId, body),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "market-prices",
+      triggeredAt: response.entry.createdAt,
+    });
+
+    return json(response);
+  }
+
+  private async handleDeleteMarketPrice(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<DeleteMarketPriceRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      deleteMarketPriceEntryInD1(this.env.OMNISTOCK_DB, actorId, body),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "market-prices",
+      triggeredAt: new Date().toISOString(),
+    });
+
+    return json(response);
+  }
+
+  private async handleReverseInventoryRequest(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<ReverseInventoryRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      reverseInventoryRequestInD1(this.env.OMNISTOCK_DB, actorId, body),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "inventory-ops",
+      triggeredAt: new Date().toISOString(),
+    });
+
+    return json(response);
+  }
+
+  private async handleEditInventoryRequest(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<EditInventoryRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      editInventoryRequestInD1(this.env.OMNISTOCK_DB, actorId, body),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "inventory-ops",
+      triggeredAt: new Date().toISOString(),
+    });
+
+    return json(response);
+  }
+
+  private async handleDeleteInventoryRequest(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<DeleteInventoryRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      deleteInventoryRequestInD1(this.env.OMNISTOCK_DB, actorId, body),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "inventory-ops",
       triggeredAt: new Date().toISOString(),
     });
 
@@ -539,16 +803,60 @@ export class OmniStockHub extends DurableObject<Env> {
         return this.handleCreateMarketPrice(request);
       }
 
+      if (request.method === "PATCH" && url.pathname === "/market-prices") {
+        return this.handleUpdateMarketPrice(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/market-prices/delete") {
+        return this.handleDeleteMarketPrice(request);
+      }
+
       if (request.method === "POST" && url.pathname === "/items") {
         return this.handleCreateItem(request);
+      }
+
+      if (request.method === "PATCH" && url.pathname === "/items") {
+        return this.handleUpdateItem(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/items/delete") {
+        return this.handleDeleteItem(request);
       }
 
       if (request.method === "POST" && url.pathname === "/suppliers") {
         return this.handleCreateSupplier(request);
       }
 
+      if (request.method === "PATCH" && url.pathname === "/suppliers") {
+        return this.handleUpdateSupplier(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/suppliers/delete") {
+        return this.handleDeleteSupplier(request);
+      }
+
       if (request.method === "POST" && url.pathname === "/locations") {
         return this.handleCreateLocation(request);
+      }
+
+      if (request.method === "PATCH" && url.pathname === "/locations") {
+        return this.handleUpdateLocation(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/locations/delete") {
+        return this.handleDeleteLocation(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/inventory/reverse") {
+        return this.handleReverseInventoryRequest(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/inventory/edit") {
+        return this.handleEditInventoryRequest(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/inventory/delete") {
+        return this.handleDeleteInventoryRequest(request);
       }
 
       if (request.method === "POST" && url.pathname === "/auth/login") {
