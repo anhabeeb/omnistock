@@ -58,6 +58,7 @@ interface CreateFormState {
 }
 
 type SettingsFormState = UpdateSettingsRequest;
+type SettingsTabKey = "environment" | "permissions";
 
 const ADMIN_SECTIONS = [
   {
@@ -210,6 +211,8 @@ export function AdminPage({
   const [settingsForm, setSettingsForm] = useState<SettingsFormState>(() =>
     buildSettingsState(snapshot),
   );
+  const [settingsTab, setSettingsTab] = useState<SettingsTabKey>("environment");
+  const [selectedRoleDraft, setSelectedRoleDraft] = useState<Role>(currentUser.role);
   const [settingsFeedback, setSettingsFeedback] = useState<string>();
   const [newPassword, setNewPassword] = useState("");
   const [feedback, setFeedback] = useState<string>();
@@ -301,6 +304,12 @@ export function AdminPage({
     snapshot.settings.enableBarcode,
     snapshot.settings.strictFefo,
   ]);
+
+  useEffect(() => {
+    setSelectedRoleDraft((current) =>
+      (Object.keys(ROLE_PRESETS) as Role[]).includes(current) ? current : currentUser.role,
+    );
+  }, [currentUser.role]);
 
   function patchCreate<K extends keyof CreateFormState>(key: K, value: CreateFormState[K]) {
     setCreateForm((current) => ({ ...current, [key]: value }));
@@ -1158,157 +1167,213 @@ export function AdminPage({
       ) : null}
 
       {activeSection.slug === "settings" ? (
-        <section className="split-grid">
-          <article className="panel">
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">Settings</p>
-                <h2>Environment Controls</h2>
-              </div>
-              <span className="status-chip neutral">
-                {canEditEnvironmentSettings
-                  ? settingsDirty
-                    ? "Unsaved changes"
-                    : "Editable"
-                  : "View only"}
-              </span>
-            </div>
-            <div className="page-stack">
-              <p className="helper-text">
-                Control the live environment behavior used by offline mode, realtime sync,
-                barcode workflows, FEFO enforcement, and alert thresholds.
-              </p>
-              <div className="table-toolbar" style={{ marginBottom: "16px", justifyContent: "flex-start" }}>
-                <input
-                  className="table-search"
-                  style={{ maxWidth: "280px" }}
-                  value={settingsForm.timezone}
-                  disabled={!canEditEnvironmentSettings || submitting === "settings"}
-                  onChange={(event) => patchSettings("timezone", event.target.value)}
-                  placeholder="Timezone"
-                />
-                <input
-                  type="number"
-                  min="0"
-                  value={settingsForm.lowStockThreshold}
-                  disabled={!canEditEnvironmentSettings || submitting === "settings"}
-                  onChange={(event) =>
-                    patchSettings("lowStockThreshold", Number(event.target.value || 0))
-                  }
-                  placeholder="Low stock threshold"
-                />
-                <input
-                  type="number"
-                  min="0"
-                  value={settingsForm.expiryAlertDays}
-                  disabled={!canEditEnvironmentSettings || submitting === "settings"}
-                  onChange={(event) =>
-                    patchSettings("expiryAlertDays", Number(event.target.value || 0))
-                  }
-                  placeholder="Expiry alert days"
-                />
-              </div>
-              <div className="stack-list">
-                <label className="list-row">
-                  <div>
-                    <strong>Offline Mode</strong>
-                    <p>IndexedDB queue and cached snapshots stay available during outages.</p>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settingsForm.enableOffline}
-                    disabled={!canEditEnvironmentSettings || submitting === "settings"}
-                    onChange={(event) => patchSettings("enableOffline", event.target.checked)}
-                  />
-                </label>
-                <label className="list-row">
-                  <div>
-                    <strong>Realtime Sync</strong>
-                    <p>WebSocket listeners keep shared stock events and dashboards up to date.</p>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settingsForm.enableRealtime}
-                    disabled={!canEditEnvironmentSettings || submitting === "settings"}
-                    onChange={(event) => patchSettings("enableRealtime", event.target.checked)}
-                  />
-                </label>
-                <label className="list-row">
-                  <div>
-                    <strong>Barcode Capture</strong>
-                    <p>Enable camera and handheld barcode workflows on supported devices.</p>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settingsForm.enableBarcode}
-                    disabled={!canEditEnvironmentSettings || submitting === "settings"}
-                    onChange={(event) => patchSettings("enableBarcode", event.target.checked)}
-                  />
-                </label>
-                <label className="list-row">
-                  <div>
-                    <strong>Strict FEFO</strong>
-                    <p>Force outbound flows to prioritize the earliest valid-expiry stock first.</p>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settingsForm.strictFefo}
-                    disabled={!canEditEnvironmentSettings || submitting === "settings"}
-                    onChange={(event) => patchSettings("strictFefo", event.target.checked)}
-                  />
-                </label>
-              </div>
-              {settingsFeedback ? <p className="feedback-copy">{settingsFeedback}</p> : null}
-              {canEditEnvironmentSettings ? (
-                <div className="button-row">
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={!settingsDirty || submitting === "settings"}
-                    onClick={() => {
-                      setSettingsForm(buildSettingsState(snapshot));
-                      setSettingsFeedback(undefined);
-                    }}
-                  >
-                    Reset
-                  </button>
-                  <button
-                    type="button"
-                    className="primary-button"
-                    disabled={!settingsDirty || submitting === "settings"}
-                    onClick={() => void handleSaveSettings()}
-                  >
-                    {submitting === "settings" ? "Saving..." : "Save environment"}
-                  </button>
-                </div>
-              ) : (
-                <p className="helper-text">
-                  Grant <strong>Edit environment settings</strong> to let this user change these
-                  controls.
-                </p>
-              )}
-            </div>
-          </article>
+        <section className="page-stack">
+          <div className="settings-tab-row" role="tablist" aria-label="Settings views">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={settingsTab === "environment"}
+              className={`settings-tab-button${settingsTab === "environment" ? " is-active" : ""}`}
+              onClick={() => setSettingsTab("environment")}
+            >
+              Environment Controls
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={settingsTab === "permissions"}
+              className={`settings-tab-button${settingsTab === "permissions" ? " is-active" : ""}`}
+              onClick={() => setSettingsTab("permissions")}
+            >
+              Role Permission Editor
+            </button>
+          </div>
 
-          <article className="panel">
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">Permission Matrix</p>
-                <h2>Role Permission Editor</h2>
+          {settingsTab === "environment" ? (
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="eyebrow">Settings</p>
+                  <h2>Environment Controls</h2>
+                </div>
+                <span className="status-chip neutral">
+                  {canEditEnvironmentSettings
+                    ? settingsDirty
+                      ? "Unsaved changes"
+                      : "Editable"
+                    : "View only"}
+                </span>
               </div>
-              <span className="status-chip neutral">
-                {canEditRolePermissions ? "Editable" : "View only"}
-              </span>
-            </div>
-            <div className="page-stack">
-              <p className="helper-text">
-                Every role now shows its individual permissions. Changes here update the default
-                access granted by that role, while user-specific overrides stay separate.
-              </p>
-              {(Object.keys(ROLE_PRESETS) as Role[]).map((role) => renderRolePermissionEditor(role))}
+              <div className="page-stack">
+                <p className="helper-text">
+                  Control the live environment behavior used by offline mode, realtime sync,
+                  barcode workflows, FEFO enforcement, and alert thresholds.
+                </p>
+                <div className="settings-fields-grid">
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Timezone</span>
+                    <input
+                      value={settingsForm.timezone}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) => patchSettings("timezone", event.target.value)}
+                      placeholder="Timezone"
+                    />
+                  </label>
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Low Stock Threshold</span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={settingsForm.lowStockThreshold}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchSettings("lowStockThreshold", Number(event.target.value || 0))
+                      }
+                      placeholder="Low stock threshold"
+                    />
+                  </label>
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Expiry Alert Days</span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={settingsForm.expiryAlertDays}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchSettings("expiryAlertDays", Number(event.target.value || 0))
+                      }
+                      placeholder="Expiry alert days"
+                    />
+                  </label>
+                </div>
+                <div className="settings-toggle-grid">
+                  <label className="settings-toggle-card">
+                    <div>
+                      <strong>Offline Mode</strong>
+                      <p>IndexedDB queue and cached snapshots stay available during outages.</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.enableOffline}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) => patchSettings("enableOffline", event.target.checked)}
+                    />
+                  </label>
+                  <label className="settings-toggle-card">
+                    <div>
+                      <strong>Realtime Sync</strong>
+                      <p>WebSocket listeners keep shared stock events and dashboards up to date.</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.enableRealtime}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) => patchSettings("enableRealtime", event.target.checked)}
+                    />
+                  </label>
+                  <label className="settings-toggle-card">
+                    <div>
+                      <strong>Barcode Capture</strong>
+                      <p>Enable camera and handheld barcode workflows on supported devices.</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.enableBarcode}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) => patchSettings("enableBarcode", event.target.checked)}
+                    />
+                  </label>
+                  <label className="settings-toggle-card">
+                    <div>
+                      <strong>Strict FEFO</strong>
+                      <p>Force outbound flows to prioritize the earliest valid-expiry stock first.</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.strictFefo}
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={(event) => patchSettings("strictFefo", event.target.checked)}
+                    />
+                  </label>
+                </div>
+                {settingsFeedback ? <p className="feedback-copy">{settingsFeedback}</p> : null}
+                {canEditEnvironmentSettings ? (
+                  <div className="button-row">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={!settingsDirty || submitting === "settings"}
+                      onClick={() => {
+                        setSettingsForm(buildSettingsState(snapshot));
+                        setSettingsFeedback(undefined);
+                      }}
+                    >
+                      Reset
+                    </button>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      disabled={!settingsDirty || submitting === "settings"}
+                      onClick={() => void handleSaveSettings()}
+                    >
+                      {submitting === "settings" ? "Saving..." : "Save environment"}
+                    </button>
+                  </div>
+                ) : (
+                  <p className="helper-text">
+                    Grant <strong>Edit environment settings</strong> to let this user change these
+                    controls.
+                  </p>
+                )}
+              </div>
+            </article>
+          ) : null}
+
+          {settingsTab === "permissions" ? (
+            <section className="page-stack">
+              <article className="panel">
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">Permission Matrix</p>
+                    <h2>Role Permission Editor</h2>
+                  </div>
+                  <span className="status-chip neutral">
+                    {canEditRolePermissions ? "Editable" : "View only"}
+                  </span>
+                </div>
+                <div className="page-stack">
+                  <p className="helper-text">
+                    Select a role to review or edit its exact permission set. User-specific
+                    overrides stay separate from these defaults.
+                  </p>
+                  <div className="settings-role-toolbar">
+                    <label className="settings-role-picker">
+                      <span className="settings-field-label">Role</span>
+                      <select
+                        value={selectedRoleDraft}
+                        onChange={(event) => setSelectedRoleDraft(event.target.value as Role)}
+                      >
+                        {(Object.keys(ROLE_PRESETS) as Role[]).map((role) => (
+                          <option key={role} value={role}>
+                            {ROLE_PRESETS[role].label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <span className="status-chip neutral">
+                      {permissionCountLabel(
+                        selectedRoleDraft === "superadmin"
+                          ? snapshot.rolePermissions.superadmin
+                          : rolePermissionDrafts[selectedRoleDraft],
+                      )}
+                    </span>
+                  </div>
+                </div>
+              </article>
+              {renderRolePermissionEditor(selectedRoleDraft)}
               {feedback ? <p className="feedback-copy">{feedback}</p> : null}
-            </div>
-          </article>
+            </section>
+          ) : null}
         </section>
       ) : null}
 

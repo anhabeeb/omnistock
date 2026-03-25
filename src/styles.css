@@ -1184,6 +1184,114 @@ a {
   margin: 0;
 }
 
+.settings-tab-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.settings-tab-button {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: rgba(15, 23, 42, 0.38);
+  color: var(--text-soft);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+:root[data-theme="light"] .settings-tab-button {
+  background: rgba(248, 250, 252, 0.88);
+}
+
+.settings-tab-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.settings-tab-button.is-active {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(37, 99, 235, 0.24));
+  border-color: rgba(59, 130, 246, 0.4);
+  color: var(--text-main);
+}
+
+.settings-fields-grid,
+.settings-toggle-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-fields-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.settings-toggle-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-field-card,
+.settings-toggle-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: rgba(15, 23, 42, 0.52);
+  box-shadow: var(--shadow-sm);
+}
+
+:root[data-theme="light"] .settings-field-card,
+:root[data-theme="light"] .settings-toggle-card {
+  background: rgba(248, 250, 252, 0.94);
+}
+
+.settings-field-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+}
+
+.settings-field-label {
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+.settings-toggle-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 16px;
+}
+
+.settings-toggle-card p,
+.settings-toggle-card strong {
+  margin: 0;
+}
+
+.settings-role-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-role-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(240px, 100%);
+}
+
+.settings-role-picker select {
+  width: 100%;
+}
+
 .dashboard-movement-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -2286,6 +2394,11 @@ textarea {
 
   .detail-list-wide {
     grid-column: auto;
+  }
+
+  .settings-fields-grid,
+  .settings-toggle-grid {
+    grid-template-columns: 1fr;
   }
 
   .table-toolbar,
