@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { totalOnHand } from "../../shared/selectors";
+import { findItemByBarcode, totalOnHand } from "../../shared/selectors";
 import type {
   CreateItemRequest,
   CreateLocationRequest,
@@ -16,6 +16,7 @@ import type {
   Supplier,
   User,
 } from "../../shared/types";
+import { BarcodeScanner } from "../components/BarcodeScanner";
 import { exportMarketPrices } from "../lib/export";
 import { formatCurrency, formatDateTime } from "../lib/format";
 
@@ -213,6 +214,7 @@ export function MasterDataPage({
   const activeSection = MASTER_SECTIONS.find((section) => section.slug === activeSlug) ?? MASTER_SECTIONS[0];
   const [search, setSearch] = useState("");
   const [entryOpen, setEntryOpen] = useState(false);
+  const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false);
   const [itemForm, setItemForm] = useState<ItemFormState>(() => defaultItemForm(snapshot));
   const [supplierForm, setSupplierForm] = useState<SupplierFormState>(defaultSupplierForm);
   const [locationForm, setLocationForm] = useState<LocationFormState>(defaultLocationForm);
@@ -233,6 +235,7 @@ export function MasterDataPage({
     setSupplierForm(defaultSupplierForm());
     setLocationForm(defaultLocationForm());
     setEntryOpen(false);
+    setBarcodeScannerOpen(false);
     setFeedback(undefined);
   }, [activeSection.slug, snapshot.generatedAt]);
 
@@ -331,6 +334,7 @@ export function MasterDataPage({
 
   function openEntryModal() {
     setFeedback(undefined);
+    setBarcodeScannerOpen(false);
 
     if (activeSection.slug === "items") {
       setItemForm(defaultItemForm(snapshot));
@@ -341,6 +345,42 @@ export function MasterDataPage({
     }
 
     setEntryOpen(true);
+  }
+
+  function handleItemBarcodeDetected(value: string) {
+    const normalized = value.trim();
+    if (!normalized) {
+      return;
+    }
+
+    const match = findItemByBarcode(snapshot, normalized);
+    setItemForm((current) => ({
+      ...current,
+      barcode: normalized,
+      sku: current.sku || match?.sku || "",
+      name: current.name || match?.name || "",
+      category: current.category || match?.category || "",
+      unit: current.unit === "pcs" && match?.unit ? match.unit : current.unit,
+      supplierId: current.supplierId || match?.supplierId || "",
+      costPrice:
+        match && (current.costPrice === "0" || !current.costPrice)
+          ? String(match.costPrice)
+          : current.costPrice,
+      sellingPrice:
+        match && (current.sellingPrice === "0" || !current.sellingPrice)
+          ? String(match.sellingPrice)
+          : current.sellingPrice,
+    }));
+
+    if (match) {
+      setFeedback(
+        `Matched existing item ${match.name} (${match.sku}). Review the filled details before saving.`,
+      );
+    } else {
+      setFeedback(`Captured barcode ${normalized}. Complete the remaining item details and save.`);
+    }
+
+    setBarcodeScannerOpen(false);
   }
 
   function handleItemSelection(itemId: string) {
@@ -579,7 +619,7 @@ export function MasterDataPage({
               <p className="eyebrow">Item Catalog</p>
               <h2>SKU Registry</h2>
             </div>
-            <div className="button-row">
+            <div className="table-toolbar">
               <input
                 className="table-search"
                 value={search}
@@ -632,7 +672,7 @@ export function MasterDataPage({
               <p className="eyebrow">Suppliers</p>
               <h2>Approved Vendor Directory</h2>
             </div>
-            <div className="button-row">
+            <div className="table-toolbar">
               <input
                 className="table-search"
                 value={search}
@@ -681,7 +721,7 @@ export function MasterDataPage({
               <p className="eyebrow">Facilities</p>
               <h2>Warehouses & Outlets</h2>
             </div>
-            <div className="button-row">
+            <div className="table-toolbar">
               <input
                 className="table-search"
                 value={search}
@@ -908,7 +948,7 @@ export function MasterDataPage({
             }
           }}
         >
-          <div className="page-popup-card" onClick={(event) => event.stopPropagation()}>
+          <div className="page-popup-card entry-popup-card" onClick={(event) => event.stopPropagation()}>
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Master Data Entry</p>
@@ -946,14 +986,25 @@ export function MasterDataPage({
                   />
                 </label>
 
-                <label className="field">
+                <div className="field field-wide">
                   <span>Barcode</span>
-                  <input
-                    value={itemForm.barcode}
-                    onChange={(event) => patchItem("barcode", event.target.value)}
-                    placeholder="1234567890123"
-                  />
-                </label>
+                  <div className="barcode-field-toolbar">
+                    <input
+                      value={itemForm.barcode}
+                      onChange={(event) => patchItem("barcode", event.target.value)}
+                      placeholder="1234567890123"
+                    />
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => setBarcodeScannerOpen((current) => !current)}
+                    >
+                      {barcodeScannerOpen ? "Hide Scanner" : "Scan Barcode"}
+                    </button>
+                  </div>
+                </div>
+
+                {barcodeScannerOpen ? <BarcodeScanner onDetected={handleItemBarcodeDetected} /> : null}
 
                 <label className="field">
                   <span>Category</span>

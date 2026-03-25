@@ -928,11 +928,13 @@ a {
   background: rgba(255, 255, 255, 0.98);
 }
 
-.inventory-popup-card .scanner-panel {
+.inventory-popup-card .scanner-panel,
+.entry-popup-card .scanner-panel {
   margin-top: 18px;
 }
 
-.inventory-popup-card .form-grid {
+.inventory-popup-card .form-grid,
+.entry-popup-card .form-grid {
   margin-top: 18px;
 }
 
@@ -1504,6 +1506,27 @@ textarea {
 
 .table-search {
   width: min(320px, 100%);
+}
+
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: 1 1 360px;
+  min-width: 0;
+}
+
+.table-toolbar .table-search {
+  flex: 1 1 260px;
+  width: auto;
+  min-width: 0;
+}
+
+.barcode-field-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
 }
 
 .document-preview {
@@ -2141,6 +2164,13 @@ textarea {
   .stock-grid,
   .scanner-manual {
     grid-template-columns: 1fr;
+  }
+
+  .table-toolbar,
+  .barcode-field-toolbar {
+    grid-template-columns: 1fr;
+    display: grid;
+    width: 100%;
   }
 
   .dashboard-movement-card {

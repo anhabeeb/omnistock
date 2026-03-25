@@ -26,6 +26,7 @@ import CalendarMonthRoundedIcon from "@mui/icons-material/CalendarMonthRounded";
 import ChevronRightRoundedIcon from "@mui/icons-material/ChevronRightRounded";
 import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
 import PersonOutlineRoundedIcon from "@mui/icons-material/PersonOutlineRounded";
+import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 import { MODULES, ROLE_PRESETS, canAccessModule } from "../shared/permissions";
 import { AppNotificationCenter } from "./components/AppNotificationCenter";
@@ -55,12 +56,20 @@ import { LoginPage } from "./pages/LoginPage";
 import { MasterDataPage } from "./pages/MasterDataPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { ReportsPage } from "./pages/ReportsPage";
+import { SearchPage } from "./pages/SearchPage";
 
 const SIDEBAR_WIDTH = 236;
 
 const PROFILE_VIEW = {
   label: "My Profile",
   description: "Update your personal information and password.",
+};
+
+const SEARCH_ROUTE = "/search";
+const SEARCH_VIEW = {
+  label: "Item Lookup",
+  description:
+    "Quickly scan or search an item to review live quantity, movements, waste, supply sources, and market prices.",
 };
 
 const MODULE_ICONS = {
@@ -224,6 +233,7 @@ export default function App() {
       );
     } else {
       const viewingProfile = location.pathname.startsWith("/profile");
+      const viewingSearch = location.pathname.startsWith(SEARCH_ROUTE);
       const activeModule =
         visibleModules.find((module) => moduleIsActive(location.pathname, module.path)) ??
         visibleModules[0];
@@ -232,9 +242,11 @@ export default function App() {
         .find((subpage) => subpage.path === location.pathname);
       const activeView = viewingProfile
         ? PROFILE_VIEW
-        : activeSubpage
-          ? { label: activeSubpage.label, description: activeSubpage.description }
-          : activeModule;
+        : viewingSearch
+          ? SEARCH_VIEW
+          : activeSubpage
+            ? { label: activeSubpage.label, description: activeSubpage.description }
+            : activeModule;
       const assignedCodes = snapshot.locations
         .filter((locationEntry) => currentUser.assignedLocationIds.includes(locationEntry.id))
         .map((locationEntry) => locationEntry.code)
@@ -252,15 +264,23 @@ export default function App() {
             array.findIndex((candidate) => candidate.to === entry.to) === index,
         )
         .slice(0, 3);
-      const breadcrumbRoot = viewingProfile ? "Account" : activeModule?.label ?? "Workspace";
+      const breadcrumbRoot = viewingProfile
+        ? "Account"
+        : viewingSearch
+          ? "Search"
+          : activeModule?.label ?? "Workspace";
       const breadcrumbLeaf = viewingProfile
         ? "Profile"
-        : activeSubpage?.label ??
-          (activeModule?.key === "dashboard" ? "Home" : activeModule?.label ?? "Workspace");
+        : viewingSearch
+          ? SEARCH_VIEW.label
+          : activeSubpage?.label ??
+            (activeModule?.key === "dashboard" ? "Home" : activeModule?.label ?? "Workspace");
       const pageHeading =
         viewingProfile
           ? "Profile"
-          : activeModule?.key === "dashboard" && !activeSubpage
+          : viewingSearch
+            ? SEARCH_VIEW.label
+            : activeModule?.key === "dashboard" && !activeSubpage
             ? "Overview"
             : activeView.label;
       const liveStatusLabel = syncState.online
@@ -347,6 +367,46 @@ export default function App() {
 
           <Box sx={{ flex: 1, overflowY: "auto", pr: 0.5 }}>
             <List disablePadding sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+              <ListItemButton
+                selected={viewingSearch}
+                onClick={() => {
+                  navigate(SEARCH_ROUTE);
+                  setMobileMenuOpen(false);
+                }}
+                sx={{
+                  minHeight: 40,
+                  px: 1.25,
+                  borderRadius: 2,
+                  color: viewingSearch ? "text.primary" : "text.secondary",
+                  bgcolor:
+                    viewingSearch
+                      ? muiTheme.palette.mode === "dark"
+                        ? alpha(muiTheme.palette.common.white, 0.12)
+                        : alpha(muiTheme.palette.text.primary, 0.08)
+                      : "transparent",
+                  "&.Mui-selected": {
+                    bgcolor:
+                      muiTheme.palette.mode === "dark"
+                        ? alpha(muiTheme.palette.common.white, 0.12)
+                        : alpha(muiTheme.palette.text.primary, 0.08),
+                  },
+                  "&:hover": {
+                    bgcolor:
+                      muiTheme.palette.mode === "dark"
+                        ? alpha(muiTheme.palette.common.white, 0.08)
+                        : alpha(muiTheme.palette.text.primary, 0.05),
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 32, color: "inherit" }}>
+                  <SearchRoundedIcon sx={{ fontSize: 17 }} />
+                </ListItemIcon>
+                <ListItemText
+                  primary="Search"
+                  primaryTypographyProps={{ fontWeight: 700, fontSize: "0.95rem" }}
+                />
+              </ListItemButton>
+
               {sidebarModules.map((module) => {
                 const Icon = MODULE_ICONS[module.key];
                 const active = moduleIsActive(location.pathname, module.path);
@@ -796,6 +856,10 @@ export default function App() {
                     />
                   </>
                 ) : null}
+                <Route
+                  path={SEARCH_ROUTE}
+                  element={<SearchPage snapshot={snapshot} currentUser={currentUser} />}
+                />
                 <Route
                   path="/profile"
                   element={
