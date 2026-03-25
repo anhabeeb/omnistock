@@ -9,6 +9,11 @@ import type {
   UpdateUserRequest,
   User,
 } from "../../shared/types";
+import {
+  DATE_FILTER_OPTIONS,
+  type DateFilterPreset,
+  matchesDateFilter,
+} from "../lib/dateFilters";
 import { formatDateTime } from "../lib/format";
 
 interface Props {
@@ -116,6 +121,14 @@ export function AdminPage({
   const location = useLocation();
   const activeSlug = location.pathname.split("/")[2] ?? ADMIN_SECTIONS[0].slug;
   const activeSection = ADMIN_SECTIONS.find((section) => section.slug === activeSlug) ?? ADMIN_SECTIONS[0];
+  const [userSearch, setUserSearch] = useState("");
+  const [userRoleFilter, setUserRoleFilter] = useState<"all" | Role>("all");
+  const [userStatusFilter, setUserStatusFilter] = useState<"all" | User["status"]>("all");
+  const [activitySearch, setActivitySearch] = useState("");
+  const [activityModuleFilter, setActivityModuleFilter] = useState<"all" | InventorySnapshot["activity"][number]["module"]>("all");
+  const [activityDatePreset, setActivityDatePreset] = useState<DateFilterPreset>("all");
+  const [activityStartDate, setActivityStartDate] = useState("");
+  const [activityEndDate, setActivityEndDate] = useState("");
   const [selectedUserId, setSelectedUserId] = useState(snapshot.users[0]?.id ?? "");
   const [createForm, setCreateForm] = useState<CreateFormState>(buildCreateState);
   const [editForm, setEditForm] = useState<UserFormState | null>(
@@ -129,6 +142,39 @@ export function AdminPage({
     () => snapshot.users.find((user) => user.id === selectedUserId) ?? snapshot.users[0] ?? null,
     [selectedUserId, snapshot.users],
   );
+  const filteredUsers = useMemo(() => {
+    const normalizedSearch = userSearch.trim().toLowerCase();
+    return snapshot.users.filter((user) => {
+      const matchesRole = userRoleFilter === "all" ? true : user.role === userRoleFilter;
+      const matchesStatus = userStatusFilter === "all" ? true : user.status === userStatusFilter;
+      const matchesSearch =
+        !normalizedSearch ||
+        `${user.name} ${user.username} ${user.email}`.toLowerCase().includes(normalizedSearch);
+      return matchesRole && matchesStatus && matchesSearch;
+    });
+  }, [snapshot.users, userRoleFilter, userSearch, userStatusFilter]);
+  const filteredActivity = useMemo(() => {
+    const normalizedSearch = activitySearch.trim().toLowerCase();
+    return snapshot.activity.filter((entry) => {
+      const matchesModule = activityModuleFilter === "all" ? true : entry.module === activityModuleFilter;
+      const matchesDate = matchesDateFilter(entry.createdAt, {
+        preset: activityDatePreset,
+        customStartDate: activityStartDate,
+        customEndDate: activityEndDate,
+      });
+      const matchesSearch =
+        !normalizedSearch ||
+        `${entry.title} ${entry.detail} ${entry.actorName}`.toLowerCase().includes(normalizedSearch);
+      return matchesModule && matchesDate && matchesSearch;
+    });
+  }, [
+    activityDatePreset,
+    activityEndDate,
+    activityModuleFilter,
+    activitySearch,
+    activityStartDate,
+    snapshot.activity,
+  ]);
 
   useEffect(() => {
     if (!selectedUser) {
@@ -263,7 +309,7 @@ export function AdminPage({
 
   return (
     <div className="page-stack">
-      <section className="hero-panel">
+      <section className="page-intro">
         <div>
           <p className="eyebrow">Administration</p>
           <h1>{activeSection.title}</h1>
@@ -296,6 +342,31 @@ export function AdminPage({
                 <h2>Role Directory</h2>
               </div>
             </div>
+            <div className="table-toolbar" style={{ marginBottom: "16px", justifyContent: "flex-start" }}>
+              <input
+                className="table-search"
+                value={userSearch}
+                onChange={(event) => setUserSearch(event.target.value)}
+                placeholder="Search name, username, or email"
+              />
+              <select value={userRoleFilter} onChange={(event) => setUserRoleFilter(event.target.value as "all" | Role)}>
+                <option value="all">All roles</option>
+                {(Object.keys(ROLE_PRESETS) as Role[]).map((role) => (
+                  <option key={role} value={role}>
+                    {ROLE_PRESETS[role].label}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={userStatusFilter}
+                onChange={(event) => setUserStatusFilter(event.target.value as "all" | User["status"])}
+              >
+                <option value="all">All statuses</option>
+                <option value="active">Active</option>
+                <option value="invited">Inactive</option>
+                <option value="archived">Archived</option>
+              </select>
+            </div>
             <div className="table-wrap">
               <table className="data-table">
                 <thead>
@@ -311,7 +382,7 @@ export function AdminPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {snapshot.users.map((user) => (
+                  {filteredUsers.map((user) => (
                     <tr key={user.id}>
                       <td>
                         {user.name}
@@ -717,8 +788,55 @@ export function AdminPage({
               <h2>Recent Activity</h2>
             </div>
           </div>
+          <div className="table-toolbar" style={{ marginBottom: "16px", justifyContent: "flex-start" }}>
+            <input
+              className="table-search"
+              value={activitySearch}
+              onChange={(event) => setActivitySearch(event.target.value)}
+              placeholder="Search title, detail, or actor"
+            />
+            <select
+              value={activityModuleFilter}
+              onChange={(event) =>
+                setActivityModuleFilter(
+                  event.target.value as "all" | InventorySnapshot["activity"][number]["module"],
+                )
+              }
+            >
+              <option value="all">All modules</option>
+              <option value="dashboard">Dashboard</option>
+              <option value="inventoryOps">Inventory OPS</option>
+              <option value="masterData">Master Data</option>
+              <option value="reports">Reports</option>
+              <option value="administration">Administration</option>
+            </select>
+            <select
+              value={activityDatePreset}
+              onChange={(event) => setActivityDatePreset(event.target.value as DateFilterPreset)}
+            >
+              {DATE_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            {activityDatePreset === "custom" ? (
+              <>
+                <input
+                  type="date"
+                  value={activityStartDate}
+                  onChange={(event) => setActivityStartDate(event.target.value)}
+                />
+                <input
+                  type="date"
+                  value={activityEndDate}
+                  onChange={(event) => setActivityEndDate(event.target.value)}
+                />
+              </>
+            ) : null}
+          </div>
           <div className="timeline">
-            {snapshot.activity.slice(0, 12).map((entry) => (
+            {filteredActivity.slice(0, 16).map((entry) => (
               <div key={entry.id} className="timeline-item">
                 <div className={`timeline-dot tone-${entry.severity}`} />
                 <div>
@@ -730,6 +848,9 @@ export function AdminPage({
                 </div>
               </div>
             ))}
+            {filteredActivity.length === 0 ? (
+              <p className="empty-copy">No activity matched the current filters.</p>
+            ) : null}
           </div>
         </section>
       ) : null}

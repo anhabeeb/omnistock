@@ -10,8 +10,6 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Typography,
-  alpha,
-  useTheme,
 } from "@mui/material";
 import type { SyncState } from "../lib/useOmniStockApp";
 
@@ -38,7 +36,6 @@ const MODE_COPY: Record<AuthMode, { title: string; button: string; helper: strin
 };
 
 export function LoginPage({ syncState, onLogin, onActivateSuperadmin }: Props) {
-  const theme = useTheme();
   const [mode, setMode] = useState<AuthMode>("login");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -70,16 +67,7 @@ export function LoginPage({ syncState, onLogin, onActivateSuperadmin }: Props) {
   return (
     <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", p: { xs: 2, md: 3 } }}>
       <Stack spacing={2.5} sx={{ width: "min(1120px, 100%)" }}>
-        <Paper
-          sx={{
-            p: { xs: 2.5, md: 3 },
-            borderRadius: 4,
-            background:
-              theme.palette.mode === "dark"
-                ? alpha(theme.palette.background.paper, 0.88)
-                : alpha(theme.palette.background.paper, 0.92),
-          }}
-        >
+        <Box sx={{ px: { xs: 0.25, md: 0.5 }, py: { xs: 0.5, md: 0.75 } }}>
           <Stack direction={{ xs: "column", lg: "row" }} justifyContent="space-between" spacing={2}>
             <Box>
               <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
@@ -100,7 +88,7 @@ export function LoginPage({ syncState, onLogin, onActivateSuperadmin }: Props) {
               <Chip variant="outlined" label={`Realtime ${syncState.websocket}`} />
             </Stack>
           </Stack>
-        </Paper>
+        </Box>
 
         <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", xl: "minmax(0, 1fr) minmax(360px, 0.9fr)" } }}>
           <Paper sx={{ p: { xs: 2.25, md: 3 }, borderRadius: 4 }}>

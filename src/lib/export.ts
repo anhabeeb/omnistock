@@ -1,9 +1,28 @@
 import type { MarketPriceEntry, MovementLedgerEntry, WasteEntry } from "../../shared/types";
 
-export async function exportMovementLedger(entries: MovementLedgerEntry[]) {
+export interface WorkbookSheet {
+  name: string;
+  rows: Array<Record<string, string | number | boolean | null | undefined>>;
+}
+
+export async function exportWorkbook(sheets: WorkbookSheet[], filename: string) {
   const XLSX = await import("xlsx");
-  const worksheet = XLSX.utils.json_to_sheet(
-    entries.map((entry) => ({
+  const workbook = XLSX.utils.book_new();
+
+  for (const sheet of sheets) {
+    const worksheet = XLSX.utils.json_to_sheet(sheet.rows);
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name);
+  }
+
+  XLSX.writeFile(workbook, filename);
+}
+
+export async function exportMovementLedger(entries: MovementLedgerEntry[]) {
+  await exportWorkbook(
+    [
+      {
+        name: "Movement Ledger",
+        rows: entries.map((entry) => ({
       Reference: entry.reference,
       Item: entry.itemName,
       Location: entry.locationName,
@@ -14,18 +33,19 @@ export async function exportMovementLedger(entries: MovementLedgerEntry[]) {
       Actor: entry.actorName,
       "Created At": entry.createdAt,
       Note: entry.note,
-    })),
+        })),
+      },
+    ],
+    `omnistock-movement-ledger-${new Date().toISOString().slice(0, 10)}.xlsx`,
   );
-
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Movement Ledger");
-  XLSX.writeFile(workbook, `omnistock-movement-ledger-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 export async function exportMarketPrices(entries: MarketPriceEntry[]) {
-  const XLSX = await import("xlsx");
-  const worksheet = XLSX.utils.json_to_sheet(
-    entries.map((entry) => ({
+  await exportWorkbook(
+    [
+      {
+        name: "Market Prices",
+        rows: entries.map((entry) => ({
       "Market Date": entry.marketDate,
       Category: entry.category,
       Item: entry.itemName,
@@ -39,18 +59,19 @@ export async function exportMarketPrices(entries: MarketPriceEntry[]) {
       CapturedBy: entry.capturedByName,
       Note: entry.note,
       "Created At": entry.createdAt,
-    })),
+        })),
+      },
+    ],
+    `omnistock-market-prices-${new Date().toISOString().slice(0, 10)}.xlsx`,
   );
-
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Market Prices");
-  XLSX.writeFile(workbook, `omnistock-market-prices-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 export async function exportWasteEntries(entries: WasteEntry[]) {
-  const XLSX = await import("xlsx");
-  const worksheet = XLSX.utils.json_to_sheet(
-    entries.map((entry) => ({
+  await exportWorkbook(
+    [
+      {
+        name: "Waste Tracker",
+        rows: entries.map((entry) => ({
       Item: entry.itemName,
       Location: entry.locationName,
       Quantity: entry.quantity,
@@ -64,12 +85,11 @@ export async function exportWasteEntries(entries: WasteEntry[]) {
       ReportedBy: entry.reportedByName,
       Note: entry.note,
       "Created At": entry.createdAt,
-    })),
+        })),
+      },
+    ],
+    `omnistock-waste-tracker-${new Date().toISOString().slice(0, 10)}.xlsx`,
   );
-
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Waste Tracker");
-  XLSX.writeFile(workbook, `omnistock-waste-tracker-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 export function printCurrentPage() {

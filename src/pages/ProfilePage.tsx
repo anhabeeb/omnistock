@@ -8,8 +8,6 @@ import {
   Stack,
   TextField,
   Typography,
-  alpha,
-  useTheme,
 } from "@mui/material";
 import { ROLE_PRESETS } from "../../shared/permissions";
 import type {
@@ -33,7 +31,6 @@ export function ProfilePage({
   onUpdateProfile,
   onChangePassword,
 }: Props) {
-  const theme = useTheme();
   const [name, setName] = useState(currentUser.name);
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -91,16 +88,7 @@ export function ProfilePage({
 
   return (
     <Stack spacing={2.5}>
-      <Paper
-        sx={{
-          p: { xs: 2.5, md: 3 },
-          borderRadius: 4,
-          background:
-            theme.palette.mode === "dark"
-              ? alpha(theme.palette.background.paper, 0.88)
-              : alpha(theme.palette.background.paper, 0.92),
-        }}
-      >
+      <Box sx={{ px: { xs: 0.25, md: 0.5 }, py: { xs: 0.5, md: 0.75 } }}>
         <Stack
           direction={{ xs: "column", lg: "row" }}
           justifyContent="space-between"
@@ -129,7 +117,7 @@ export function ProfilePage({
             <Chip variant="outlined" label={`Last active ${formatDateTime(currentUser.lastSeenAt)}`} />
           </Stack>
         </Stack>
-      </Paper>
+      </Box>
 
       {feedback ? <Alert severity="info">{feedback}</Alert> : null}
 

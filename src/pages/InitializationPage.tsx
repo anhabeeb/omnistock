@@ -14,8 +14,6 @@ import {
   Stepper,
   TextField,
   Typography,
-  alpha,
-  useTheme,
 } from "@mui/material";
 import type { InitializeSystemRequest } from "../../shared/types";
 import type { SyncState } from "../lib/useOmniStockApp";
@@ -115,7 +113,6 @@ function userFields(prefix: "superadmin" | "admin" | "manager" | "worker") {
 }
 
 export function InitializationPage({ syncState, onInitialize }: Props) {
-  const theme = useTheme();
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<FormState>(defaultForm);
   const [feedback, setFeedback] = useState<string>();
@@ -345,16 +342,7 @@ export function InitializationPage({ syncState, onInitialize }: Props) {
   return (
     <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", p: { xs: 2, md: 3 } }}>
       <Stack spacing={2.5} sx={{ width: "min(1180px, 100%)" }}>
-        <Paper
-          sx={{
-            p: { xs: 2.5, md: 3 },
-            borderRadius: 4,
-            background:
-              theme.palette.mode === "dark"
-                ? alpha(theme.palette.background.paper, 0.88)
-                : alpha(theme.palette.background.paper, 0.92),
-          }}
-        >
+        <Box sx={{ px: { xs: 0.25, md: 0.5 }, py: { xs: 0.5, md: 0.75 } }}>
           <Stack direction={{ xs: "column", lg: "row" }} justifyContent="space-between" spacing={2}>
             <Box>
               <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
@@ -374,7 +362,7 @@ export function InitializationPage({ syncState, onInitialize }: Props) {
               <Chip variant="outlined" label={`Step ${step + 1} / 4 - ${STEPS[step]}`} />
             </Stack>
           </Stack>
-        </Paper>
+        </Box>
 
         <Paper sx={{ p: { xs: 2.25, md: 3 }, borderRadius: 4 }}>
           <Stack spacing={2.5}>

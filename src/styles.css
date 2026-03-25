@@ -944,6 +944,13 @@ a {
   gap: 18px;
 }
 
+.page-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.95fr);
+  gap: 18px;
+  padding: 4px 2px 0;
+}
+
 .hero-copy {
   margin: 10px 0 0;
 }
@@ -2086,6 +2093,7 @@ textarea {
   }
 
   .hero-panel,
+  .page-intro,
   .split-grid,
   .dashboard-main-grid {
     grid-template-columns: 1fr;

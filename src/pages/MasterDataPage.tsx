@@ -17,6 +17,11 @@ import type {
   User,
 } from "../../shared/types";
 import { BarcodeScanner } from "../components/BarcodeScanner";
+import {
+  DATE_FILTER_OPTIONS,
+  type DateFilterPreset,
+  matchesDateFilter,
+} from "../lib/dateFilters";
 import { exportMarketPrices } from "../lib/export";
 import { formatCurrency, formatDateTime } from "../lib/format";
 
@@ -215,6 +220,13 @@ export function MasterDataPage({
   const [search, setSearch] = useState("");
   const [entryOpen, setEntryOpen] = useState(false);
   const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false);
+  const [itemStatusFilter, setItemStatusFilter] = useState<"all" | RecordStatus>("all");
+  const [supplierStatusFilter, setSupplierStatusFilter] = useState<"all" | RecordStatus>("all");
+  const [locationTypeFilter, setLocationTypeFilter] = useState<"all" | LocationType>("all");
+  const [marketCategoryFilter, setMarketCategoryFilter] = useState<"all" | PriceCategory>("all");
+  const [marketDatePreset, setMarketDatePreset] = useState<DateFilterPreset>("all");
+  const [marketStartDate, setMarketStartDate] = useState("");
+  const [marketEndDate, setMarketEndDate] = useState("");
   const [itemForm, setItemForm] = useState<ItemFormState>(() => defaultItemForm(snapshot));
   const [supplierForm, setSupplierForm] = useState<SupplierFormState>(defaultSupplierForm);
   const [locationForm, setLocationForm] = useState<LocationFormState>(defaultLocationForm);
@@ -231,6 +243,14 @@ export function MasterDataPage({
       }
       return defaultPriceForm(snapshot);
     });
+    setSearch("");
+    setItemStatusFilter("all");
+    setSupplierStatusFilter("all");
+    setLocationTypeFilter("all");
+    setMarketCategoryFilter("all");
+    setMarketDatePreset("all");
+    setMarketStartDate("");
+    setMarketEndDate("");
     setItemForm(defaultItemForm(snapshot));
     setSupplierForm(defaultSupplierForm());
     setLocationForm(defaultLocationForm());
@@ -246,7 +266,7 @@ export function MasterDataPage({
 
     const previousOverflow = document.body.style.overflow;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !submittingEntry) {
+      if (event.key === "Escape" && !submittingEntry && !savingPrice) {
         setEntryOpen(false);
       }
     };
@@ -257,15 +277,16 @@ export function MasterDataPage({
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [entryOpen, submittingEntry]);
+  }, [entryOpen, savingPrice, submittingEntry]);
 
   const filteredItems = snapshot.items.filter((item) => {
+    const matchesStatus = itemStatusFilter === "all" ? true : item.status === itemStatusFilter;
     if (!deferredSearch.trim()) {
-      return true;
+      return matchesStatus;
     }
 
     const value = deferredSearch.toLowerCase();
-    return (
+    return matchesStatus && (
       item.name.toLowerCase().includes(value) ||
       item.sku.toLowerCase().includes(value) ||
       item.barcode.includes(value)
@@ -273,12 +294,14 @@ export function MasterDataPage({
   });
 
   const filteredSuppliers = snapshot.suppliers.filter((supplier) => {
+    const matchesStatus =
+      supplierStatusFilter === "all" ? true : supplier.status === supplierStatusFilter;
     if (!deferredSearch.trim()) {
-      return true;
+      return matchesStatus;
     }
 
     const value = deferredSearch.toLowerCase();
-    return (
+    return matchesStatus && (
       supplier.name.toLowerCase().includes(value) ||
       supplier.code.toLowerCase().includes(value) ||
       supplier.email.toLowerCase().includes(value) ||
@@ -287,12 +310,13 @@ export function MasterDataPage({
   });
 
   const filteredLocations = snapshot.locations.filter((locationEntry) => {
+    const matchesType = locationTypeFilter === "all" ? true : locationEntry.type === locationTypeFilter;
     if (!deferredSearch.trim()) {
-      return true;
+      return matchesType;
     }
 
     const value = deferredSearch.toLowerCase();
-    return (
+    return matchesType && (
       locationEntry.name.toLowerCase().includes(value) ||
       locationEntry.code.toLowerCase().includes(value) ||
       locationEntry.city.toLowerCase().includes(value) ||
@@ -300,15 +324,37 @@ export function MasterDataPage({
     );
   });
 
-  const recentPrices = snapshot.marketPrices.slice(0, 10);
+  const filteredMarketPrices = snapshot.marketPrices.filter((entry) => {
+    const matchesCategory =
+      marketCategoryFilter === "all" ? true : entry.category === marketCategoryFilter;
+    const matchesDate = matchesDateFilter(entry.marketDate, {
+      preset: marketDatePreset,
+      customStartDate: marketStartDate,
+      customEndDate: marketEndDate,
+    });
+    if (!deferredSearch.trim()) {
+      return matchesCategory && matchesDate;
+    }
+
+    const value = deferredSearch.toLowerCase();
+    return matchesCategory && matchesDate && (
+      entry.itemName.toLowerCase().includes(value) ||
+      entry.locationName.toLowerCase().includes(value) ||
+      (entry.supplierName ?? "").toLowerCase().includes(value) ||
+      labelForCategory(entry.category).toLowerCase().includes(value) ||
+      entry.sourceName.toLowerCase().includes(value) ||
+      entry.marketDate.includes(value)
+    );
+  });
+
   const today = new Date().toISOString().slice(0, 10);
   const todayPrices = snapshot.marketPrices.filter((entry) => entry.marketDate === today);
   const volatilePrices = snapshot.marketPrices.filter(
     (entry) => Math.abs(entry.variancePct ?? 0) >= 5,
   );
-  const selectedItem = snapshot.items.find((item) => item.id === priceForm.itemId);
   const warehouses = snapshot.locations.filter((locationEntry) => locationEntry.type === "warehouse");
   const outlets = snapshot.locations.filter((locationEntry) => locationEntry.type === "outlet");
+  const popupBusy = submittingEntry || savingPrice;
 
   function patch<K extends keyof PriceFormState>(key: K, value: PriceFormState[K]) {
     setPriceForm((current) => ({ ...current, [key]: value }));
@@ -342,6 +388,8 @@ export function MasterDataPage({
       setSupplierForm(defaultSupplierForm());
     } else if (activeSection.slug === "locations") {
       setLocationForm(defaultLocationForm());
+    } else if (activeSection.slug === "market-prices") {
+      setPriceForm(defaultPriceForm(snapshot));
     }
 
     setEntryOpen(true);
@@ -423,12 +471,8 @@ export function MasterDataPage({
           snapshot.settings.currency,
         )}.`,
       );
-      setPriceForm((current) => ({
-        ...current,
-        quotedPrice: selectedItem ? String(selectedItem.costPrice) : "",
-        sourceName: "Daily market sheet",
-        note: "",
-      }));
+      setPriceForm(defaultPriceForm(snapshot));
+      setEntryOpen(false);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not save the market rate.");
     } finally {
@@ -591,7 +635,7 @@ export function MasterDataPage({
 
   return (
     <div className="page-stack">
-      <section className="hero-panel">
+      <section className="page-intro">
         <div>
           <p className="eyebrow">Master Data</p>
           <h1>{activeSection.title}</h1>
@@ -626,6 +670,17 @@ export function MasterDataPage({
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Filter by item, SKU, or barcode"
               />
+              <select
+                value={itemStatusFilter}
+                onChange={(event) => setItemStatusFilter(event.target.value as "all" | RecordStatus)}
+              >
+                <option value="all">All statuses</option>
+                {CREATE_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
               <button type="button" className="primary-button" onClick={openEntryModal}>
                 {addButtonLabelForSection(activeSection.slug)}
               </button>
@@ -679,6 +734,17 @@ export function MasterDataPage({
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search supplier, code, email, or phone"
               />
+              <select
+                value={supplierStatusFilter}
+                onChange={(event) => setSupplierStatusFilter(event.target.value as "all" | RecordStatus)}
+              >
+                <option value="all">All statuses</option>
+                {CREATE_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
               <button type="button" className="primary-button" onClick={openEntryModal}>
                 {addButtonLabelForSection(activeSection.slug)}
               </button>
@@ -728,6 +794,14 @@ export function MasterDataPage({
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search code, location, city, or type"
               />
+              <select
+                value={locationTypeFilter}
+                onChange={(event) => setLocationTypeFilter(event.target.value as "all" | LocationType)}
+              >
+                <option value="all">All types</option>
+                <option value="warehouse">Warehouse</option>
+                <option value="outlet">Outlet</option>
+              </select>
               <button type="button" className="primary-button" onClick={openEntryModal}>
                 {addButtonLabelForSection(activeSection.slug)}
               </button>
@@ -761,189 +835,115 @@ export function MasterDataPage({
       ) : null}
 
       {activeSection.slug === "market-prices" ? (
-        <>
-          <section className="split-grid">
-            <article className="panel">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Restaurant Buying</p>
-                  <h2>Capture Market Rate</h2>
-                </div>
-                <span className="status-chip neutral">{snapshot.marketPrices.length} logged rates</span>
-              </div>
-
-              <form className="form-grid compact-form" onSubmit={handleCreateMarketPrice}>
-                <label className="field">
-                  <span>Item</span>
-                  <select
-                    value={priceForm.itemId}
-                    onChange={(event) => handleItemSelection(event.target.value)}
-                  >
-                    {snapshot.items.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="field">
-                  <span>Market category</span>
-                  <select
-                    value={priceForm.category}
-                    onChange={(event) => patch("category", event.target.value as PriceCategory)}
-                  >
-                    {PRICE_CATEGORIES.map((category) => (
-                      <option key={category} value={category}>
-                        {labelForCategory(category)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="field">
-                  <span>Location</span>
-                  <select
-                    value={priceForm.locationId}
-                    onChange={(event) => patch("locationId", event.target.value)}
-                  >
-                    {snapshot.locations.map((locationEntry) => (
-                      <option key={locationEntry.id} value={locationEntry.id}>
-                        {locationEntry.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="field">
-                  <span>Supplier</span>
-                  <select
-                    value={priceForm.supplierId}
-                    onChange={(event) => patch("supplierId", event.target.value)}
-                  >
-                    <option value="">No supplier</option>
-                    {snapshot.suppliers.map((supplier) => (
-                      <option key={supplier.id} value={supplier.id}>
-                        {supplier.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="field">
-                  <span>Quoted price</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={priceForm.quotedPrice}
-                    onChange={(event) => patch("quotedPrice", event.target.value)}
-                  />
-                </label>
-
-                <label className="field">
-                  <span>Market date</span>
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Restaurant Buying</p>
+              <h2>Daily Market Price Tracker</h2>
+            </div>
+            <div className="table-toolbar">
+              <input
+                className="table-search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search item, supplier, location, source, or date"
+              />
+              <select
+                value={marketCategoryFilter}
+                onChange={(event) => setMarketCategoryFilter(event.target.value as "all" | PriceCategory)}
+              >
+                <option value="all">All categories</option>
+                {PRICE_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>
+                    {labelForCategory(category)}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={marketDatePreset}
+                onChange={(event) => setMarketDatePreset(event.target.value as DateFilterPreset)}
+              >
+                {DATE_FILTER_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              {marketDatePreset === "custom" ? (
+                <>
                   <input
                     type="date"
-                    value={priceForm.marketDate}
-                    onChange={(event) => patch("marketDate", event.target.value)}
+                    value={marketStartDate}
+                    onChange={(event) => setMarketStartDate(event.target.value)}
                   />
-                </label>
-
-                <label className="field">
-                  <span>Source</span>
                   <input
-                    value={priceForm.sourceName}
-                    onChange={(event) => patch("sourceName", event.target.value)}
-                    placeholder="Market board, supplier call, or Excel import reference"
+                    type="date"
+                    value={marketEndDate}
+                    onChange={(event) => setMarketEndDate(event.target.value)}
                   />
-                </label>
-
-                <label className="field field-wide">
-                  <span>Note</span>
-                  <textarea
-                    rows={4}
-                    value={priceForm.note}
-                    onChange={(event) => patch("note", event.target.value)}
-                    placeholder="Capture delivery assumptions, freight notes, or supplier context."
-                  />
-                </label>
-
-                <div className="button-row">
-                  <button type="submit" className="primary-button" disabled={savingPrice}>
-                    {savingPrice ? "Saving..." : "Save Market Rate"}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={exporting}
-                    onClick={() => void handleExportMarketPrices()}
-                  >
-                    {exporting ? "Exporting..." : "Export Price History"}
-                  </button>
-                </div>
-              </form>
-
-              {feedback ? <p className="feedback-copy">{feedback}</p> : null}
-            </article>
-
-            <article className="panel">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Market Sheet</p>
-                  <h2>Latest Price Entries</h2>
-                </div>
-              </div>
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Item</th>
-                      <th>Location</th>
-                      <th>Quoted Price</th>
-                      <th>Variance</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentPrices.map((entry) => (
-                      <tr key={entry.id}>
-                        <td>
-                          {entry.marketDate}
-                          <small>{entry.sourceName}</small>
-                        </td>
-                        <td>
-                          {entry.itemName}
-                          <small>{labelForCategory(entry.category)}</small>
-                        </td>
-                        <td>{entry.locationName}</td>
-                        <td>{formatCurrency(entry.quotedPrice, snapshot.settings.currency)}</td>
-                        <td className={(entry.variancePct ?? 0) > 0 ? "text-warning" : "text-positive"}>
-                          {entry.variancePct === undefined
-                            ? "New"
-                            : `${entry.variancePct > 0 ? "+" : ""}${entry.variancePct.toFixed(2)}%`}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {recentPrices[0] ? (
-                <p className="feedback-copy">
-                  Latest shared market capture was posted by {recentPrices[0].capturedByName} on{" "}
-                  {formatDateTime(recentPrices[0].createdAt)}.
-                </p>
+                </>
               ) : null}
-            </article>
-          </section>
-        </>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={exporting}
+                onClick={() => void handleExportMarketPrices()}
+              >
+                {exporting ? "Exporting..." : "Export Price History"}
+              </button>
+              <button type="button" className="primary-button" onClick={openEntryModal}>
+                {addButtonLabelForSection(activeSection.slug)}
+              </button>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Item</th>
+                  <th>Supplier / Location</th>
+                  <th>Quoted Price</th>
+                  <th>Variance</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredMarketPrices.map((entry) => (
+                  <tr key={entry.id}>
+                    <td>
+                      {entry.marketDate}
+                      <small>{formatDateTime(entry.createdAt)}</small>
+                    </td>
+                    <td>
+                      {entry.itemName}
+                      <small>{labelForCategory(entry.category)}</small>
+                    </td>
+                    <td>
+                      {entry.supplierName ?? "Open market"}
+                      <small>{entry.locationName}</small>
+                    </td>
+                    <td>{formatCurrency(entry.quotedPrice, snapshot.settings.currency)}</td>
+                    <td className={(entry.variancePct ?? 0) > 0 ? "text-warning" : "text-positive"}>
+                      {entry.variancePct === undefined
+                        ? "New"
+                        : `${entry.variancePct > 0 ? "+" : ""}${entry.variancePct.toFixed(2)}%`}
+                    </td>
+                    <td>{entry.sourceName}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {feedback ? <p className="feedback-copy">{feedback}</p> : null}
+        </section>
       ) : null}
 
-      {entryOpen && activeSection.slug !== "market-prices" ? (
+      {entryOpen ? (
         <div
           className="page-popup-scrim"
           onClick={() => {
-            if (!submittingEntry) {
+            if (!popupBusy) {
               setEntryOpen(false);
             }
           }}
@@ -959,7 +959,7 @@ export function MasterDataPage({
                   type="button"
                   className="secondary-button"
                   onClick={() => setEntryOpen(false)}
-                  disabled={submittingEntry}
+                  disabled={popupBusy}
                 >
                   Close
                 </button>
@@ -1212,6 +1212,112 @@ export function MasterDataPage({
                 <div className="button-row field-wide">
                   <button type="submit" className="primary-button" disabled={submittingEntry}>
                     {submittingEntry ? "Saving..." : "Save Location"}
+                  </button>
+                </div>
+              </form>
+            ) : null}
+
+            {activeSection.slug === "market-prices" ? (
+              <form className="form-grid compact-form" onSubmit={handleCreateMarketPrice}>
+                <label className="field">
+                  <span>Item</span>
+                  <select
+                    value={priceForm.itemId}
+                    onChange={(event) => handleItemSelection(event.target.value)}
+                  >
+                    {snapshot.items.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field">
+                  <span>Market category</span>
+                  <select
+                    value={priceForm.category}
+                    onChange={(event) => patch("category", event.target.value as PriceCategory)}
+                  >
+                    {PRICE_CATEGORIES.map((category) => (
+                      <option key={category} value={category}>
+                        {labelForCategory(category)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field">
+                  <span>Location</span>
+                  <select
+                    value={priceForm.locationId}
+                    onChange={(event) => patch("locationId", event.target.value)}
+                  >
+                    {snapshot.locations.map((locationEntry) => (
+                      <option key={locationEntry.id} value={locationEntry.id}>
+                        {locationEntry.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field">
+                  <span>Supplier</span>
+                  <select
+                    value={priceForm.supplierId}
+                    onChange={(event) => patch("supplierId", event.target.value)}
+                  >
+                    <option value="">No supplier</option>
+                    {snapshot.suppliers.map((supplier) => (
+                      <option key={supplier.id} value={supplier.id}>
+                        {supplier.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field">
+                  <span>Quoted price</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={priceForm.quotedPrice}
+                    onChange={(event) => patch("quotedPrice", event.target.value)}
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Market date</span>
+                  <input
+                    type="date"
+                    value={priceForm.marketDate}
+                    onChange={(event) => patch("marketDate", event.target.value)}
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Source</span>
+                  <input
+                    value={priceForm.sourceName}
+                    onChange={(event) => patch("sourceName", event.target.value)}
+                    placeholder="Market board, supplier call, or Excel import reference"
+                  />
+                </label>
+
+                <label className="field field-wide">
+                  <span>Note</span>
+                  <textarea
+                    rows={4}
+                    value={priceForm.note}
+                    onChange={(event) => patch("note", event.target.value)}
+                    placeholder="Capture delivery assumptions, freight notes, or supplier context."
+                  />
+                </label>
+
+                <div className="button-row field-wide">
+                  <button type="submit" className="primary-button" disabled={savingPrice}>
+                    {savingPrice ? "Saving..." : "Save Market Price"}
                   </button>
                 </div>
               </form>

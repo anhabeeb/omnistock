@@ -10,6 +10,11 @@ import type {
   WasteReason,
 } from "../../shared/types";
 import { BarcodeScanner } from "../components/BarcodeScanner";
+import {
+  DATE_FILTER_OPTIONS,
+  type DateFilterPreset,
+  matchesDateFilter,
+} from "../lib/dateFilters";
 import { formatDateTime } from "../lib/format";
 import type { CreateOperationInput, SyncState } from "../lib/useOmniStockApp";
 
@@ -125,10 +130,16 @@ export function InventoryOpsPage({
     defaultForm(snapshot, currentUser, activeSection.kind),
   );
   const [searchTerm, setSearchTerm] = useState("");
+  const [logSearch, setLogSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "submitted" | "posted" | "rejected">("all");
+  const [datePreset, setDatePreset] = useState<DateFilterPreset>("all");
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
   const [feedback, setFeedback] = useState<string>();
   const [entryOpen, setEntryOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const deferredSearchTerm = useDeferredValue(searchTerm);
+  const deferredLogSearch = useDeferredValue(logSearch);
 
   useEffect(() => {
     setForm(defaultForm(snapshot, currentUser, activeSection.kind));
@@ -169,8 +180,22 @@ export function InventoryOpsPage({
     form.kind === "grn" || form.kind === "adjustment" || form.kind === "stock-count";
   const capturesWasteMetadata = form.kind === "wastage";
   const sectionRequests = snapshot.requests
-    .filter((request) => request.kind === activeSection.kind)
-    .slice(0, 12);
+    .filter((request) => {
+      const matchesKind = request.kind === activeSection.kind;
+      const matchesStatus = statusFilter === "all" ? true : request.status === statusFilter;
+      const matchesDate = matchesDateFilter(request.requestedAt, {
+        preset: datePreset,
+        customStartDate,
+        customEndDate,
+      });
+      const matchesSearch =
+        !deferredLogSearch.trim() ||
+        `${request.reference} ${request.itemName} ${request.barcode} ${request.requestedByName} ${request.fromLocationName ?? ""} ${request.toLocationName ?? ""} ${request.supplierName ?? ""}`
+          .toLowerCase()
+          .includes(deferredLogSearch.trim().toLowerCase());
+      return matchesKind && matchesStatus && matchesDate && matchesSearch;
+    })
+    .slice(0, 20);
   const logPanelId = `inventory-${activeSection.slug}-logs`;
   const visibleItems = snapshot.items.filter((item) => {
     if (!deferredSearchTerm.trim()) {
@@ -279,7 +304,7 @@ export function InventoryOpsPage({
 
   return (
     <div className="page-stack">
-      <section className="hero-panel">
+      <section className="page-intro">
         <div>
           <p className="eyebrow">Inventory OPS</p>
           <h1>{activeSection.title}</h1>
@@ -316,6 +341,43 @@ export function InventoryOpsPage({
                 Add New {activeSection.navLabel}
               </button>
             </div>
+          </div>
+
+          <div className="table-toolbar" style={{ marginBottom: "16px", justifyContent: "flex-start" }}>
+            <input
+              className="table-search"
+              value={logSearch}
+              onChange={(event) => setLogSearch(event.target.value)}
+              placeholder={`Search ${activeSection.navLabel.toLowerCase()} reference, item, barcode, or user`}
+            />
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
+              <option value="all">All statuses</option>
+              <option value="draft">Draft</option>
+              <option value="submitted">Submitted</option>
+              <option value="posted">Posted</option>
+              <option value="rejected">Rejected</option>
+            </select>
+            <select value={datePreset} onChange={(event) => setDatePreset(event.target.value as DateFilterPreset)}>
+              {DATE_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            {datePreset === "custom" ? (
+              <>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(event) => setCustomStartDate(event.target.value)}
+                />
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(event) => setCustomEndDate(event.target.value)}
+                />
+              </>
+            ) : null}
           </div>
 
           <div className="table-wrap">
