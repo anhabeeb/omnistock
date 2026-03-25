@@ -30,7 +30,6 @@ import type {
   InventoryRequest,
   InventorySnapshot,
   MarketPriceEntry,
-  User,
   WasteEntry,
 } from "../../shared/types";
 import { BarcodeScanner } from "../components/BarcodeScanner";
@@ -44,7 +43,6 @@ import {
 
 interface Props {
   snapshot: InventorySnapshot;
-  currentUser: User;
 }
 
 type MetricTone = "primary" | "success" | "warning" | "info";
@@ -61,7 +59,7 @@ function sourceLabel(request: InventoryRequest): string {
   return request.requestedByName;
 }
 
-export function SearchPage({ snapshot, currentUser }: Props) {
+export function SearchPage({ snapshot }: Props) {
   const theme = useTheme();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedItemId, setSelectedItemId] = useState<string>("");
@@ -154,8 +152,6 @@ export function SearchPage({ snapshot, currentUser }: Props) {
   const totalWasteQuantity = itemWaste.reduce((sum, entry) => sum + entry.quantity, 0);
   const totalWasteCost = itemWaste.reduce((sum, entry) => sum + entry.estimatedCost, 0);
   const latestPrice = itemPrices[0];
-  const assignedLocationCount =
-    currentUser.assignedLocationIds.length || snapshot.locations.length;
   const metricCards: Array<{
     label: string;
     value: string;
@@ -252,31 +248,6 @@ export function SearchPage({ snapshot, currentUser }: Props) {
             snapshot with quantity, supply source, movement, waste, and market price history.
           </Typography>
         </Box>
-
-        <Paper sx={{ p: 2.25, borderRadius: 3, minWidth: { xl: 320 } }}>
-          <Stack spacing={1.1}>
-            <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800 }}>
-              Search Scope
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {currentUser.name} can review {assignedLocationCount} assigned locations with{" "}
-              {formatCompactNumber(snapshot.items.length)} catalog items ready for lookup.
-            </Typography>
-            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-              <Chip
-                size="small"
-                color={snapshot.settings.enableBarcode ? "primary" : "default"}
-                variant={snapshot.settings.enableBarcode ? "filled" : "outlined"}
-                label={snapshot.settings.enableBarcode ? "Barcode enabled" : "Barcode disabled"}
-              />
-              <Chip
-                size="small"
-                variant="outlined"
-                label={`${snapshot.marketPrices.length} price points`}
-              />
-            </Stack>
-          </Stack>
-        </Paper>
       </Stack>
 
       <Paper sx={{ p: 2.75, borderRadius: 3 }}>
@@ -347,24 +318,21 @@ export function SearchPage({ snapshot, currentUser }: Props) {
         sx={{
           display: "grid",
           gap: 2,
-          gridTemplateColumns: { xs: "1fr", xl: "minmax(300px, 0.75fr) minmax(0, 1.55fr)" },
+          gridTemplateColumns: selectedItem
+            ? { xs: "1fr", xl: "minmax(300px, 0.75fr) minmax(0, 1.55fr)" }
+            : "1fr",
           alignItems: "start",
         }}
       >
         <Paper sx={{ p: 2.25, borderRadius: 3 }}>
           <Stack spacing={1.5}>
             <Stack direction="row" justifyContent="space-between" alignItems="center">
-              <Box>
-                <Typography
-                  variant="overline"
-                  sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}
-                >
-                  Search Results
-                </Typography>
-                <Typography variant="h6" sx={{ mt: 0.4 }}>
-                  Matching Items
-                </Typography>
-              </Box>
+              <Typography
+                variant="overline"
+                sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}
+              >
+                Search Results
+              </Typography>
               <Chip size="small" variant="outlined" label={`${filteredItems.length} found`} />
             </Stack>
 
@@ -952,31 +920,7 @@ export function SearchPage({ snapshot, currentUser }: Props) {
               </Stack>
             </Paper>
           </Stack>
-        ) : (
-          <Paper sx={{ p: 3, borderRadius: 3 }}>
-            <Stack spacing={1.5} alignItems="flex-start">
-              <Box
-                sx={{
-                  width: 48,
-                  height: 48,
-                  borderRadius: 3,
-                  display: "grid",
-                  placeItems: "center",
-                  bgcolor: alpha(theme.palette.primary.main, 0.12),
-                  color: "primary.main",
-                }}
-              >
-                <SearchRoundedIcon sx={{ fontSize: 24 }} />
-              </Box>
-              <Typography variant="h5">Choose an item to inspect</Typography>
-              <Typography variant="body1" color="text.secondary">
-                Select a result from the left, or scan a barcode to open the product details view.
-                OmniStock will then show the live quantity, movement ledger, waste history, supply
-                source, and captured market prices for that item.
-              </Typography>
-            </Stack>
-          </Paper>
-        )}
+        ) : null}
       </Box>
     </Stack>
   );

@@ -858,7 +858,7 @@ export default function App() {
                 ) : null}
                 <Route
                   path={SEARCH_ROUTE}
-                  element={<SearchPage snapshot={snapshot} currentUser={currentUser} />}
+                  element={<SearchPage snapshot={snapshot} />}
                 />
                 <Route
                   path="/profile"
