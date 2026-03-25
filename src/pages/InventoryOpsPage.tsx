@@ -1,13 +1,7 @@
 import { useDeferredValue, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { OPERATION_LABELS } from "../../shared/operations";
-import {
-  batchDaysUntilExpiry,
-  batchesForLocation,
-  findItemByBarcode,
-  isBatchExpired,
-  totalOnHand,
-} from "../../shared/selectors";
+import { findItemByBarcode } from "../../shared/selectors";
 import type {
   InventorySnapshot,
   RequestKind,
@@ -152,11 +146,11 @@ export function InventoryOpsPage({
   const capturesBatchMetadata =
     form.kind === "grn" || form.kind === "adjustment" || form.kind === "stock-count";
   const capturesWasteMetadata = form.kind === "wastage";
-  const sourceBatches =
-    selectedItem && needsSource ? batchesForLocation(selectedItem, form.fromLocationId) : [];
   const sectionRequests = snapshot.requests
     .filter((request) => request.kind === activeSection.kind)
-    .slice(0, 8);
+    .slice(0, 12);
+  const formPanelId = `inventory-${activeSection.slug}-entry`;
+  const logPanelId = `inventory-${activeSection.slug}-logs`;
   const visibleItems = snapshot.items.filter((item) => {
     if (!deferredSearchTerm.trim()) {
       return true;
@@ -186,6 +180,29 @@ export function InventoryOpsPage({
     }
 
     setFeedback(`No exact match found for ${value}. You can still search or pick manually.`);
+  }
+
+  function scrollToPanel(panelId: string) {
+    document.getElementById(panelId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function requestRouteLabel(request: (typeof sectionRequests)[number]) {
+    const fromLocationName = request.fromLocationId
+      ? snapshot.locations.find((locationEntry) => locationEntry.id === request.fromLocationId)?.name
+      : undefined;
+    const toLocationName = request.toLocationId
+      ? snapshot.locations.find((locationEntry) => locationEntry.id === request.toLocationId)?.name
+      : undefined;
+
+    if (request.kind === "transfer") {
+      return `${fromLocationName ?? "Unknown"} -> ${toLocationName ?? "Unknown"}`;
+    }
+
+    if (request.kind === "grn") {
+      return toLocationName ?? "Receiving location pending";
+    }
+
+    return fromLocationName ?? toLocationName ?? "Location not specified";
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -266,7 +283,7 @@ export function InventoryOpsPage({
       </section>
 
       <section className="split-grid">
-        <article className="panel">
+        <article className="panel" id={formPanelId}>
           <div className="panel-heading">
             <div>
               <p className="eyebrow">Operational Entry</p>
@@ -470,143 +487,88 @@ export function InventoryOpsPage({
           {feedback ? <p className="feedback-copy">{feedback}</p> : null}
         </article>
 
-        <article className="panel">
+        <article className="panel" id={logPanelId}>
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">Quick Pick</p>
-              <h2>Matched Items</h2>
-            </div>
-            <span className="status-chip neutral">
-              Expiry alerts in {snapshot.settings.expiryAlertDays} days
-            </span>
-          </div>
-
-          <div className="stack-list">
-            {visibleItems.slice(0, 6).map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`inventory-card ${form.itemId === item.id ? "selected" : ""}`}
-                onClick={() => patch("itemId", item.id)}
-              >
-                <div>
-                  <strong>{item.name}</strong>
-                  <p>
-                    {item.sku} - {item.barcode}
-                  </p>
-                </div>
-                <span>{totalOnHand(item)} on hand</span>
-              </button>
-            ))}
-          </div>
-
-          {selectedItem ? (
-            <>
-              <div className="stock-grid">
-                {selectedItem.stocks.map((stock) => (
-                  <div key={stock.locationId} className="stock-card">
-                    <span>
-                      {snapshot.locations.find((locationEntry) => locationEntry.id === stock.locationId)?.code}
-                    </span>
-                    <strong>{stock.onHand}</strong>
-                    <small>Min {stock.minLevel}</small>
-                  </div>
-                ))}
+              <div className="button-row" style={{ marginBottom: "12px" }}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => scrollToPanel(logPanelId)}
+                >
+                  Logs
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => scrollToPanel(formPanelId)}
+                >
+                  Add New {activeSection.navLabel}
+                </button>
               </div>
-
-              {needsSource && form.fromLocationId ? (
-                <div className="batch-list">
-                  <div className="panel-heading compact-heading">
-                    <div>
-                      <p className="eyebrow">FEFO Queue</p>
-                      <h3>Source batches</h3>
-                    </div>
-                  </div>
-                  {sourceBatches.length > 0 ? (
-                    sourceBatches.map((batch) => {
-                      const expired = isBatchExpired(batch);
-                      const daysUntilExpiry = batchDaysUntilExpiry(batch);
-
-                      return (
-                        <div key={batch.id} className="list-row">
-                          <div>
-                            <strong>{batch.lotCode}</strong>
-                            <p>
-                              {batch.quantity} {selectedItem.unit}
-                            </p>
-                          </div>
-                          <span
-                            className={`status-chip ${
-                              expired
-                                ? "warning"
-                                : daysUntilExpiry !== undefined &&
-                                    daysUntilExpiry <= snapshot.settings.expiryAlertDays
-                                  ? "warning"
-                                  : "neutral"
-                            }`}
-                          >
-                            {batch.expiryDate
-                              ? expired
-                                ? "Expired"
-                                : `${daysUntilExpiry}d to expiry`
-                              : "No expiry"}
-                          </span>
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <p className="empty-copy">
-                      No batch detail is available for this source location yet.
-                    </p>
-                  )}
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <p className="empty-copy">Pick an item to inspect stock by location before posting.</p>
-          )}
-        </article>
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">Recent Operations</p>
-            <h2>{activeSection.title} Log</h2>
+              <p className="eyebrow">Operation Logs</p>
+              <h2>{activeSection.navLabel} Entries</h2>
+            </div>
+            <span className="status-chip neutral">{sectionRequests.length} recent records</span>
           </div>
-        </div>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Reference</th>
-                <th>Item</th>
-                <th>Quantity</th>
-                <th>Requested By</th>
-                <th>When</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sectionRequests.map((request) => (
-                <tr key={request.id}>
-                  <td>{request.reference}</td>
-                  <td>{request.itemName}</td>
-                  <td>
-                    {request.quantity} {request.unit}
-                    {request.allocationSummary ? <small>{request.allocationSummary}</small> : null}
-                    {request.kind === "wastage" ? (
-                      <small>
-                        {request.wasteReason} - {request.wasteShift} - {request.wasteStation}
-                      </small>
-                    ) : null}
-                  </td>
-                  <td>{request.requestedByName}</td>
-                  <td>{formatDateTime(request.requestedAt)}</td>
+
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Reference</th>
+                  <th>Item</th>
+                  <th>Location / Flow</th>
+                  <th>Quantity</th>
+                  <th>Logged By</th>
+                  <th>When</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {sectionRequests.length > 0 ? (
+                  sectionRequests.map((request) => (
+                    <tr key={request.id}>
+                      <td>{request.reference}</td>
+                      <td>
+                        {request.itemName}
+                        <small>{request.barcode || "No barcode"}</small>
+                      </td>
+                      <td>
+                        {requestRouteLabel(request)}
+                        {request.supplierId && request.kind === "grn" ? (
+                          <small>
+                            Supplier:{" "}
+                            {snapshot.suppliers.find((supplier) => supplier.id === request.supplierId)?.name ??
+                              "Unknown"}
+                          </small>
+                        ) : null}
+                      </td>
+                      <td>
+                        {request.quantity} {request.unit}
+                        {request.allocationSummary ? <small>{request.allocationSummary}</small> : null}
+                        {request.kind === "wastage" ? (
+                          <small>
+                            {request.wasteReason} - {request.wasteShift} - {request.wasteStation}
+                          </small>
+                        ) : null}
+                      </td>
+                      <td>{request.requestedByName}</td>
+                      <td>{formatDateTime(request.requestedAt)}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={6}>
+                      <span className="empty-copy">
+                        No {activeSection.navLabel.toLowerCase()} records have been logged yet.
+                      </span>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </article>
       </section>
     </div>
   );
