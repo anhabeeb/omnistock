@@ -358,6 +358,13 @@ const users: User[] = [
   ),
 ];
 
+const rolePermissions: InventorySnapshot["rolePermissions"] = {
+  superadmin: [...ROLE_PRESETS.superadmin.permissions],
+  admin: [...ROLE_PRESETS.admin.permissions],
+  manager: [...ROLE_PRESETS.manager.permissions],
+  worker: [...ROLE_PRESETS.worker.permissions],
+};
+
 const marketPrices: MarketPriceEntry[] = [
   {
     id: "mpr-00001",
@@ -702,6 +709,7 @@ export function createSeedSnapshot(): InventorySnapshot {
     users: structuredClone(users),
     requests: structuredClone(requests),
     movementLedger: structuredClone(movementLedger),
+    rolePermissions: structuredClone(rolePermissions),
     activity: [
       {
         id: "act-00013",
@@ -798,6 +806,12 @@ export function createEmptySnapshot(): InventorySnapshot {
     requests: [],
     movementLedger: [],
     activity: [],
+    rolePermissions: {
+      superadmin: [...ROLE_PRESETS.superadmin.permissions],
+      admin: [...ROLE_PRESETS.admin.permissions],
+      manager: [...ROLE_PRESETS.manager.permissions],
+      worker: [...ROLE_PRESETS.worker.permissions],
+    },
     settings: {
       companyName: "OmniStock",
       currency: "PKR",

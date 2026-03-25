@@ -30,6 +30,8 @@ import {
   updateLocationInD1,
   updateMarketPriceEntryInD1,
   updateOwnProfileInD1,
+  updateSettingsInD1,
+  updateRolePermissionsInD1,
   updateSupplierInD1,
   updateUserInD1,
 } from "./lib/database";
@@ -59,6 +61,8 @@ import type {
   UpdateLocationRequest,
   UpdateMarketPriceRequest,
   UpdateOwnProfileRequest,
+  UpdateSettingsRequest,
+  UpdateRolePermissionsRequest,
   UpdateSupplierRequest,
   UpdateUserRequest,
 } from "../shared/types";
@@ -703,6 +707,38 @@ export class OmniStockHub extends DurableObject<Env> {
     );
   }
 
+  private async handleUpdateRolePermissions(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<UpdateRolePermissionsRequest>(request);
+    return json(
+      await this.ctx.blockConcurrencyWhile(() =>
+        updateRolePermissionsInD1(this.env.OMNISTOCK_DB, actorId, body),
+      ),
+    );
+  }
+
+  private async handleUpdateSettings(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<UpdateSettingsRequest>(request);
+    return json(
+      await this.ctx.blockConcurrencyWhile(() =>
+        updateSettingsInD1(this.env.OMNISTOCK_DB, actorId, body),
+      ),
+    );
+  }
+
   private async handleResetUserPassword(request: Request): Promise<Response> {
     let actorId = "";
     try {
@@ -885,6 +921,14 @@ export class OmniStockHub extends DurableObject<Env> {
 
       if (request.method === "PATCH" && url.pathname === "/users") {
         return this.handleUpdateUser(request);
+      }
+
+      if (request.method === "PATCH" && url.pathname === "/roles/permissions") {
+        return this.handleUpdateRolePermissions(request);
+      }
+
+      if (request.method === "PATCH" && url.pathname === "/settings") {
+        return this.handleUpdateSettings(request);
       }
 
       if (request.method === "POST" && url.pathname === "/users/reset-password") {

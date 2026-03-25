@@ -30,6 +30,8 @@ import type {
   RemoveUserRequest,
   ReverseInventoryRequest,
   ResetUserPasswordRequest,
+  RolePermissionsResponse,
+  SettingsResponse,
   UpdateItemRequest,
   UpdateItemResponse,
   UpdateLocationRequest,
@@ -37,6 +39,8 @@ import type {
   UpdateMarketPriceRequest,
   UpdateMarketPriceResponse,
   UpdateOwnProfileRequest,
+  UpdateSettingsRequest,
+  UpdateRolePermissionsRequest,
   UpdateSupplierRequest,
   UpdateSupplierResponse,
   UpdateUserRequest,
@@ -402,6 +406,32 @@ export async function updateUser(input: UpdateUserRequest): Promise<UserAdminRes
   });
 
   return parseJson<UserAdminResponse>(response);
+}
+
+export async function updateRolePermissions(
+  input: UpdateRolePermissionsRequest,
+): Promise<RolePermissionsResponse> {
+  const response = await fetch("/api/roles/permissions", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<RolePermissionsResponse>(response);
+}
+
+export async function updateSettings(input: UpdateSettingsRequest): Promise<SettingsResponse> {
+  const response = await fetch("/api/settings", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<SettingsResponse>(response);
 }
 
 export async function resetUserPassword(

@@ -1,11 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { MODULE_ACCESS, MODULES, ROLE_PRESETS } from "../../shared/permissions";
+import {
+  MODULE_ACCESS,
+  MODULES,
+  PERMISSION_CATALOG,
+  ROLE_PRESETS,
+  can,
+} from "../../shared/permissions";
 import type {
   CreateUserRequest,
   InventorySnapshot,
+  PermissionKey,
   ResetUserPasswordRequest,
   Role,
+  UpdateSettingsRequest,
+  UpdateRolePermissionsRequest,
   UpdateUserRequest,
   User,
 } from "../../shared/types";
@@ -21,6 +30,8 @@ interface Props {
   currentUser: User;
   onCreateUser: (input: CreateUserRequest) => Promise<void>;
   onUpdateUser: (input: UpdateUserRequest) => Promise<void>;
+  onUpdateSettings: (input: UpdateSettingsRequest) => Promise<void>;
+  onUpdateRolePermissions: (input: UpdateRolePermissionsRequest) => Promise<void>;
   onResetUserPassword: (input: ResetUserPasswordRequest) => Promise<void>;
   onRemoveUser: (userId: string) => Promise<void>;
 }
@@ -33,6 +44,7 @@ interface UserFormState {
   role: Role;
   status: User["status"];
   assignedLocationIds: string[];
+  permissions: PermissionKey[];
 }
 
 interface CreateFormState {
@@ -42,7 +54,10 @@ interface CreateFormState {
   role: Role;
   password: string;
   assignedLocationIds: string[];
+  permissions: PermissionKey[];
 }
+
+type SettingsFormState = UpdateSettingsRequest;
 
 const ADMIN_SECTIONS = [
   {
@@ -65,9 +80,25 @@ const ADMIN_SECTIONS = [
   },
 ] as const;
 
-function roleHasModule(role: Role, moduleKey: keyof typeof MODULE_ACCESS): boolean {
+const SECTION_PERMISSION: Record<(typeof ADMIN_SECTIONS)[number]["slug"], PermissionKey> = {
+  users: "admin.users.view",
+  settings: "admin.settings",
+  activity: "admin.activity",
+};
+
+const PERMISSION_GROUPS = MODULES.map((module) => ({
+  key: module.key,
+  label: module.label,
+  permissions: PERMISSION_CATALOG.filter((permission) => permission.moduleKey === module.key),
+})).filter((group) => group.permissions.length > 0);
+
+function roleHasModule(
+  rolePermissions: Record<Role, PermissionKey[]>,
+  role: Role,
+  moduleKey: keyof typeof MODULE_ACCESS,
+): boolean {
   return MODULE_ACCESS[moduleKey].some((permission) =>
-    ROLE_PRESETS[role].permissions.includes(permission),
+    rolePermissions[role].includes(permission),
   );
 }
 
@@ -80,10 +111,11 @@ function buildEditState(user: User): UserFormState {
     role: user.role,
     status: user.status,
     assignedLocationIds: [...user.assignedLocationIds],
+    permissions: [...user.permissions].sort(),
   };
 }
 
-function buildCreateState(): CreateFormState {
+function buildCreateState(rolePermissions: Record<Role, PermissionKey[]>): CreateFormState {
   return {
     name: "",
     username: "",
@@ -91,6 +123,7 @@ function buildCreateState(): CreateFormState {
     role: "worker",
     password: "",
     assignedLocationIds: [],
+    permissions: [...rolePermissions.worker],
   };
 }
 
@@ -98,6 +131,12 @@ function toggleLocation(assignedLocationIds: string[], locationId: string): stri
   return assignedLocationIds.includes(locationId)
     ? assignedLocationIds.filter((value) => value !== locationId)
     : [...assignedLocationIds, locationId];
+}
+
+function togglePermission(currentPermissions: PermissionKey[], permission: PermissionKey): PermissionKey[] {
+  return currentPermissions.includes(permission)
+    ? currentPermissions.filter((value) => value !== permission)
+    : [...currentPermissions, permission].sort();
 }
 
 function statusLabel(status: User["status"]): string {
@@ -110,17 +149,46 @@ function statusLabel(status: User["status"]): string {
   return "Archived";
 }
 
+function permissionCountLabel(permissions: PermissionKey[]): string {
+  return `${permissions.length} permission${permissions.length === 1 ? "" : "s"}`;
+}
+
+function buildSettingsState(snapshot: InventorySnapshot): SettingsFormState {
+  return {
+    timezone: snapshot.settings.timezone,
+    lowStockThreshold: snapshot.settings.lowStockThreshold,
+    expiryAlertDays: snapshot.settings.expiryAlertDays,
+    enableOffline: snapshot.settings.enableOffline,
+    enableRealtime: snapshot.settings.enableRealtime,
+    enableBarcode: snapshot.settings.enableBarcode,
+    strictFefo: snapshot.settings.strictFefo,
+  };
+}
+
 export function AdminPage({
   snapshot,
   currentUser,
   onCreateUser,
   onUpdateUser,
+  onUpdateSettings,
+  onUpdateRolePermissions,
   onResetUserPassword,
   onRemoveUser,
 }: Props) {
   const location = useLocation();
   const activeSlug = location.pathname.split("/")[2] ?? ADMIN_SECTIONS[0].slug;
-  const activeSection = ADMIN_SECTIONS.find((section) => section.slug === activeSlug) ?? ADMIN_SECTIONS[0];
+  const visibleSections = ADMIN_SECTIONS.filter((section) =>
+    section.slug === "settings"
+      ? can(currentUser, "admin.settings") ||
+        can(currentUser, "admin.environment.edit") ||
+        can(currentUser, "admin.permissions.edit") ||
+        can(currentUser, "admin.permissions.manage")
+      : can(currentUser, SECTION_PERMISSION[section.slug]),
+  );
+  const activeSection =
+    visibleSections.find((section) => section.slug === activeSlug) ??
+    visibleSections[0] ??
+    ADMIN_SECTIONS[0];
   const [userSearch, setUserSearch] = useState("");
   const [userRoleFilter, setUserRoleFilter] = useState<"all" | Role>("all");
   const [userStatusFilter, setUserStatusFilter] = useState<"all" | User["status"]>("all");
@@ -130,18 +198,46 @@ export function AdminPage({
   const [activityStartDate, setActivityStartDate] = useState("");
   const [activityEndDate, setActivityEndDate] = useState("");
   const [selectedUserId, setSelectedUserId] = useState(snapshot.users[0]?.id ?? "");
-  const [createForm, setCreateForm] = useState<CreateFormState>(buildCreateState);
+  const [createForm, setCreateForm] = useState<CreateFormState>(() =>
+    buildCreateState(snapshot.rolePermissions),
+  );
   const [editForm, setEditForm] = useState<UserFormState | null>(
     snapshot.users[0] ? buildEditState(snapshot.users[0]) : null,
   );
+  const [rolePermissionDrafts, setRolePermissionDrafts] = useState<Record<Role, PermissionKey[]>>(
+    snapshot.rolePermissions,
+  );
+  const [settingsForm, setSettingsForm] = useState<SettingsFormState>(() =>
+    buildSettingsState(snapshot),
+  );
+  const [settingsFeedback, setSettingsFeedback] = useState<string>();
   const [newPassword, setNewPassword] = useState("");
   const [feedback, setFeedback] = useState<string>();
   const [submitting, setSubmitting] = useState<string>();
-  const isSuperadmin = currentUser.role === "superadmin";
-  const selectedUser = useMemo(
-    () => snapshot.users.find((user) => user.id === selectedUserId) ?? snapshot.users[0] ?? null,
-    [selectedUserId, snapshot.users],
+  const canCreateUsers = can(currentUser, "admin.users.create");
+  const canEditUsers = can(currentUser, "admin.users.edit");
+  const canResetUserPasswords = can(currentUser, "admin.users.password");
+  const canRemoveUsers = can(currentUser, "admin.users.remove");
+  const canEditEnvironmentSettings = can(currentUser, "admin.environment.edit");
+  const canEditRolePermissions = can(currentUser, "admin.permissions.edit");
+  const canManagePermissionOverrides = can(currentUser, "admin.permissions.manage");
+  const canDelegatePermissionAccess = currentUser.role === "superadmin";
+  const assignableRoles = (Object.keys(ROLE_PRESETS) as Role[]).filter(
+    (role) => currentUser.role === "superadmin" || role !== "superadmin",
   );
+  const canManageUsers =
+    canCreateUsers ||
+    canEditUsers ||
+    canResetUserPasswords ||
+    canRemoveUsers ||
+    canManagePermissionOverrides;
+  const selectedUser = useMemo(() => {
+    const preferredUsers =
+      currentUser.role === "superadmin"
+        ? snapshot.users
+        : snapshot.users.filter((user) => user.role !== "superadmin");
+    return preferredUsers.find((user) => user.id === selectedUserId) ?? preferredUsers[0] ?? null;
+  }, [currentUser.role, selectedUserId, snapshot.users]);
   const filteredUsers = useMemo(() => {
     const normalizedSearch = userSearch.trim().toLowerCase();
     return snapshot.users.filter((user) => {
@@ -186,12 +282,326 @@ export function AdminPage({
     setEditForm(buildEditState(selectedUser));
   }, [selectedUser]);
 
+  useEffect(() => {
+    setRolePermissionDrafts(snapshot.rolePermissions);
+    setCreateForm((current) => ({
+      ...current,
+      permissions: [...snapshot.rolePermissions[current.role]],
+    }));
+  }, [snapshot.generatedAt, snapshot.rolePermissions]);
+
+  useEffect(() => {
+    setSettingsForm(buildSettingsState(snapshot));
+  }, [
+    snapshot.settings.timezone,
+    snapshot.settings.lowStockThreshold,
+    snapshot.settings.expiryAlertDays,
+    snapshot.settings.enableOffline,
+    snapshot.settings.enableRealtime,
+    snapshot.settings.enableBarcode,
+    snapshot.settings.strictFefo,
+  ]);
+
   function patchCreate<K extends keyof CreateFormState>(key: K, value: CreateFormState[K]) {
     setCreateForm((current) => ({ ...current, [key]: value }));
   }
 
   function patchEdit<K extends keyof UserFormState>(key: K, value: UserFormState[K]) {
     setEditForm((current) => (current ? { ...current, [key]: value } : current));
+  }
+
+  function patchSettings<K extends keyof SettingsFormState>(key: K, value: SettingsFormState[K]) {
+    setSettingsForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function setCreateRole(role: Role) {
+    setCreateForm((current) => ({
+      ...current,
+      role,
+      permissions: [...snapshot.rolePermissions[role]],
+    }));
+  }
+
+  function setEditRole(role: Role) {
+    setEditForm((current) =>
+      current
+        ? {
+            ...current,
+            role,
+            permissions: [...snapshot.rolePermissions[role]],
+          }
+        : current,
+    );
+  }
+
+  function toggleCreatePermission(permission: PermissionKey) {
+    if (!canManagePermissionOverrides) {
+      return;
+    }
+    if (
+      (permission === "admin.permissions.manage" || permission === "admin.permissions.edit") &&
+      !canDelegatePermissionAccess
+    ) {
+      return;
+    }
+
+    setCreateForm((current) => ({
+      ...current,
+      permissions: togglePermission(current.permissions, permission),
+    }));
+  }
+
+  function toggleEditPermission(permission: PermissionKey) {
+    if (!canManagePermissionOverrides || !editForm) {
+      return;
+    }
+    if (
+      (permission === "admin.permissions.manage" || permission === "admin.permissions.edit") &&
+      !canDelegatePermissionAccess
+    ) {
+      return;
+    }
+
+    patchEdit("permissions", togglePermission(editForm.permissions, permission));
+  }
+
+  function toggleRolePermission(role: Role, permission: PermissionKey) {
+    if (!canEditRolePermissions || role === "superadmin") {
+      return;
+    }
+    if (
+      (permission === "admin.permissions.manage" || permission === "admin.permissions.edit") &&
+      !canDelegatePermissionAccess
+    ) {
+      return;
+    }
+
+    setRolePermissionDrafts((current) => ({
+      ...current,
+      [role]: togglePermission(current[role], permission),
+    }));
+  }
+
+  async function handleSaveRolePermissions(role: Role) {
+    if (!canEditRolePermissions) {
+      return;
+    }
+
+    setSubmitting(`role:${role}`);
+    setFeedback(undefined);
+    try {
+      await onUpdateRolePermissions({
+        role,
+        permissions: rolePermissionDrafts[role],
+      });
+      setFeedback(`${ROLE_PRESETS[role].label} role permissions updated successfully.`);
+    } catch (error) {
+      setFeedback(
+        error instanceof Error ? error.message : "Could not update the role permissions.",
+      );
+    } finally {
+      setSubmitting(undefined);
+    }
+  }
+
+  const settingsDirty =
+    settingsForm.timezone !== snapshot.settings.timezone ||
+    settingsForm.lowStockThreshold !== snapshot.settings.lowStockThreshold ||
+    settingsForm.expiryAlertDays !== snapshot.settings.expiryAlertDays ||
+    settingsForm.enableOffline !== snapshot.settings.enableOffline ||
+    settingsForm.enableRealtime !== snapshot.settings.enableRealtime ||
+    settingsForm.enableBarcode !== snapshot.settings.enableBarcode ||
+    settingsForm.strictFefo !== snapshot.settings.strictFefo;
+
+  async function handleSaveSettings() {
+    if (!canEditEnvironmentSettings) {
+      return;
+    }
+
+    setSubmitting("settings");
+    setSettingsFeedback(undefined);
+    try {
+      await onUpdateSettings(settingsForm);
+      setSettingsFeedback("Environment settings updated successfully.");
+    } catch (error) {
+      setSettingsFeedback(
+        error instanceof Error ? error.message : "Could not update the environment settings.",
+      );
+    } finally {
+      setSubmitting(undefined);
+    }
+  }
+
+  function renderPermissionChecklist(
+    permissions: PermissionKey[],
+    role: Role,
+    onToggle: (permission: PermissionKey) => void,
+  ) {
+    const roleDefaults = new Set(snapshot.rolePermissions[role]);
+    const isRoleLocked = role === "superadmin";
+
+    return (
+      <div className="page-stack">
+        <div className="panel-heading compact-heading">
+          <div>
+            <p className="eyebrow">Permission Overrides</p>
+            <h3>Fine-grained access</h3>
+          </div>
+          <span className="status-chip neutral">{permissionCountLabel(permissions)}</span>
+        </div>
+        <p className="helper-text">
+          Role defaults can be overridden here. Superadmin accounts always keep full access.
+        </p>
+        {PERMISSION_GROUPS.map((group) => (
+          <div key={group.key} className="page-stack" style={{ gap: "10px" }}>
+            <div>
+              <strong>{group.label}</strong>
+            </div>
+            <div className="stack-list">
+              {group.permissions.map((permission) => {
+                const checked = permissions.includes(permission.code);
+                const isPermissionLocked =
+                  !canManagePermissionOverrides ||
+                  isRoleLocked ||
+                  ((permission.code === "admin.permissions.manage" ||
+                    permission.code === "admin.permissions.edit") &&
+                    !canDelegatePermissionAccess);
+                return (
+                  <label key={permission.code} className="list-row">
+                    <div>
+                      <strong>{permission.label}</strong>
+                      <p>
+                        {permission.description}
+                        {roleDefaults.has(permission.code) ? " Default for this role." : " Override only."}
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={isPermissionLocked}
+                      onChange={() => onToggle(permission.code)}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  function renderRolePermissionEditor(role: Role) {
+    const effectivePermissions =
+      role === "superadmin" ? snapshot.rolePermissions.superadmin : rolePermissionDrafts[role];
+    const moduleSummary = MODULES.map((module) =>
+      roleHasModule(
+        {
+          ...snapshot.rolePermissions,
+          [role]: effectivePermissions,
+        },
+        role,
+        module.key,
+      ),
+    );
+    const isDirty =
+      JSON.stringify(effectivePermissions) !== JSON.stringify(snapshot.rolePermissions[role]);
+    const isLockedRole = role === "superadmin";
+
+    return (
+      <article key={role} className="panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">{ROLE_PRESETS[role].label}</p>
+            <h3>{permissionCountLabel(effectivePermissions)}</h3>
+          </div>
+          <span className="status-chip neutral">
+            {isLockedRole ? "Fixed full access" : isDirty ? "Unsaved changes" : "Saved"}
+          </span>
+        </div>
+
+        <div className="table-wrap" style={{ marginBottom: "16px" }}>
+          <table className="data-table compact">
+            <thead>
+              <tr>
+                {MODULES.map((module) => (
+                  <th key={module.key}>{module.shortLabel}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                {moduleSummary.map((hasAccess, index) => (
+                  <td key={MODULES[index].key}>{hasAccess ? "Yes" : "No"}</td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="page-stack">
+          {PERMISSION_GROUPS.map((group) => (
+            <div key={`${role}-${group.key}`} className="page-stack" style={{ gap: "10px" }}>
+              <div>
+                <strong>{group.label}</strong>
+              </div>
+              <div className="stack-list">
+                {group.permissions.map((permission) => (
+                  <label key={`${role}-${permission.code}`} className="list-row">
+                    <div>
+                      <strong>{permission.label}</strong>
+                      <p>{permission.description}</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={effectivePermissions.includes(permission.code)}
+                      disabled={
+                        !canEditRolePermissions ||
+                        isLockedRole ||
+                        ((permission.code === "admin.permissions.edit" ||
+                          permission.code === "admin.permissions.manage") &&
+                          !canDelegatePermissionAccess)
+                      }
+                      onChange={() => toggleRolePermission(role, permission.code)}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {!isLockedRole ? (
+          <div className="button-row">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={!isDirty || submitting === `role:${role}`}
+              onClick={() =>
+                setRolePermissionDrafts((current) => ({
+                  ...current,
+                  [role]: [...snapshot.rolePermissions[role]],
+                }))
+              }
+            >
+              Reset
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={!canEditRolePermissions || !isDirty || submitting === `role:${role}`}
+              onClick={() => void handleSaveRolePermissions(role)}
+            >
+              {submitting === `role:${role}` ? "Saving..." : `Save ${ROLE_PRESETS[role].label}`}
+            </button>
+          </div>
+        ) : (
+          <p className="helper-text">
+            Superadmin remains full-access by design and cannot be reduced from the role editor.
+          </p>
+        )}
+      </article>
+    );
   }
 
   async function handleCreateUser(event: React.FormEvent<HTMLFormElement>) {
@@ -217,9 +627,10 @@ export function AdminPage({
         password: createForm.password,
         status: "active",
         assignedLocationIds: createForm.assignedLocationIds,
+        permissions: createForm.permissions,
       });
 
-      setCreateForm(buildCreateState());
+      setCreateForm(buildCreateState(snapshot.rolePermissions));
       setFeedback("New user account created successfully.");
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not create the user.");
@@ -246,6 +657,7 @@ export function AdminPage({
         role: editForm.role,
         status: editForm.status === "archived" ? "invited" : editForm.status,
         assignedLocationIds: editForm.assignedLocationIds,
+        permissions: editForm.permissions,
       });
 
       setFeedback("User information updated successfully.");
@@ -305,6 +717,24 @@ export function AdminPage({
     } finally {
       setSubmitting(undefined);
     }
+  }
+
+  if (visibleSections.length === 0) {
+    return (
+      <div className="page-stack">
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Administration</p>
+              <h2>Access required</h2>
+            </div>
+          </div>
+          <p className="hero-copy">
+            This user does not currently have permission to access Users, Settings, or Activity.
+          </p>
+        </section>
+      </div>
+    );
   }
 
   return (
@@ -378,7 +808,7 @@ export function AdminPage({
                     <th>Assigned Sites</th>
                     <th>Permissions</th>
                     <th>Last Seen</th>
-                    {isSuperadmin ? <th>Manage</th> : null}
+                    {canManageUsers ? <th>Manage</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -394,14 +824,19 @@ export function AdminPage({
                       <td>{user.assignedLocationIds.length}</td>
                       <td>{user.permissions.length}</td>
                       <td>{formatDateTime(user.lastSeenAt)}</td>
-                      {isSuperadmin ? (
+                      {canManageUsers ? (
                         <td>
                           <button
                             type="button"
                             className={selectedUserId === user.id ? "chip-button active" : "chip-button"}
                             onClick={() => setSelectedUserId(user.id)}
+                            disabled={user.role === "superadmin" && currentUser.role !== "superadmin"}
                           >
-                            {selectedUserId === user.id ? "Selected" : "Manage"}
+                            {user.role === "superadmin" && currentUser.role !== "superadmin"
+                              ? "Locked"
+                              : selectedUserId === user.id
+                                ? "Selected"
+                                : "Manage"}
                           </button>
                         </td>
                       ) : null}
@@ -415,13 +850,14 @@ export function AdminPage({
           <article className="panel">
             <div className="panel-heading">
               <div>
-                <p className="eyebrow">{isSuperadmin ? "User Control" : "Access Notice"}</p>
-                <h2>{isSuperadmin ? "Superadmin Controls" : "Read-only session"}</h2>
+                <p className="eyebrow">{canManageUsers ? "User Control" : "Access Notice"}</p>
+                <h2>{canManageUsers ? "Access Controls" : "Read-only session"}</h2>
               </div>
             </div>
 
-            {isSuperadmin ? (
+            {canManageUsers ? (
               <div className="page-stack">
+                {canCreateUsers ? (
                 <form className="page-stack" onSubmit={handleCreateUser}>
                   <div className="panel-heading compact-heading">
                     <div>
@@ -460,9 +896,9 @@ export function AdminPage({
                       <span>Role</span>
                       <select
                         value={createForm.role}
-                        onChange={(event) => patchCreate("role", event.target.value as Role)}
+                        onChange={(event) => setCreateRole(event.target.value as Role)}
                       >
-                        {(Object.keys(ROLE_PRESETS) as Role[]).map((role) => (
+                        {assignableRoles.map((role) => (
                           <option key={role} value={role}>
                             {ROLE_PRESETS[role].label}
                           </option>
@@ -504,6 +940,14 @@ export function AdminPage({
                     ))}
                   </div>
 
+                  {canManagePermissionOverrides ? (
+                    renderPermissionChecklist(
+                      createForm.permissions,
+                      createForm.role,
+                      toggleCreatePermission,
+                    )
+                  ) : null}
+
                   <div className="button-row">
                     <button
                       type="submit"
@@ -514,9 +958,11 @@ export function AdminPage({
                     </button>
                   </div>
                 </form>
+                ) : null}
 
                 {selectedUser && editForm ? (
                   <>
+                    {canEditUsers ? (
                     <form className="page-stack" onSubmit={handleUpdateUser}>
                       <div className="panel-heading compact-heading">
                         <div>
@@ -552,9 +998,9 @@ export function AdminPage({
                           <span>Role</span>
                           <select
                             value={editForm.role}
-                            onChange={(event) => patchEdit("role", event.target.value as Role)}
+                            onChange={(event) => setEditRole(event.target.value as Role)}
                           >
-                            {(Object.keys(ROLE_PRESETS) as Role[]).map((role) => (
+                            {assignableRoles.map((role) => (
                               <option key={role} value={role}>
                                 {ROLE_PRESETS[role].label}
                               </option>
@@ -598,6 +1044,14 @@ export function AdminPage({
                         ))}
                       </div>
 
+                      {canManagePermissionOverrides ? (
+                        renderPermissionChecklist(
+                          editForm.permissions,
+                          editForm.role,
+                          toggleEditPermission,
+                        )
+                      ) : null}
+
                       <div className="button-row">
                         <button
                           type="submit"
@@ -608,52 +1062,68 @@ export function AdminPage({
                         </button>
                       </div>
                     </form>
+                    ) : null}
 
-                    <form className="page-stack" onSubmit={handleResetPassword}>
-                      <div className="panel-heading compact-heading">
-                        <div>
-                          <p className="eyebrow">Password Reset</p>
-                          <h3>Reset {selectedUser.name}&apos;s password</h3>
+                    {canResetUserPasswords ? (
+                      <form className="page-stack" onSubmit={handleResetPassword}>
+                        <div className="panel-heading compact-heading">
+                          <div>
+                            <p className="eyebrow">Password Reset</p>
+                            <h3>Reset {selectedUser.name}&apos;s password</h3>
+                          </div>
                         </div>
+                        <div className="form-grid">
+                          <label className="field field-wide">
+                            <span>New password</span>
+                            <input
+                              type="password"
+                              value={newPassword}
+                              onChange={(event) => setNewPassword(event.target.value)}
+                              placeholder="Minimum 8 characters"
+                              autoComplete="new-password"
+                            />
+                          </label>
+                        </div>
+                        <div className="button-row">
+                          <button
+                            type="submit"
+                            className="secondary-button"
+                            disabled={submitting === "password"}
+                          >
+                            {submitting === "password" ? "Resetting..." : "Reset password"}
+                          </button>
+                        </div>
+                      </form>
+                    ) : null}
+
+                    {canRemoveUsers ? (
+                      <div className="page-stack">
+                        <div className="panel-heading compact-heading">
+                          <div>
+                            <p className="eyebrow">User Removal</p>
+                            <h3>Remove {selectedUser.name}</h3>
+                          </div>
+                        </div>
+                        <div className="button-row">
+                          <button
+                            type="button"
+                            className="secondary-button text-warning"
+                            disabled={
+                              selectedUser.id === currentUser.id ||
+                              submitting === `remove:${selectedUser.id}`
+                            }
+                            onClick={() => void handleRemoveUser(selectedUser.id)}
+                          >
+                            {submitting === `remove:${selectedUser.id}` ? "Removing..." : "Remove user"}
+                          </button>
+                        </div>
+                        {selectedUser.id === currentUser.id ? (
+                          <p className="helper-text">
+                            Your own superadmin account cannot be removed while this session is active.
+                          </p>
+                        ) : null}
                       </div>
-                      <div className="form-grid">
-                        <label className="field field-wide">
-                          <span>New password</span>
-                          <input
-                            type="password"
-                            value={newPassword}
-                            onChange={(event) => setNewPassword(event.target.value)}
-                            placeholder="Minimum 8 characters"
-                            autoComplete="new-password"
-                          />
-                        </label>
-                      </div>
-                      <div className="button-row">
-                        <button
-                          type="submit"
-                          className="secondary-button"
-                          disabled={submitting === "password"}
-                        >
-                          {submitting === "password" ? "Resetting..." : "Reset password"}
-                        </button>
-                        <button
-                          type="button"
-                          className="secondary-button text-warning"
-                          disabled={
-                            selectedUser.id === currentUser.id ||
-                            submitting === `remove:${selectedUser.id}`
-                          }
-                          onClick={() => void handleRemoveUser(selectedUser.id)}
-                        >
-                          {submitting === `remove:${selectedUser.id}` ? "Removing..." : "Remove user"}
-                        </button>
-                      </div>
-                      {selectedUser.id === currentUser.id ? (
-                        <p className="helper-text">
-                          Your own superadmin account cannot be removed while this session is active.
-                        </p>
-                      ) : null}
-                    </form>
+                    ) : null}
                   </>
                 ) : null}
 
@@ -663,8 +1133,11 @@ export function AdminPage({
               <div className="stack-list">
                 <div className="list-row">
                   <div>
-                    <strong>Superadmin-only actions</strong>
-                    <p>Create users, edit profiles, reset passwords, and remove accounts from here.</p>
+                    <strong>Permission-managed actions</strong>
+                    <p>
+                      User management actions now depend on granular permissions granted by
+                      superadmins.
+                    </p>
                   </div>
                   <span className="status-chip neutral">Restricted</span>
                 </div>
@@ -672,8 +1145,8 @@ export function AdminPage({
                   <div>
                     <strong>Your session</strong>
                     <p>
-                      You can review configuration, permissions, and the audit stream, but user access
-                      changes require a superadmin.
+                      You can review configuration, permissions, and the audit stream, but account
+                      changes require the right user and permission access grants.
                     </p>
                   </div>
                   <span className="status-chip neutral">{ROLE_PRESETS[currentUser.role].label}</span>
@@ -690,60 +1163,130 @@ export function AdminPage({
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Settings</p>
-                <h2>Environment Toggles</h2>
+                <h2>Environment Controls</h2>
               </div>
+              <span className="status-chip neutral">
+                {canEditEnvironmentSettings
+                  ? settingsDirty
+                    ? "Unsaved changes"
+                    : "Editable"
+                  : "View only"}
+              </span>
             </div>
-            <div className="stack-list">
-              <div className="list-row">
-                <div>
-                  <strong>Timezone</strong>
-                  <p>{snapshot.settings.timezone}</p>
-                </div>
-                <span className="status-chip neutral">Clock</span>
+            <div className="page-stack">
+              <p className="helper-text">
+                Control the live environment behavior used by offline mode, realtime sync,
+                barcode workflows, FEFO enforcement, and alert thresholds.
+              </p>
+              <div className="table-toolbar" style={{ marginBottom: "16px", justifyContent: "flex-start" }}>
+                <input
+                  className="table-search"
+                  style={{ maxWidth: "280px" }}
+                  value={settingsForm.timezone}
+                  disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                  onChange={(event) => patchSettings("timezone", event.target.value)}
+                  placeholder="Timezone"
+                />
+                <input
+                  type="number"
+                  min="0"
+                  value={settingsForm.lowStockThreshold}
+                  disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                  onChange={(event) =>
+                    patchSettings("lowStockThreshold", Number(event.target.value || 0))
+                  }
+                  placeholder="Low stock threshold"
+                />
+                <input
+                  type="number"
+                  min="0"
+                  value={settingsForm.expiryAlertDays}
+                  disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                  onChange={(event) =>
+                    patchSettings("expiryAlertDays", Number(event.target.value || 0))
+                  }
+                  placeholder="Expiry alert days"
+                />
               </div>
-              <div className="list-row">
-                <div>
-                  <strong>Expiry Alert Window</strong>
-                  <p>Batches nearing expiry are flagged this many days before cut-off.</p>
-                </div>
-                <span className="status-chip neutral">{snapshot.settings.expiryAlertDays} days</span>
+              <div className="stack-list">
+                <label className="list-row">
+                  <div>
+                    <strong>Offline Mode</strong>
+                    <p>IndexedDB queue and cached snapshots stay available during outages.</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settingsForm.enableOffline}
+                    disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                    onChange={(event) => patchSettings("enableOffline", event.target.checked)}
+                  />
+                </label>
+                <label className="list-row">
+                  <div>
+                    <strong>Realtime Sync</strong>
+                    <p>WebSocket listeners keep shared stock events and dashboards up to date.</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settingsForm.enableRealtime}
+                    disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                    onChange={(event) => patchSettings("enableRealtime", event.target.checked)}
+                  />
+                </label>
+                <label className="list-row">
+                  <div>
+                    <strong>Barcode Capture</strong>
+                    <p>Enable camera and handheld barcode workflows on supported devices.</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settingsForm.enableBarcode}
+                    disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                    onChange={(event) => patchSettings("enableBarcode", event.target.checked)}
+                  />
+                </label>
+                <label className="list-row">
+                  <div>
+                    <strong>Strict FEFO</strong>
+                    <p>Force outbound flows to prioritize the earliest valid-expiry stock first.</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settingsForm.strictFefo}
+                    disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                    onChange={(event) => patchSettings("strictFefo", event.target.checked)}
+                  />
+                </label>
               </div>
-              <div className="list-row">
-                <div>
-                  <strong>FEFO Enforcement</strong>
-                  <p>Outbound stock issues prioritize the earliest valid expiry before fresher lots.</p>
+              {settingsFeedback ? <p className="feedback-copy">{settingsFeedback}</p> : null}
+              {canEditEnvironmentSettings ? (
+                <div className="button-row">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={!settingsDirty || submitting === "settings"}
+                    onClick={() => {
+                      setSettingsForm(buildSettingsState(snapshot));
+                      setSettingsFeedback(undefined);
+                    }}
+                  >
+                    Reset
+                  </button>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={!settingsDirty || submitting === "settings"}
+                    onClick={() => void handleSaveSettings()}
+                  >
+                    {submitting === "settings" ? "Saving..." : "Save environment"}
+                  </button>
                 </div>
-                <span className="status-chip neutral">
-                  {snapshot.settings.strictFefo ? "Enabled" : "Advisory"}
-                </span>
-              </div>
-              <div className="list-row">
-                <div>
-                  <strong>Offline Mode</strong>
-                  <p>IndexedDB queue and cached snapshots stay available during outages.</p>
-                </div>
-                <span className="status-chip neutral">
-                  {snapshot.settings.enableOffline ? "Enabled" : "Disabled"}
-                </span>
-              </div>
-              <div className="list-row">
-                <div>
-                  <strong>Realtime Sync</strong>
-                  <p>WebSocket channel listens for server-side stock events.</p>
-                </div>
-                <span className="status-chip neutral">
-                  {snapshot.settings.enableRealtime ? "Enabled" : "Disabled"}
-                </span>
-              </div>
-              <div className="list-row">
-                <div>
-                  <strong>Barcode Capture</strong>
-                  <p>Camera and handheld scanner workflows are enabled on supported devices.</p>
-                </div>
-                <span className="status-chip neutral">
-                  {snapshot.settings.enableBarcode ? "Enabled" : "Disabled"}
-                </span>
-              </div>
+              ) : (
+                <p className="helper-text">
+                  Grant <strong>Edit environment settings</strong> to let this user change these
+                  controls.
+                </p>
+              )}
             </div>
           </article>
 
@@ -751,30 +1294,19 @@ export function AdminPage({
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Permission Matrix</p>
-                <h2>Page Access by Role</h2>
+                <h2>Role Permission Editor</h2>
               </div>
+              <span className="status-chip neutral">
+                {canEditRolePermissions ? "Editable" : "View only"}
+              </span>
             </div>
-            <div className="table-wrap">
-              <table className="data-table compact">
-                <thead>
-                  <tr>
-                    <th>Role</th>
-                    {MODULES.map((module) => (
-                      <th key={module.key}>{module.shortLabel}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(Object.keys(ROLE_PRESETS) as Role[]).map((role) => (
-                    <tr key={role}>
-                      <td>{ROLE_PRESETS[role].label}</td>
-                      {MODULES.map((module) => (
-                        <td key={module.key}>{roleHasModule(role, module.key) ? "Yes" : "No"}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="page-stack">
+              <p className="helper-text">
+                Every role now shows its individual permissions. Changes here update the default
+                access granted by that role, while user-specific overrides stay separate.
+              </p>
+              {(Object.keys(ROLE_PRESETS) as Role[]).map((role) => renderRolePermissionEditor(role))}
+              {feedback ? <p className="feedback-copy">{feedback}</p> : null}
             </div>
           </article>
         </section>

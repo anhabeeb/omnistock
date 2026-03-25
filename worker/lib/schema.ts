@@ -85,6 +85,17 @@ CREATE TABLE IF NOT EXISTS user_location_assignments (
   FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS user_permission_overrides (
+  user_id TEXT NOT NULL,
+  permission_code TEXT NOT NULL,
+  is_allowed INTEGER NOT NULL CHECK (is_allowed IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, permission_code),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (permission_code) REFERENCES permissions(code) ON DELETE CASCADE
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS suppliers (
   id TEXT PRIMARY KEY,
   sequence_no INTEGER NOT NULL UNIQUE,
@@ -308,6 +319,7 @@ CREATE INDEX IF NOT EXISTS idx_users_role_code ON users(role_code);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
 CREATE INDEX IF NOT EXISTS idx_user_location_assignments_location_id ON user_location_assignments(location_id);
+CREATE INDEX IF NOT EXISTS idx_user_permission_overrides_user_id ON user_permission_overrides(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_items_supplier_id ON items(supplier_id);

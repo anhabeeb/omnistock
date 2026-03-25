@@ -16,12 +16,26 @@ export type PermissionKey =
   | "inventory.adjustment"
   | "inventory.count"
   | "inventory.wastage"
+  | "inventory.edit"
+  | "inventory.delete"
+  | "inventory.reverse"
+  | "inventory.approve"
   | "master.items"
   | "master.suppliers"
   | "master.locations"
+  | "master.edit"
+  | "master.delete"
   | "reports.view"
   | "reports.export"
-  | "admin.users"
+  | "reports.print"
+  | "admin.users.view"
+  | "admin.users.create"
+  | "admin.users.edit"
+  | "admin.users.password"
+  | "admin.users.remove"
+  | "admin.environment.edit"
+  | "admin.permissions.edit"
+  | "admin.permissions.manage"
   | "admin.settings"
   | "admin.activity";
 
@@ -245,6 +259,7 @@ export interface InventorySnapshot {
   movementLedger: MovementLedgerEntry[];
   activity: ActivityLog[];
   settings: AppSettings;
+  rolePermissions: Record<Role, PermissionKey[]>;
 }
 
 export interface DashboardMetric {
@@ -552,6 +567,7 @@ export interface CreateUserRequest {
   password: string;
   status?: Exclude<UserStatus, "archived">;
   assignedLocationIds: string[];
+  permissions?: PermissionKey[];
 }
 
 export interface UpdateUserRequest {
@@ -562,6 +578,7 @@ export interface UpdateUserRequest {
   role: Role;
   status: UserStatus;
   assignedLocationIds: string[];
+  permissions: PermissionKey[];
 }
 
 export interface UpdateOwnProfileRequest {
@@ -583,6 +600,29 @@ export interface RemoveUserRequest {
 }
 
 export interface UserAdminResponse {
+  snapshot: InventorySnapshot;
+}
+
+export interface UpdateSettingsRequest {
+  timezone: string;
+  lowStockThreshold: number;
+  expiryAlertDays: number;
+  enableOffline: boolean;
+  enableRealtime: boolean;
+  enableBarcode: boolean;
+  strictFefo: boolean;
+}
+
+export interface SettingsResponse {
+  snapshot: InventorySnapshot;
+}
+
+export interface UpdateRolePermissionsRequest {
+  role: Role;
+  permissions: PermissionKey[];
+}
+
+export interface RolePermissionsResponse {
   snapshot: InventorySnapshot;
 }
 

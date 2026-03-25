@@ -1,5 +1,6 @@
 import { useDeferredValue, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
+import { can } from "../../shared/permissions";
 import { findItemByBarcode, totalOnHand } from "../../shared/selectors";
 import type {
   CreateItemRequest,
@@ -15,6 +16,7 @@ import type {
   Location,
   LocationType,
   MarketPriceEntry,
+  PermissionKey,
   PriceCategory,
   RecordStatus,
   Supplier,
@@ -189,6 +191,18 @@ function addButtonLabelForSection(slug: (typeof MASTER_SECTIONS)[number]["slug"]
   return `Add New ${singularLabelForSection(slug)}`;
 }
 
+function createPermissionForSection(
+  slug: (typeof MASTER_SECTIONS)[number]["slug"],
+): PermissionKey {
+  if (slug === "items" || slug === "market-prices") {
+    return "master.items";
+  }
+  if (slug === "suppliers") {
+    return "master.suppliers";
+  }
+  return "master.locations";
+}
+
 function defaultItemForm(snapshot: InventorySnapshot): ItemFormState {
   const supplier = snapshot.suppliers[0];
   return {
@@ -312,6 +326,10 @@ export function MasterDataPage({
   const [savingPrice, setSavingPrice] = useState(false);
   const [exporting, setExporting] = useState(false);
   const deferredSearch = useDeferredValue(search);
+  const canCreateRecords = can(currentUser, createPermissionForSection(activeSection.slug));
+  const canEditRecords = can(currentUser, "master.edit");
+  const canDeleteRecords = can(currentUser, "master.delete");
+  const canExportData = can(currentUser, "reports.export");
   useEffect(() => {
     setPriceForm((current) => {
       if (current.itemId && snapshot.items.some((item) => item.id === current.itemId)) {
@@ -491,6 +509,10 @@ export function MasterDataPage({
   }
 
   function openEntryModal() {
+    if (!canCreateRecords) {
+      setFeedback(`You do not have permission to add ${activeSection.label.toLowerCase()}.`);
+      return;
+    }
     setFeedback(undefined);
     setSelectedEntryId(null);
     setBarcodeScannerOpen(false);
@@ -509,6 +531,10 @@ export function MasterDataPage({
   }
 
   function openEditModal(entryId: string) {
+    if (!canEditRecords) {
+      setFeedback("You do not have permission to edit master data.");
+      return;
+    }
     setFeedback(undefined);
     setSelectedEntryId(entryId);
     setBarcodeScannerOpen(false);
@@ -549,6 +575,10 @@ export function MasterDataPage({
   }
 
   function openDeleteModal(entryId: string) {
+    if (!canDeleteRecords) {
+      setFeedback("You do not have permission to delete master data.");
+      return;
+    }
     setFeedback(undefined);
     setSelectedEntryId(entryId);
     setDialogMode("delete");
@@ -640,6 +670,10 @@ export function MasterDataPage({
   }
 
   async function handleExportMarketPrices() {
+    if (!canExportData) {
+      setFeedback("You do not have permission to export market price data.");
+      return;
+    }
     setExporting(true);
     setFeedback(undefined);
 
@@ -987,7 +1021,12 @@ export function MasterDataPage({
                   </option>
                 ))}
               </select>
-              <button type="button" className="primary-button" onClick={openEntryModal}>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={openEntryModal}
+                disabled={!canCreateRecords}
+              >
                 {addButtonLabelForSection(activeSection.slug)}
               </button>
             </div>
@@ -1030,24 +1069,28 @@ export function MasterDataPage({
                         >
                           <ViewIcon size={16} />
                         </button>
-                        <button
-                          type="button"
-                          className="action-icon-button"
-                          onClick={() => openEditModal(item.id)}
-                          aria-label={`Edit ${item.name}`}
-                          title="Edit"
-                        >
-                          <EditIcon size={16} />
-                        </button>
-                        <button
-                          type="button"
-                          className="action-icon-button danger"
-                          onClick={() => openDeleteModal(item.id)}
-                          aria-label={`Delete ${item.name}`}
-                          title="Delete"
-                        >
-                          <DeleteIcon size={16} />
-                        </button>
+                        {canEditRecords ? (
+                          <button
+                            type="button"
+                            className="action-icon-button"
+                            onClick={() => openEditModal(item.id)}
+                            aria-label={`Edit ${item.name}`}
+                            title="Edit"
+                          >
+                            <EditIcon size={16} />
+                          </button>
+                        ) : null}
+                        {canDeleteRecords ? (
+                          <button
+                            type="button"
+                            className="action-icon-button danger"
+                            onClick={() => openDeleteModal(item.id)}
+                            aria-label={`Delete ${item.name}`}
+                            title="Delete"
+                          >
+                            <DeleteIcon size={16} />
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -1083,7 +1126,12 @@ export function MasterDataPage({
                   </option>
                 ))}
               </select>
-              <button type="button" className="primary-button" onClick={openEntryModal}>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={openEntryModal}
+                disabled={!canCreateRecords}
+              >
                 {addButtonLabelForSection(activeSection.slug)}
               </button>
             </div>
@@ -1122,24 +1170,28 @@ export function MasterDataPage({
                         >
                           <ViewIcon size={16} />
                         </button>
-                        <button
-                          type="button"
-                          className="action-icon-button"
-                          onClick={() => openEditModal(supplier.id)}
-                          aria-label={`Edit ${supplier.name}`}
-                          title="Edit"
-                        >
-                          <EditIcon size={16} />
-                        </button>
-                        <button
-                          type="button"
-                          className="action-icon-button danger"
-                          onClick={() => openDeleteModal(supplier.id)}
-                          aria-label={`Delete ${supplier.name}`}
-                          title="Delete"
-                        >
-                          <DeleteIcon size={16} />
-                        </button>
+                        {canEditRecords ? (
+                          <button
+                            type="button"
+                            className="action-icon-button"
+                            onClick={() => openEditModal(supplier.id)}
+                            aria-label={`Edit ${supplier.name}`}
+                            title="Edit"
+                          >
+                            <EditIcon size={16} />
+                          </button>
+                        ) : null}
+                        {canDeleteRecords ? (
+                          <button
+                            type="button"
+                            className="action-icon-button danger"
+                            onClick={() => openDeleteModal(supplier.id)}
+                            aria-label={`Delete ${supplier.name}`}
+                            title="Delete"
+                          >
+                            <DeleteIcon size={16} />
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -1172,7 +1224,12 @@ export function MasterDataPage({
                 <option value="warehouse">Warehouse</option>
                 <option value="outlet">Outlet</option>
               </select>
-              <button type="button" className="primary-button" onClick={openEntryModal}>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={openEntryModal}
+                disabled={!canCreateRecords}
+              >
                 {addButtonLabelForSection(activeSection.slug)}
               </button>
             </div>
@@ -1208,24 +1265,28 @@ export function MasterDataPage({
                         >
                           <ViewIcon size={16} />
                         </button>
-                        <button
-                          type="button"
-                          className="action-icon-button"
-                          onClick={() => openEditModal(locationEntry.id)}
-                          aria-label={`Edit ${locationEntry.name}`}
-                          title="Edit"
-                        >
-                          <EditIcon size={16} />
-                        </button>
-                        <button
-                          type="button"
-                          className="action-icon-button danger"
-                          onClick={() => openDeleteModal(locationEntry.id)}
-                          aria-label={`Delete ${locationEntry.name}`}
-                          title="Delete"
-                        >
-                          <DeleteIcon size={16} />
-                        </button>
+                        {canEditRecords ? (
+                          <button
+                            type="button"
+                            className="action-icon-button"
+                            onClick={() => openEditModal(locationEntry.id)}
+                            aria-label={`Edit ${locationEntry.name}`}
+                            title="Edit"
+                          >
+                            <EditIcon size={16} />
+                          </button>
+                        ) : null}
+                        {canDeleteRecords ? (
+                          <button
+                            type="button"
+                            className="action-icon-button danger"
+                            onClick={() => openDeleteModal(locationEntry.id)}
+                            aria-label={`Delete ${locationEntry.name}`}
+                            title="Delete"
+                          >
+                            <DeleteIcon size={16} />
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -1288,12 +1349,17 @@ export function MasterDataPage({
               <button
                 type="button"
                 className="secondary-button"
-                disabled={exporting}
+                disabled={exporting || !canExportData}
                 onClick={() => void handleExportMarketPrices()}
               >
                 {exporting ? "Exporting..." : "Export Price History"}
               </button>
-              <button type="button" className="primary-button" onClick={openEntryModal}>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={openEntryModal}
+                disabled={!canCreateRecords}
+              >
                 {addButtonLabelForSection(activeSection.slug)}
               </button>
             </div>
@@ -1344,24 +1410,28 @@ export function MasterDataPage({
                         >
                           <ViewIcon size={16} />
                         </button>
-                        <button
-                          type="button"
-                          className="action-icon-button"
-                          onClick={() => openEditModal(entry.id)}
-                          aria-label={`Edit ${entry.itemName}`}
-                          title="Edit"
-                        >
-                          <EditIcon size={16} />
-                        </button>
-                        <button
-                          type="button"
-                          className="action-icon-button danger"
-                          onClick={() => openDeleteModal(entry.id)}
-                          aria-label={`Delete ${entry.itemName}`}
-                          title="Delete"
-                        >
-                          <DeleteIcon size={16} />
-                        </button>
+                        {canEditRecords ? (
+                          <button
+                            type="button"
+                            className="action-icon-button"
+                            onClick={() => openEditModal(entry.id)}
+                            aria-label={`Edit ${entry.itemName}`}
+                            title="Edit"
+                          >
+                            <EditIcon size={16} />
+                          </button>
+                        ) : null}
+                        {canDeleteRecords ? (
+                          <button
+                            type="button"
+                            className="action-icon-button danger"
+                            onClick={() => openDeleteModal(entry.id)}
+                            aria-label={`Delete ${entry.itemName}`}
+                            title="Delete"
+                          >
+                            <DeleteIcon size={16} />
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>

@@ -1,4 +1,9 @@
-import { ROLE_PRESETS } from "../../shared/permissions";
+import {
+  ALL_PERMISSIONS,
+  PERMISSION_CATALOG,
+  ROLE_PRESETS,
+  permissionsForRole,
+} from "../../shared/permissions";
 import { applyMutation } from "../../shared/operations";
 import type { MutationResult } from "../../shared/operations";
 import { buildBootstrapPayload } from "../../shared/selectors";
@@ -46,6 +51,7 @@ import type {
   StockBatch,
   Supplier,
   SyncEvent,
+  SettingsResponse,
   UpdateItemRequest,
   UpdateItemResponse,
   UpdateLocationRequest,
@@ -53,12 +59,15 @@ import type {
   UpdateMarketPriceRequest,
   UpdateMarketPriceResponse,
   UpdateOwnProfileRequest,
+  UpdateSettingsRequest,
+  UpdateRolePermissionsRequest,
   UpdateSupplierRequest,
   UpdateSupplierResponse,
   UpdateUserRequest,
   User,
   WasteEntry,
   UserAdminResponse,
+  RolePermissionsResponse,
 } from "../../shared/types";
 import { OMNISTOCK_D1_SCHEMA_SQL } from "./schema";
 
@@ -70,29 +79,6 @@ const DOCUMENT_SEQUENCE_START = 1001;
 const PASSWORD_ITERATIONS = 100_000;
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 const textEncoder = new TextEncoder();
-
-const PERMISSION_CATALOG: Array<{
-  code: PermissionKey;
-  moduleKey: string;
-  label: string;
-}> = [
-  { code: "dashboard.view", moduleKey: "dashboard", label: "View dashboard" },
-  { code: "inventory.view", moduleKey: "inventoryOps", label: "View inventory operations" },
-  { code: "inventory.grn", moduleKey: "inventoryOps", label: "Create GRN requests" },
-  { code: "inventory.gin", moduleKey: "inventoryOps", label: "Create GIN requests" },
-  { code: "inventory.transfer", moduleKey: "inventoryOps", label: "Create transfers" },
-  { code: "inventory.adjustment", moduleKey: "inventoryOps", label: "Create adjustments" },
-  { code: "inventory.count", moduleKey: "inventoryOps", label: "Run stock counts" },
-  { code: "inventory.wastage", moduleKey: "inventoryOps", label: "Record wastage" },
-  { code: "master.items", moduleKey: "masterData", label: "Manage items" },
-  { code: "master.suppliers", moduleKey: "masterData", label: "Manage suppliers" },
-  { code: "master.locations", moduleKey: "masterData", label: "Manage locations" },
-  { code: "reports.view", moduleKey: "reports", label: "View reports" },
-  { code: "reports.export", moduleKey: "reports", label: "Export reports" },
-  { code: "admin.users", moduleKey: "administration", label: "Manage users" },
-  { code: "admin.settings", moduleKey: "administration", label: "Manage settings" },
-  { code: "admin.activity", moduleKey: "administration", label: "View activity" },
-];
 
 const DOCUMENT_PREFIX_BY_KIND: Record<RequestKind, string> = {
   grn: "GRN",
@@ -460,7 +446,7 @@ export async function loadCurrentCursor(db: D1Database): Promise<number> {
 }
 
 function rolePermissions(role: User["role"]): PermissionKey[] {
-  return ROLE_PRESETS[role].permissions;
+  return permissionsForRole(role);
 }
 
 function userHasPermission(user: User, permission: PermissionKey): boolean {
@@ -475,35 +461,158 @@ function requirePermission(user: User | undefined, permission: PermissionKey, me
   return user;
 }
 
+function sanitizeRequestedPermissions(
+  role: User["role"],
+  requestedPermissions?: PermissionKey[],
+): PermissionKey[] {
+  if (role === "superadmin") {
+    return [...ALL_PERMISSIONS];
+  }
+
+  const normalized = [...new Set(requestedPermissions ?? rolePermissions(role))];
+  for (const permission of normalized) {
+    if (!ALL_PERMISSIONS.includes(permission)) {
+      throw new Error(`Unknown permission code: ${permission}`);
+    }
+  }
+
+  return normalized.sort();
+}
+
+function permissionsDifferFromRoleDefaults(
+  roleDefaults: PermissionKey[],
+  permissions: PermissionKey[],
+): boolean {
+  const expected = [...roleDefaults].sort();
+  if (expected.length !== permissions.length) {
+    return true;
+  }
+
+  return expected.some((permission, index) => permission !== permissions[index]);
+}
+
+function ensureManagePermissionsAllowed(
+  actor: User,
+  permissions: PermissionKey[],
+  roleDefaults: PermissionKey[],
+): void {
+  if (!permissionsDifferFromRoleDefaults(roleDefaults, permissions)) {
+    return;
+  }
+
+  requirePermission(
+    actor,
+    "admin.permissions.manage",
+    "You do not have permission to override user permissions.",
+  );
+
+  if (permissions.includes("admin.permissions.manage") && actor.role !== "superadmin") {
+    throw new Error("Only superadmin users can grant permission-management access.");
+  }
+
+  if (permissions.includes("admin.permissions.edit") && actor.role !== "superadmin") {
+    throw new Error("Only superadmin users can grant role-permission edit access.");
+  }
+}
+
+function ensurePrivilegedUserManagementAllowed(
+  actor: User,
+  targetRole: User["role"],
+  actionLabel: string,
+): void {
+  if (targetRole === "superadmin" && actor.role !== "superadmin") {
+    throw new Error(`Only superadmin users can ${actionLabel} a superadmin account.`);
+  }
+}
+
+function validateEnvironmentSettings(input: UpdateSettingsRequest): UpdateSettingsRequest {
+  const timezone = input.timezone.trim();
+  if (!timezone) {
+    throw new Error("Timezone is required.");
+  }
+
+  const lowStockThreshold = Number(input.lowStockThreshold);
+  if (!Number.isFinite(lowStockThreshold) || lowStockThreshold < 0) {
+    throw new Error("Low stock threshold must be zero or greater.");
+  }
+
+  const expiryAlertDays = Number(input.expiryAlertDays);
+  if (!Number.isFinite(expiryAlertDays) || expiryAlertDays < 0) {
+    throw new Error("Expiry alert days must be zero or greater.");
+  }
+
+  return {
+    timezone,
+    lowStockThreshold,
+    expiryAlertDays,
+    enableOffline: Boolean(input.enableOffline),
+    enableRealtime: Boolean(input.enableRealtime),
+    enableBarcode: Boolean(input.enableBarcode),
+    strictFefo: Boolean(input.strictFefo),
+  };
+}
+
+async function replaceUserPermissionOverrides(
+  db: D1Database,
+  userId: string,
+  roleDefaults: PermissionKey[],
+  permissions: PermissionKey[],
+  updatedAt: string,
+): Promise<void> {
+  const desiredPermissions = new Set(permissions);
+  const defaultPermissions = new Set(roleDefaults);
+
+  await execute(db, "DELETE FROM user_permission_overrides WHERE user_id = ?", [userId]);
+
+  for (const permission of ALL_PERMISSIONS) {
+    const shouldHavePermission = desiredPermissions.has(permission);
+    const roleHasPermission = defaultPermissions.has(permission);
+    if (shouldHavePermission === roleHasPermission) {
+      continue;
+    }
+
+    await execute(
+      db,
+      "INSERT INTO user_permission_overrides (user_id, permission_code, is_allowed, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      [userId, permission, shouldHavePermission ? 1 : 0, updatedAt, updatedAt],
+    );
+  }
+}
+
 async function seedReferenceData(db: D1Database): Promise<void> {
   const now = new Date().toISOString();
-  const roleCount = await scalarCount(db, "roles");
+  for (const [roleCode, preset] of Object.entries(ROLE_PRESETS)) {
+    await execute(
+      db,
+      "INSERT OR REPLACE INTO roles (code, label, description, created_at) VALUES (?, ?, ?, COALESCE((SELECT created_at FROM roles WHERE code = ?), ?))",
+      [roleCode, preset.label, preset.description, roleCode, now],
+    );
+  }
 
-  if (roleCount === 0) {
-    for (const [roleCode, preset] of Object.entries(ROLE_PRESETS)) {
-      await execute(
-        db,
-        "INSERT INTO roles (code, label, description, created_at) VALUES (?, ?, ?, ?)",
-        [roleCode, preset.label, preset.description, now],
-      );
+  for (const permission of PERMISSION_CATALOG) {
+    await execute(
+      db,
+      "INSERT OR REPLACE INTO permissions (code, module_key, label, created_at) VALUES (?, ?, ?, COALESCE((SELECT created_at FROM permissions WHERE code = ?), ?))",
+      [permission.code, permission.moduleKey, permission.label, permission.code, now],
+    );
+  }
+
+  for (const [roleCode, preset] of Object.entries(ROLE_PRESETS)) {
+    const existingPermissionCount = await first<CountRow>(
+      db,
+      "SELECT COUNT(*) AS count FROM role_permissions WHERE role_code = ?",
+      [roleCode],
+    );
+    if (Number(existingPermissionCount?.count ?? 0) > 0) {
+      continue;
     }
 
-    for (const permission of PERMISSION_CATALOG) {
+    for (const permissionCode of preset.permissions) {
       await execute(
         db,
-        "INSERT INTO permissions (code, module_key, label, created_at) VALUES (?, ?, ?, ?)",
-        [permission.code, permission.moduleKey, permission.label, now],
+        "INSERT INTO role_permissions (role_code, permission_code, created_at) VALUES (?, ?, ?)",
+        [roleCode, permissionCode, now],
       );
-    }
-
-    for (const [roleCode, preset] of Object.entries(ROLE_PRESETS)) {
-      for (const permissionCode of preset.permissions) {
-        await execute(
-          db,
-          "INSERT INTO role_permissions (role_code, permission_code, created_at) VALUES (?, ?, ?)",
-          [roleCode, permissionCode, now],
-        );
-      }
     }
   }
 
@@ -544,6 +653,24 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      ) STRICT;
+    `,
+    );
+  }
+
+  if (!(await tableExists(db, "user_permission_overrides"))) {
+    await executeScript(
+      db,
+      `
+      CREATE TABLE IF NOT EXISTS user_permission_overrides (
+        user_id TEXT NOT NULL,
+        permission_code TEXT NOT NULL,
+        is_allowed INTEGER NOT NULL CHECK (is_allowed IN (0, 1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, permission_code),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (permission_code) REFERENCES permissions(code) ON DELETE CASCADE
       ) STRICT;
     `,
     );
@@ -681,6 +808,10 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
   );
   await execute(
     db,
+    "CREATE INDEX IF NOT EXISTS idx_user_permission_overrides_user_id ON user_permission_overrides(user_id)",
+  );
+  await execute(
+    db,
     "CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at)",
   );
   await execute(
@@ -757,8 +888,14 @@ interface SessionRow {
   expires_at: string;
 }
 
-interface UserPermissionRow {
+interface UserPermissionOverrideRow {
   user_id: string;
+  permission_code: PermissionKey;
+  is_allowed: number;
+}
+
+interface RolePermissionRow {
+  role_code: User["role"];
   permission_code: PermissionKey;
 }
 
@@ -1022,6 +1159,51 @@ function groupValues(rows: Array<{ user_id: string; value: string }>): Map<strin
   return map;
 }
 
+function loadRolePermissionMapFromRows(
+  rolePermissionRows: RolePermissionRow[],
+): Record<User["role"], PermissionKey[]> {
+  const roleMap = {
+    superadmin: [...ALL_PERMISSIONS],
+    admin: [] as PermissionKey[],
+    manager: [] as PermissionKey[],
+    worker: [] as PermissionKey[],
+  } satisfies Record<User["role"], PermissionKey[]>;
+
+  const seenPermissions = new Map<User["role"], Set<PermissionKey>>([
+    ["admin", new Set<PermissionKey>()],
+    ["manager", new Set<PermissionKey>()],
+    ["worker", new Set<PermissionKey>()],
+  ]);
+
+  for (const row of rolePermissionRows) {
+    if (row.role_code === "superadmin") {
+      continue;
+    }
+
+    const bucket = seenPermissions.get(row.role_code);
+    if (!bucket || bucket.has(row.permission_code)) {
+      continue;
+    }
+    bucket.add(row.permission_code);
+    roleMap[row.role_code].push(row.permission_code);
+  }
+
+  for (const role of ["admin", "manager", "worker"] as const) {
+    roleMap[role] =
+      roleMap[role].length > 0 ? roleMap[role].sort() : [...permissionsForRole(role)].sort();
+  }
+
+  return roleMap;
+}
+
+async function loadRolePermissionMap(db: D1Database): Promise<Record<User["role"], PermissionKey[]>> {
+  const rows = await all<RolePermissionRow>(
+    db,
+    "SELECT role_code, permission_code FROM role_permissions ORDER BY role_code, permission_code",
+  );
+  return loadRolePermissionMapFromRows(rows);
+}
+
 export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
   await ensureDatabaseReady(db);
 
@@ -1032,7 +1214,8 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
     stockRows,
     batchRows,
     userRows,
-    permissionRows,
+    rolePermissionRows,
+    overrideRows,
     assignmentRows,
     requestRows,
     marketPriceRows,
@@ -1065,9 +1248,13 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
       db,
       "SELECT id, name, username, email, role_code, status, last_seen_at FROM users ORDER BY sequence_no ASC",
     ),
-    all<UserPermissionRow>(
+    all<RolePermissionRow>(
       db,
-      "SELECT u.id AS user_id, rp.permission_code AS permission_code FROM users u JOIN role_permissions rp ON rp.role_code = u.role_code ORDER BY u.sequence_no ASC",
+      "SELECT role_code, permission_code FROM role_permissions ORDER BY role_code, permission_code",
+    ),
+    all<UserPermissionOverrideRow>(
+      db,
+      "SELECT user_id, permission_code, is_allowed FROM user_permission_overrides ORDER BY user_id, permission_code",
     ),
     all<UserLocationRow>(
       db,
@@ -1222,12 +1409,16 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
   const cursor = await currentCursor(db);
   const batchMap = mapBatchesByStock(batchRows);
   const stockMap = mapStocksByItem(stockRows, batchMap);
+  const rolePermissionMap = loadRolePermissionMapFromRows(rolePermissionRows);
   const assignmentMap = groupValues(
     assignmentRows.map((row) => ({ user_id: row.user_id, value: row.location_id })),
   );
-  const permissionMap = groupValues(
-    permissionRows.map((row) => ({ user_id: row.user_id, value: row.permission_code })),
-  );
+  const permissionOverrideMap = new Map<string, UserPermissionOverrideRow[]>();
+  for (const row of overrideRows) {
+    const existingRows = permissionOverrideMap.get(row.user_id) ?? [];
+    existingRows.push(row);
+    permissionOverrideMap.set(row.user_id, existingRows);
+  }
 
   return {
     generatedAt: new Date().toISOString(),
@@ -1303,17 +1494,29 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
       stocks: stockMap.get(row.id) ?? [],
       updatedAt: row.updated_at,
     })),
-    users: userRows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      username: row.username || fallbackUsername(row.id),
-      email: row.email,
-      role: row.role_code,
-      permissions: permissionMap.get(row.id)?.map((permission) => permission as PermissionKey) ?? rolePermissions(row.role_code),
-      assignedLocationIds: assignmentMap.get(row.id) ?? [],
-      status: row.status,
-      lastSeenAt: row.last_seen_at,
-    })),
+    rolePermissions: rolePermissionMap,
+    users: userRows.map((row) => {
+      const effectivePermissions = new Set<PermissionKey>(rolePermissionMap[row.role_code]);
+      for (const override of permissionOverrideMap.get(row.id) ?? []) {
+        if (override.is_allowed) {
+          effectivePermissions.add(override.permission_code);
+        } else {
+          effectivePermissions.delete(override.permission_code);
+        }
+      }
+
+      return {
+        id: row.id,
+        name: row.name,
+        username: row.username || fallbackUsername(row.id),
+        email: row.email,
+        role: row.role_code,
+        permissions: [...effectivePermissions].sort(),
+        assignedLocationIds: assignmentMap.get(row.id) ?? [],
+        status: row.status,
+        lastSeenAt: row.last_seen_at,
+      };
+    }),
     requests: requestRows.map((row) => ({
       id: row.id,
       reference: row.reference,
@@ -1821,14 +2024,19 @@ export async function createUserInD1(
 ): Promise<UserAdminResponse> {
   await ensureDatabaseReady(db);
   const snapshot = await loadSnapshot(db);
-  const actor = snapshot.users.find((user) => user.id === actorId);
-  if (!actor || actor.role !== "superadmin") {
-    throw new Error("Only superadmin users can create user accounts.");
-  }
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "admin.users.create",
+    "You do not have permission to create user accounts.",
+  );
 
   const username = normalizeUsername(input.username);
   assertUsername(username);
   const email = input.email.trim().toLowerCase();
+  const currentRoleDefaults = await loadRolePermissionMap(db).then((map) => map[input.role]);
+  const desiredPermissions = sanitizeRequestedPermissions(input.role, input.permissions);
+  ensureManagePermissionsAllowed(actor, desiredPermissions, currentRoleDefaults);
+  ensurePrivilegedUserManagementAllowed(actor, input.role, "create");
   if (await userExistsByUsername(db, username)) {
     throw new Error("Another user already exists with that username.");
   }
@@ -1868,12 +2076,13 @@ export async function createUserInD1(
       [id, locationId, now],
     );
   }
+  await replaceUserPermissionOverrides(db, id, currentRoleDefaults, desiredPermissions, now);
 
   await appendAdminActivity(
     db,
     actorId,
     "User created",
-    `${input.name.trim()} was added as ${input.role}.`,
+    `${input.name.trim()} was added as ${input.role} with ${desiredPermissions.length} effective permissions.`,
   );
 
   return { snapshot: await loadSnapshot(db) };
@@ -1886,11 +2095,12 @@ export async function updateUserInD1(
 ): Promise<UserAdminResponse> {
   await ensureDatabaseReady(db);
   const snapshot = await loadSnapshot(db);
-  const actor = snapshot.users.find((user) => user.id === actorId);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "admin.users.edit",
+    "You do not have permission to edit user accounts.",
+  );
   const target = snapshot.users.find((user) => user.id === input.userId);
-  if (!actor || actor.role !== "superadmin") {
-    throw new Error("Only superadmin users can edit user accounts.");
-  }
   if (!target) {
     throw new Error("The selected user could not be found.");
   }
@@ -1898,6 +2108,11 @@ export async function updateUserInD1(
   const username = normalizeUsername(input.username);
   assertUsername(username);
   const email = input.email.trim().toLowerCase();
+  const currentRoleDefaults = await loadRolePermissionMap(db).then((map) => map[input.role]);
+  const desiredPermissions = sanitizeRequestedPermissions(input.role, input.permissions);
+  ensureManagePermissionsAllowed(actor, desiredPermissions, currentRoleDefaults);
+  ensurePrivilegedUserManagementAllowed(actor, target.role, "edit");
+  ensurePrivilegedUserManagementAllowed(actor, input.role, "promote");
   if (await userExistsByUsername(db, username, input.userId)) {
     throw new Error("Another user already exists with that username.");
   }
@@ -1934,6 +2149,13 @@ export async function updateUserInD1(
       [input.userId, locationId, now],
     );
   }
+  await replaceUserPermissionOverrides(
+    db,
+    input.userId,
+    currentRoleDefaults,
+    desiredPermissions,
+    now,
+  );
 
   if (input.status !== "active") {
     await deleteUserSessions(db, input.userId);
@@ -1943,7 +2165,7 @@ export async function updateUserInD1(
     db,
     actorId,
     "User updated",
-    `${input.name.trim()} was updated by superadmin.`,
+    `${input.name.trim()} was updated with ${desiredPermissions.length} effective permissions.`,
   );
 
   return { snapshot: await loadSnapshot(db) };
@@ -1956,14 +2178,16 @@ export async function resetUserPasswordInD1(
 ): Promise<UserAdminResponse> {
   await ensureDatabaseReady(db);
   const snapshot = await loadSnapshot(db);
-  const actor = snapshot.users.find((user) => user.id === actorId);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "admin.users.password",
+    "You do not have permission to reset user passwords.",
+  );
   const target = snapshot.users.find((user) => user.id === input.userId);
-  if (!actor || actor.role !== "superadmin") {
-    throw new Error("Only superadmin users can reset passwords.");
-  }
   if (!target) {
     throw new Error("The selected user could not be found.");
   }
+  ensurePrivilegedUserManagementAllowed(actor, target.role, "reset the password for");
 
   const hashed = await hashPassword(input.newPassword);
   const now = new Date().toISOString();
@@ -1990,16 +2214,18 @@ export async function removeUserInD1(
 ): Promise<UserAdminResponse> {
   await ensureDatabaseReady(db);
   const snapshot = await loadSnapshot(db);
-  const actor = snapshot.users.find((user) => user.id === actorId);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "admin.users.remove",
+    "You do not have permission to remove user accounts.",
+  );
   const target = snapshot.users.find((user) => user.id === input.userId);
-  if (!actor || actor.role !== "superadmin") {
-    throw new Error("Only superadmin users can remove accounts.");
-  }
   if (!target) {
     throw new Error("The selected user could not be found.");
   }
+  ensurePrivilegedUserManagementAllowed(actor, target.role, "remove");
   if (target.id === actorId) {
-    throw new Error("Superadmin users cannot remove their own active account.");
+    throw new Error("You cannot remove your own active account.");
   }
   if (target.role === "superadmin" && (await countSuperadmins(db, input.userId)) === 0) {
     throw new Error("At least one active superadmin must remain in the system.");
@@ -2018,8 +2244,10 @@ export async function removeUserInD1(
       [anonymizedUsername, anonymizedEmail, now, input.userId],
     );
     await execute(db, "DELETE FROM user_location_assignments WHERE user_id = ?", [input.userId]);
+    await execute(db, "DELETE FROM user_permission_overrides WHERE user_id = ?", [input.userId]);
   } else {
     await execute(db, "DELETE FROM user_location_assignments WHERE user_id = ?", [input.userId]);
+    await execute(db, "DELETE FROM user_permission_overrides WHERE user_id = ?", [input.userId]);
     await execute(db, "DELETE FROM users WHERE id = ?", [input.userId]);
   }
 
@@ -2028,6 +2256,109 @@ export async function removeUserInD1(
     actorId,
     "User removed",
     `${target.name} was removed from active access.`,
+  );
+
+  return { snapshot: await loadSnapshot(db) };
+}
+
+export async function updateRolePermissionsInD1(
+  db: D1Database,
+  actorId: string,
+  input: UpdateRolePermissionsRequest,
+): Promise<RolePermissionsResponse> {
+  await ensureDatabaseReady(db);
+  const snapshot = await loadSnapshot(db);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "admin.permissions.edit",
+    "You do not have permission to edit role permissions.",
+  );
+
+  if (input.role === "superadmin") {
+    throw new Error("The superadmin role always keeps full access and cannot be edited.");
+  }
+
+  const desiredPermissions = sanitizeRequestedPermissions(input.role, input.permissions);
+  if (
+    (desiredPermissions.includes("admin.permissions.edit") ||
+      desiredPermissions.includes("admin.permissions.manage")) &&
+    actor.role !== "superadmin"
+  ) {
+    throw new Error(
+      "Only superadmin users can grant permission-edit or permission-management access to roles.",
+    );
+  }
+
+  const now = new Date().toISOString();
+  await execute(db, "DELETE FROM role_permissions WHERE role_code = ?", [input.role]);
+  for (const permission of desiredPermissions) {
+    await execute(
+      db,
+      "INSERT INTO role_permissions (role_code, permission_code, created_at) VALUES (?, ?, ?)",
+      [input.role, permission, now],
+    );
+  }
+
+  const affectedUsers = snapshot.users.filter((user) => user.role === input.role);
+  for (const user of affectedUsers) {
+    await replaceUserPermissionOverrides(db, user.id, desiredPermissions, user.permissions, now);
+  }
+
+  await appendAdminActivity(
+    db,
+    actorId,
+    "Role permissions updated",
+    `${input.role} now has ${desiredPermissions.length} default permissions.`,
+  );
+
+  return { snapshot: await loadSnapshot(db) };
+}
+
+export async function updateSettingsInD1(
+  db: D1Database,
+  actorId: string,
+  input: UpdateSettingsRequest,
+): Promise<SettingsResponse> {
+  await ensureDatabaseReady(db);
+  const snapshot = await loadSnapshot(db);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "admin.environment.edit",
+    "You do not have permission to edit environment settings.",
+  );
+  const nextSettings = validateEnvironmentSettings(input);
+  const now = new Date().toISOString();
+
+  await execute(
+    db,
+    `UPDATE app_settings
+      SET timezone = ?,
+          low_stock_threshold = ?,
+          expiry_alert_days = ?,
+          enable_offline = ?,
+          enable_realtime = ?,
+          enable_barcode = ?,
+          strict_fefo = ?,
+          updated_at = ?
+      WHERE id = ?`,
+    [
+      nextSettings.timezone,
+      nextSettings.lowStockThreshold,
+      nextSettings.expiryAlertDays,
+      nextSettings.enableOffline ? 1 : 0,
+      nextSettings.enableRealtime ? 1 : 0,
+      nextSettings.enableBarcode ? 1 : 0,
+      nextSettings.strictFefo ? 1 : 0,
+      now,
+      SETTINGS_ID,
+    ],
+  );
+
+  await appendAdminActivity(
+    db,
+    actor.id,
+    "Environment settings updated",
+    `${actor.name} updated timezone, alert thresholds, and runtime environment controls.`,
   );
 
   return { snapshot: await loadSnapshot(db) };
@@ -2645,7 +2976,7 @@ export async function updateMarketPriceEntryInD1(
   const snapshot = await loadSnapshot(db);
   const actor = requirePermission(
     snapshot.users.find((user) => user.id === actorId),
-    "master.items",
+    "master.edit",
     "You do not have permission to edit market prices.",
   );
   const existing = snapshot.marketPrices.find((entry) => entry.id === input.marketPriceId);
@@ -2750,7 +3081,7 @@ export async function deleteMarketPriceEntryInD1(
   const snapshot = await loadSnapshot(db);
   const actor = requirePermission(
     snapshot.users.find((user) => user.id === actorId),
-    "master.items",
+    "master.delete",
     "You do not have permission to delete market prices.",
   );
   const existing = snapshot.marketPrices.find((entry) => entry.id === input.marketPriceId);
@@ -2877,7 +3208,7 @@ export async function updateItemInD1(
   const snapshot = await loadSnapshot(db);
   const actor = requirePermission(
     snapshot.users.find((user) => user.id === actorId),
-    "master.items",
+    "master.edit",
     "You do not have permission to edit items.",
   );
   const existing = snapshot.items.find((item) => item.id === input.itemId);
@@ -2970,7 +3301,7 @@ export async function deleteItemInD1(
   const snapshot = await loadSnapshot(db);
   const actor = requirePermission(
     snapshot.users.find((user) => user.id === actorId),
-    "master.items",
+    "master.delete",
     "You do not have permission to delete items.",
   );
   const existing = snapshot.items.find((item) => item.id === input.itemId);
@@ -3080,7 +3411,7 @@ export async function updateSupplierInD1(
   const snapshot = await loadSnapshot(db);
   const actor = requirePermission(
     snapshot.users.find((user) => user.id === actorId),
-    "master.suppliers",
+    "master.edit",
     "You do not have permission to edit suppliers.",
   );
   const existing = snapshot.suppliers.find((supplier) => supplier.id === input.supplierId);
@@ -3144,7 +3475,7 @@ export async function deleteSupplierInD1(
   const snapshot = await loadSnapshot(db);
   const actor = requirePermission(
     snapshot.users.find((user) => user.id === actorId),
-    "master.suppliers",
+    "master.delete",
     "You do not have permission to delete suppliers.",
   );
   const existing = snapshot.suppliers.find((supplier) => supplier.id === input.supplierId);
@@ -3251,7 +3582,7 @@ export async function updateLocationInD1(
   const snapshot = await loadSnapshot(db);
   const actor = requirePermission(
     snapshot.users.find((user) => user.id === actorId),
-    "master.locations",
+    "master.edit",
     "You do not have permission to edit locations.",
   );
   const existing = snapshot.locations.find((location) => location.id === input.locationId);
@@ -3312,7 +3643,7 @@ export async function deleteLocationInD1(
   const snapshot = await loadSnapshot(db);
   const actor = requirePermission(
     snapshot.users.find((user) => user.id === actorId),
-    "master.locations",
+    "master.delete",
     "You do not have permission to delete locations.",
   );
   const existing = snapshot.locations.find((location) => location.id === input.locationId);
@@ -3526,7 +3857,7 @@ export async function reverseInventoryRequestInD1(
 
   const actor = requirePermission(
     snapshot.users.find((user) => user.id === actorId),
-    inventoryPermissionForKind(request.kind),
+    "inventory.reverse",
     "You do not have permission to reverse this inventory entry.",
   );
   const reason = input.reason.trim();
@@ -3576,7 +3907,7 @@ export async function editInventoryRequestInD1(
 
   const actor = requirePermission(
     snapshot.users.find((user) => user.id === actorId),
-    inventoryPermissionForKind(request.kind),
+    "inventory.edit",
     "You do not have permission to edit this inventory entry.",
   );
   const reason = input.reason.trim();
@@ -3653,7 +3984,7 @@ export async function deleteInventoryRequestInD1(
 
   const actor = requirePermission(
     snapshot.users.find((user) => user.id === actorId),
-    inventoryPermissionForKind(request.kind),
+    "inventory.delete",
     "You do not have permission to delete this inventory entry.",
   );
 
@@ -3715,6 +4046,11 @@ export async function applyMutationsToD1(
     }
 
     try {
+      requirePermission(
+        snapshot.users.find((user) => user.id === mutation.actorId),
+        inventoryPermissionForKind(mutation.kind),
+        "You do not have permission to create this inventory entry.",
+      );
       const result = await recordInventoryMutation(db, snapshot, mutation);
       snapshot = result.snapshot;
       appliedMutationIds.push(mutation.clientMutationId);

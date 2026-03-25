@@ -28,7 +28,7 @@ import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
 import PersonOutlineRoundedIcon from "@mui/icons-material/PersonOutlineRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
-import { MODULES, ROLE_PRESETS, canAccessModule } from "../shared/permissions";
+import { MODULES, ROLE_PRESETS, can, canAccessModule } from "../shared/permissions";
 import { AppNotificationCenter } from "./components/AppNotificationCenter";
 import {
   ActivityIcon,
@@ -180,6 +180,8 @@ export default function App() {
     changeProfilePassword,
     createUserAccount,
     updateUserAccount,
+    updateEnvironmentSettings,
+    updateRolePermissionMatrix,
     resetAccountPassword,
     removeUserAccount,
   } = useOmniStockApp();
@@ -222,7 +224,13 @@ export default function App() {
   } else {
     const { snapshot, currentUser } = payload;
     const visibleModules = MODULES.filter((module) => canAccessModule(currentUser, module.key));
-    const hasAdministrationAccess = canAccessModule(currentUser, "administration");
+    const canViewUsers = can(currentUser, "admin.users.view");
+    const canViewSettings =
+      can(currentUser, "admin.settings") ||
+      can(currentUser, "admin.environment.edit") ||
+      can(currentUser, "admin.permissions.edit") ||
+      can(currentUser, "admin.permissions.manage");
+    const canViewActivity = can(currentUser, "admin.activity");
     const sidebarModules = visibleModules.filter((module) => module.key !== "administration");
     const defaultPath = visibleModules[0] ? moduleEntryPath(visibleModules[0].key) : "/";
 
@@ -305,7 +313,7 @@ export default function App() {
       const utilityLinks = [
         {
           label: "Settings",
-          to: hasAdministrationAccess ? "/administration/settings" : "/profile",
+          to: canViewSettings ? "/administration/settings" : "/profile",
           icon: <SettingsRoundedIcon sx={{ fontSize: 18 }} />,
         },
         {
@@ -313,7 +321,7 @@ export default function App() {
           to: "/profile",
           icon: <PersonOutlineRoundedIcon sx={{ fontSize: 18 }} />,
         },
-        ...(hasAdministrationAccess
+        ...(canViewUsers
           ? [
               {
                 label: "Users",
@@ -323,13 +331,13 @@ export default function App() {
             ]
           : []),
         {
-          label: hasAdministrationAccess ? "Activity" : "Reports",
-          to: hasAdministrationAccess
+          label: canViewActivity ? "Activity" : "Reports",
+          to: canViewActivity
             ? "/administration/activity"
             : canAccessModule(currentUser, "reports")
               ? "/reports/analytics"
               : defaultPath,
-          icon: hasAdministrationAccess ? (
+          icon: canViewActivity ? (
             <HistoryRoundedIcon sx={{ fontSize: 18 }} />
           ) : (
             <ActivityIcon size={18} />
@@ -871,6 +879,8 @@ export default function App() {
                           currentUser={currentUser}
                           onCreateUser={createUserAccount}
                           onUpdateUser={updateUserAccount}
+                          onUpdateSettings={updateEnvironmentSettings}
+                          onUpdateRolePermissions={updateRolePermissionMatrix}
                           onResetUserPassword={resetAccountPassword}
                           onRemoveUser={removeUserAccount}
                         />

@@ -24,6 +24,8 @@ import type {
   ReverseInventoryRequest,
   RequestKind,
   ResetUserPasswordRequest,
+  UpdateRolePermissionsRequest,
+  UpdateSettingsRequest,
   UpdateItemRequest,
   UpdateLocationRequest,
   UpdateMarketPriceRequest,
@@ -59,6 +61,8 @@ import {
   updateLocationRecord,
   updateMarketPriceEntry,
   updateOwnProfile,
+  updateSettings,
+  updateRolePermissions,
   updateSupplierRecord,
   updateUser,
 } from "./client";
@@ -772,6 +776,16 @@ export function useOmniStockApp() {
     await applyAdminSnapshot(response.snapshot);
   }
 
+  async function updateRolePermissionMatrix(input: UpdateRolePermissionsRequest) {
+    const response = await updateRolePermissions(input);
+    await applyAdminSnapshot(response.snapshot);
+  }
+
+  async function updateEnvironmentSettings(input: UpdateSettingsRequest) {
+    const response = await updateSettings(input);
+    await applyAdminSnapshot(response.snapshot);
+  }
+
   async function resetAccountPassword(input: ResetUserPasswordRequest) {
     const response = await resetUserPassword(input);
     await applyAdminSnapshot(response.snapshot);
@@ -833,6 +847,8 @@ export function useOmniStockApp() {
     changeProfilePassword,
     createUserAccount,
     updateUserAccount,
+    updateEnvironmentSettings,
+    updateRolePermissionMatrix,
     resetAccountPassword,
     removeUserAccount,
   };

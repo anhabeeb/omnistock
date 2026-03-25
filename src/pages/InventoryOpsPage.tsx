@@ -1,10 +1,12 @@
 import { useDeferredValue, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { OPERATION_LABELS } from "../../shared/operations";
+import { can } from "../../shared/permissions";
 import { findItemByBarcode } from "../../shared/selectors";
 import type {
   InventoryRequest,
   InventorySnapshot,
+  PermissionKey,
   RequestKind,
   ShiftKey,
   User,
@@ -100,6 +102,23 @@ const INVENTORY_SECTIONS = [
   description: string;
 }>;
 
+function createPermissionForKind(kind: RequestKind): PermissionKey {
+  switch (kind) {
+    case "grn":
+      return "inventory.grn";
+    case "gin":
+      return "inventory.gin";
+    case "transfer":
+      return "inventory.transfer";
+    case "adjustment":
+      return "inventory.adjustment";
+    case "stock-count":
+      return "inventory.count";
+    case "wastage":
+      return "inventory.wastage";
+  }
+}
+
 function defaultForm(snapshot: InventorySnapshot, currentUser: User, kind: RequestKind): FormState {
   const fallbackLocation =
     currentUser.assignedLocationIds[0] ?? snapshot.locations[0]?.id ?? "";
@@ -152,6 +171,10 @@ export function InventoryOpsPage({
   const [submitting, setSubmitting] = useState(false);
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const deferredLogSearch = useDeferredValue(logSearch);
+  const canCreateEntries = can(currentUser, createPermissionForKind(activeSection.kind));
+  const canEditEntries = can(currentUser, "inventory.edit");
+  const canReverseEntries = can(currentUser, "inventory.reverse");
+  const canDeleteEntries = can(currentUser, "inventory.delete");
 
   useEffect(() => {
     setForm(defaultForm(snapshot, currentUser, activeSection.kind));
@@ -276,6 +299,10 @@ export function InventoryOpsPage({
   }
 
   function openCreateModal() {
+    if (!canCreateEntries) {
+      setFeedback(`You do not have permission to create ${activeSection.navLabel} entries.`);
+      return;
+    }
     setFeedback(undefined);
     setForm(defaultForm(snapshot, currentUser, activeSection.kind));
     setSearchTerm("");
@@ -313,6 +340,18 @@ export function InventoryOpsPage({
   }
 
   function openRequestModal(mode: Exclude<InventoryDialogMode, "create">, request: InventoryRequest) {
+    if (mode === "edit" && !canEditEntries) {
+      setFeedback("You do not have permission to edit inventory entries.");
+      return;
+    }
+    if (mode === "reverse" && !canReverseEntries) {
+      setFeedback("You do not have permission to reverse inventory entries.");
+      return;
+    }
+    if (mode === "delete" && !canDeleteEntries) {
+      setFeedback("You do not have permission to delete inventory entries.");
+      return;
+    }
     setFeedback(undefined);
     setSelectedRequestId(request.id);
     setActionReason("");
@@ -521,6 +560,7 @@ export function InventoryOpsPage({
                 type="button"
                 className="primary-button"
                 onClick={openCreateModal}
+                disabled={!canCreateEntries}
               >
                 Add New {activeSection.navLabel}
               </button>
@@ -618,35 +658,41 @@ export function InventoryOpsPage({
                           >
                             <ViewIcon size={16} />
                           </button>
-                          <button
-                            type="button"
-                            className="action-icon-button"
-                            onClick={() => openRequestModal("edit", request)}
-                            aria-label={`Edit ${request.reference}`}
-                            title="Edit"
-                            disabled={request.status !== "posted"}
-                          >
-                            <EditIcon size={16} />
-                          </button>
-                          <button
-                            type="button"
-                            className="action-icon-button"
-                            onClick={() => openRequestModal("reverse", request)}
-                            aria-label={`Reverse ${request.reference}`}
-                            title="Cancel or reverse"
-                            disabled={request.status !== "posted"}
-                          >
-                            <ReverseIcon size={16} />
-                          </button>
-                          <button
-                            type="button"
-                            className="action-icon-button danger"
-                            onClick={() => openRequestModal("delete", request)}
-                            aria-label={`Delete ${request.reference}`}
-                            title="Delete"
-                          >
-                            <DeleteIcon size={16} />
-                          </button>
+                          {canEditEntries ? (
+                            <button
+                              type="button"
+                              className="action-icon-button"
+                              onClick={() => openRequestModal("edit", request)}
+                              aria-label={`Edit ${request.reference}`}
+                              title="Edit"
+                              disabled={request.status !== "posted"}
+                            >
+                              <EditIcon size={16} />
+                            </button>
+                          ) : null}
+                          {canReverseEntries ? (
+                            <button
+                              type="button"
+                              className="action-icon-button"
+                              onClick={() => openRequestModal("reverse", request)}
+                              aria-label={`Reverse ${request.reference}`}
+                              title="Cancel or reverse"
+                              disabled={request.status !== "posted"}
+                            >
+                              <ReverseIcon size={16} />
+                            </button>
+                          ) : null}
+                          {canDeleteEntries ? (
+                            <button
+                              type="button"
+                              className="action-icon-button danger"
+                              onClick={() => openRequestModal("delete", request)}
+                              aria-label={`Delete ${request.reference}`}
+                              title="Delete"
+                            >
+                              <DeleteIcon size={16} />
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>

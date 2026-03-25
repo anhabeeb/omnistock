@@ -19,6 +19,7 @@ import {
   nearExpiryAlerts,
   totalOnHand,
 } from "../../shared/selectors";
+import { can } from "../../shared/permissions";
 import type {
   InventoryRequest,
   InventorySnapshot,
@@ -312,6 +313,8 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
   const [exportingData, setExportingData] = useState(false);
   const [generatingReport, setGeneratingReport] = useState(false);
   const deferredSearch = useDeferredValue(search);
+  const canExportReports = can(currentUser, "reports.export");
+  const canPrintReports = can(currentUser, "reports.print");
   const normalizedSearch = deferredSearch.trim().toLowerCase();
   const dateFilter = useMemo(
     () => ({
@@ -1136,6 +1139,10 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
   }
 
   async function handleExportActiveSection() {
+    if (!canExportReports) {
+      setFeedback("You do not have permission to export report data.");
+      return;
+    }
     setExportingData(true);
     setFeedback(undefined);
     try {
@@ -1160,6 +1167,10 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
   }
 
   async function handleGenerateReport() {
+    if (!canExportReports) {
+      setFeedback("You do not have permission to generate report exports.");
+      return;
+    }
     setGeneratingReport(true);
     setFeedback(undefined);
     try {
@@ -1295,13 +1306,21 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
           ) : null}
 
           <Stack direction="row" spacing={1.25} useFlexGap flexWrap="wrap">
-            <Button variant="contained" onClick={() => void handleExportActiveSection()}>
+            <Button
+              variant="contained"
+              onClick={() => void handleExportActiveSection()}
+              disabled={!canExportReports || exportingData || generatingReport}
+            >
               {exportingData ? "Exporting..." : activeExportLabel}
             </Button>
-            <Button variant="outlined" onClick={() => void handleGenerateReport()}>
+            <Button
+              variant="outlined"
+              onClick={() => void handleGenerateReport()}
+              disabled={!canExportReports || exportingData || generatingReport}
+            >
               {generatingReport ? "Generating..." : activeGenerateLabel}
             </Button>
-            <Button variant="text" onClick={printCurrentPage}>
+            <Button variant="text" onClick={printCurrentPage} disabled={!canPrintReports}>
               Print report
             </Button>
           </Stack>
