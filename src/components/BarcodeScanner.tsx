@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 
 interface Props {
   onScan: (value: string) => void;
@@ -142,6 +142,10 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
   const [status, setStatus] = useState("Starting barcode scanner...");
   const [useNativeFallback, setUseNativeFallback] = useState(false);
   const fallbackVideoRef = useRef<HTMLVideoElement | null>(null);
+  const handleScannedValue = useEffectEvent((value: string) => {
+    onScan(value);
+    onClose();
+  });
 
   useEffect(() => {
     let scanner: Html5QrcodeScannerInstance | null = null;
@@ -156,8 +160,7 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
       }
 
       closed = true;
-      onScan(value);
-      onClose();
+      handleScannedValue(value);
     }
 
     function stopFallbackStream() {
@@ -340,7 +343,7 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
         });
       }
     };
-  }, [onClose, onScan, readerId]);
+  }, [handleScannedValue, readerId]);
 
   function submitManualValue() {
     const normalized = manualValue.trim();
@@ -349,8 +352,7 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
       return;
     }
 
-    onScan(normalized);
-    onClose();
+    handleScannedValue(normalized);
   }
 
   return (
