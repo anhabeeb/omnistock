@@ -22,7 +22,7 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
 
     async function initScanner() {
       try {
-        const module = (await import("html5-qrcode")) as {
+        const module = (await import("html5-qrcode/esm/index.js")) as {
           Html5QrcodeScanner: new (
             elementId: string,
             config: { fps: number; qrbox: { width: number; height: number } },
