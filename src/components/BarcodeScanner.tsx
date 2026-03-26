@@ -1,76 +1,158 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface Props {
   onScan: (value: string) => void;
   onClose: () => void;
 }
 
-type ScannerInstance = {
-  render: (
-    onSuccess: (decodedText: string) => void,
-    onError: (errorMessage: string) => void,
-  ) => void;
-  clear: () => Promise<void>;
+type BarcodeDetectionResult = {
+  rawValue?: string;
 };
 
+type BarcodeDetectorInstance = {
+  detect: (source: ImageBitmapSource) => Promise<BarcodeDetectionResult[]>;
+};
+
+type BarcodeDetectorConstructor = new (options?: {
+  formats?: string[];
+}) => BarcodeDetectorInstance;
+
+const SCAN_FORMATS = [
+  "code_128",
+  "code_39",
+  "codabar",
+  "ean_13",
+  "ean_8",
+  "itf",
+  "upc_a",
+  "upc_e",
+  "qr_code",
+];
+
+function getBarcodeDetector(): BarcodeDetectorConstructor | null {
+  const detector = (globalThis as { BarcodeDetector?: BarcodeDetectorConstructor }).BarcodeDetector;
+  return detector ?? null;
+}
+
 export function BarcodeScanner({ onScan, onClose }: Props) {
-  const elementIdRef = useRef(`barcode-reader-${Math.random().toString(36).slice(2, 10)}`);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const detectorRef = useRef<BarcodeDetectorInstance | null>(null);
+  const [manualValue, setManualValue] = useState("");
+  const [status, setStatus] = useState("Starting camera...");
+  const [cameraReady, setCameraReady] = useState(false);
 
   useEffect(() => {
-    let scanner: ScannerInstance | null = null;
     let disposed = false;
 
-    async function initScanner() {
+    async function startScanner() {
+      const Detector = getBarcodeDetector();
+      if (!Detector) {
+        setStatus("Camera scanning is not supported in this browser. Enter the barcode manually below.");
+        return;
+      }
+
+      detectorRef.current = new Detector({ formats: SCAN_FORMATS });
+
       try {
-        const module = (await import("html5-qrcode/esm/index.js")) as {
-          Html5QrcodeScanner: new (
-            elementId: string,
-            config: { fps: number; qrbox: { width: number; height: number } },
-            verbose?: boolean,
-          ) => ScannerInstance;
-        };
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+          },
+          audio: false,
+        });
 
         if (disposed) {
+          stream.getTracks().forEach((track) => track.stop());
           return;
         }
 
-        scanner = new module.Html5QrcodeScanner(
-          elementIdRef.current,
-          { fps: 10, qrbox: { width: 250, height: 250 } },
-          false,
-        );
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+        setCameraReady(true);
+        setStatus("Align the barcode inside the frame to scan it.");
 
-        scanner.render(
-          (decodedText: string) => {
-            onScan(decodedText);
-            void scanner?.clear();
-            onClose();
-          },
-          () => {
-            // Ignore live scan noise and only react on successful scans.
-          },
-        );
+        const scanFrame = async () => {
+          if (disposed || !videoRef.current || !detectorRef.current) {
+            return;
+          }
+
+          try {
+            if (videoRef.current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+              const results = await detectorRef.current.detect(videoRef.current);
+              const value = results.find((entry) => entry.rawValue?.trim())?.rawValue?.trim();
+              if (value) {
+                onScan(value);
+                onClose();
+                return;
+              }
+            }
+          } catch {
+            // Ignore transient frame detection errors.
+          }
+
+          rafRef.current = window.setTimeout(() => {
+            void scanFrame();
+          }, 300) as unknown as number;
+        };
+
+        void scanFrame();
       } catch (error) {
-        console.error("Failed to initialize barcode scanner", error);
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Camera access was not available. Enter the barcode manually below.";
+        setStatus(message);
       }
     }
 
-    void initScanner();
+    void startScanner();
 
     return () => {
       disposed = true;
-      if (scanner) {
-        void scanner.clear().catch((error) => {
-          console.error("Failed to clear barcode scanner", error);
-        });
+      if (rafRef.current !== null) {
+        window.clearTimeout(rafRef.current);
       }
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     };
   }, [onClose, onScan]);
 
+  function handleManualSubmit() {
+    const nextValue = manualValue.trim();
+    if (!nextValue) {
+      setStatus("Enter a barcode, SKU, or item code before continuing.");
+      return;
+    }
+
+    onScan(nextValue);
+    onClose();
+  }
+
   return (
     <div className="barcode-modal-scanner">
-      <div id={elementIdRef.current} />
-      <p className="barcode-modal-copy">Align the barcode inside the frame to scan it.</p>
+      <div className="barcode-modal-preview">
+        {cameraReady ? (
+          <video ref={videoRef} className="barcode-modal-video" playsInline muted autoPlay />
+        ) : (
+          <div className="barcode-modal-placeholder">{status}</div>
+        )}
+      </div>
+      <p className="barcode-modal-copy">{status}</p>
+      <div className="barcode-modal-manual">
+        <input
+          value={manualValue}
+          onChange={(event) => setManualValue(event.target.value)}
+          placeholder="Enter barcode, SKU, or item code"
+        />
+        <button type="button" className="primary-button" onClick={handleManualSubmit}>
+          Use Code
+        </button>
+      </div>
     </div>
   );
 }
