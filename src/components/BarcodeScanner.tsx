@@ -5,25 +5,32 @@ interface Props {
   onClose: () => void;
 }
 
-type Html5QrcodeScannerInstance = {
-  render: (
-    onSuccess: (decodedText: string) => void,
-    onError: (errorMessage: string) => void,
-  ) => void;
-  clear: () => Promise<void>;
+type Html5QrcodeCamera = {
+  id: string;
+  label: string;
 };
 
-type Html5QrcodeScannerConstructor = new (
-  elementId: string,
-  config: { fps: number; qrbox: { width: number; height: number } },
-  verbose?: boolean,
-) => Html5QrcodeScannerInstance;
+type Html5QrcodeInstance = {
+  start: (
+    cameraConfig: string | { facingMode: "environment" | "user" },
+    config: { fps: number; qrbox: { width: number; height: number } },
+    onSuccess: (decodedText: string) => void,
+    onError: (errorMessage: string) => void,
+  ) => Promise<unknown>;
+  stop: () => Promise<void>;
+  clear: () => void;
+};
+
+type Html5QrcodeConstructor = {
+  new (elementId: string, verbose?: boolean): Html5QrcodeInstance;
+  getCameras: () => Promise<Html5QrcodeCamera[]>;
+};
 
 declare global {
   interface Window {
-    Html5QrcodeScanner?: Html5QrcodeScannerConstructor;
+    Html5Qrcode?: Html5QrcodeConstructor;
     __Html5QrcodeLibrary__?: {
-      Html5QrcodeScanner?: Html5QrcodeScannerConstructor;
+      Html5Qrcode?: Html5QrcodeConstructor;
     };
   }
 }
@@ -53,13 +60,13 @@ function waitForScannerGlobal(timeoutMs = 4000): Promise<void> {
 }
 
 function ensureScannerGlobal(): boolean {
-  if (window.Html5QrcodeScanner) {
+  if (window.Html5Qrcode) {
     return true;
   }
 
-  const fallback = window.__Html5QrcodeLibrary__?.Html5QrcodeScanner;
+  const fallback = window.__Html5QrcodeLibrary__?.Html5Qrcode;
   if (fallback) {
-    window.Html5QrcodeScanner = fallback;
+    window.Html5Qrcode = fallback;
     return true;
   }
 
@@ -123,17 +130,30 @@ function ensureScannerScript(): Promise<void> {
   return loadPromise;
 }
 
+function pickPreferredCamera(cameras: Html5QrcodeCamera[]): Html5QrcodeCamera | null {
+  if (!cameras.length) {
+    return null;
+  }
+
+  const rearCamera = cameras.find((camera) =>
+    /back|rear|environment|world/i.test(camera.label),
+  );
+
+  return rearCamera ?? cameras[0];
+}
+
 export function BarcodeScanner({ onScan, onClose }: Props) {
   const readerId = useId().replace(/:/g, "");
   const [manualValue, setManualValue] = useState("");
-  const [status, setStatus] = useState("Starting barcode scanner...");
+  const [status, setStatus] = useState("Preparing barcode scanner...");
   const handleScannedValue = useEffectEvent((value: string) => {
     onScan(value);
     onClose();
   });
 
   useEffect(() => {
-    let scanner: Html5QrcodeScannerInstance | null = null;
+    let scanner: Html5QrcodeInstance | null = null;
+    let started = false;
     let cancelled = false;
     let closed = false;
 
@@ -146,34 +166,62 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
       handleScannedValue(value);
     }
 
+    async function startByPreferredCamera(html5Qrcode: Html5QrcodeInstance) {
+      try {
+        await html5Qrcode.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          (decodedText: string) => {
+            closeWithValue(decodedText);
+          },
+          () => {
+            // Ignore transient scanner read failures while camera is active.
+          },
+        );
+        started = true;
+        return;
+      } catch {
+        const cameras = await window.Html5Qrcode!.getCameras();
+        const preferredCamera = pickPreferredCamera(cameras);
+
+        if (!preferredCamera) {
+          throw new Error("No camera was found on this device.");
+        }
+
+        await html5Qrcode.start(
+          preferredCamera.id,
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          (decodedText: string) => {
+            closeWithValue(decodedText);
+          },
+          () => {
+            // Ignore transient scanner read failures while camera is active.
+          },
+        );
+        started = true;
+      }
+    }
+
     async function startScanner() {
       await ensureScannerScript();
       if (cancelled) {
         return;
       }
 
-      if (!ensureScannerGlobal() || !window.Html5QrcodeScanner) {
+      if (!ensureScannerGlobal() || !window.Html5Qrcode) {
         throw new Error("Scanner engine is unavailable on this device.");
       }
 
-      setStatus("Align barcode or QR code within the frame to scan.");
-      scanner = new window.Html5QrcodeScanner(
-        readerId,
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        false,
-      );
+      scanner = new window.Html5Qrcode(readerId, false);
+      setStatus("Requesting camera access...");
 
-      scanner.render(
-        (decodedText: string) => {
-          closeWithValue(decodedText);
-          if (scanner) {
-            void scanner.clear();
-          }
-        },
-        () => {
-          // Ignore transient scanner errors while the camera is live.
-        },
-      );
+      await startByPreferredCamera(scanner);
+
+      if (cancelled || closed) {
+        return;
+      }
+
+      setStatus("Align barcode within the frame to scan.");
     }
 
     void startScanner().catch((error) => {
@@ -186,10 +234,17 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
 
     return () => {
       cancelled = true;
-      if (scanner) {
-        void scanner.clear().catch(() => {
+      if (scanner && started) {
+        void scanner.stop().catch(() => {
           // Ignore cleanup failures when leaving the modal.
         });
+      }
+      if (scanner) {
+        try {
+          scanner.clear();
+        } catch {
+          // Ignore cleanup failures when the scanner was not fully initialized.
+        }
       }
     };
   }, [handleScannedValue, readerId]);
