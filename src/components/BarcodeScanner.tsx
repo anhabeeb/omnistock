@@ -235,9 +235,19 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
     return () => {
       cancelled = true;
       if (scanner && started) {
-        void scanner.stop().catch(() => {
-          // Ignore cleanup failures when leaving the modal.
-        });
+        void scanner
+          .stop()
+          .catch(() => {
+            // Ignore cleanup failures when leaving the modal.
+          })
+          .finally(() => {
+            try {
+              scanner?.clear();
+            } catch {
+              // Ignore cleanup failures when the scanner was not fully initialized.
+            }
+          });
+        return;
       }
       if (scanner) {
         try {
@@ -247,7 +257,7 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
         }
       }
     };
-  }, [handleScannedValue, readerId]);
+  }, [readerId]);
 
   function submitManualValue() {
     const normalized = manualValue.trim();
