@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 interface Props {
   onScan: (value: string) => void;
@@ -19,16 +19,46 @@ type Html5QrcodeScannerConstructor = new (
   verbose?: boolean,
 ) => Html5QrcodeScannerInstance;
 
+type DetectedBarcode = {
+  rawValue?: string;
+};
+
+type BarcodeDetectorInstance = {
+  detect: (source: ImageBitmapSource) => Promise<DetectedBarcode[]>;
+};
+
+type BarcodeDetectorConstructor = new (config?: {
+  formats?: string[];
+}) => BarcodeDetectorInstance;
+
 declare global {
   interface Window {
     Html5QrcodeScanner?: Html5QrcodeScannerConstructor;
+    __Html5QrcodeLibrary__?: {
+      Html5QrcodeScanner?: Html5QrcodeScannerConstructor;
+    };
+    BarcodeDetector?: BarcodeDetectorConstructor;
   }
 }
 
 let scannerScriptPromise: Promise<void> | null = null;
 
-function ensureScannerScript(): Promise<void> {
+function ensureScannerGlobal(): boolean {
   if (window.Html5QrcodeScanner) {
+    return true;
+  }
+
+  const fallback = window.__Html5QrcodeLibrary__?.Html5QrcodeScanner;
+  if (fallback) {
+    window.Html5QrcodeScanner = fallback;
+    return true;
+  }
+
+  return false;
+}
+
+function ensureScannerScript(): Promise<void> {
+  if (ensureScannerGlobal()) {
     return Promise.resolve();
   }
 
@@ -42,6 +72,11 @@ function ensureScannerScript(): Promise<void> {
     );
 
     if (existing) {
+      if (existing.dataset.loaded === "true" && ensureScannerGlobal()) {
+        resolve();
+        return;
+      }
+
       existing.addEventListener("load", () => resolve(), { once: true });
       existing.addEventListener(
         "error",
@@ -55,7 +90,14 @@ function ensureScannerScript(): Promise<void> {
     script.src = `${import.meta.env.BASE_URL}vendor/html5-qrcode.min.js`;
     script.async = true;
     script.dataset.omnistockScanner = "html5-qrcode";
-    script.onload = () => resolve();
+    script.onload = () => {
+      script.dataset.loaded = "true";
+      if (ensureScannerGlobal()) {
+        resolve();
+        return;
+      }
+      reject(new Error("Scanner engine is unavailable on this device."));
+    };
     script.onerror = () => reject(new Error("Scanner script failed to load."));
     document.head.appendChild(script);
   }).catch((error) => {
@@ -71,10 +113,123 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
   const readerId = useId().replace(/:/g, "");
   const [manualValue, setManualValue] = useState("");
   const [status, setStatus] = useState("Starting barcode scanner...");
+  const [useNativeFallback, setUseNativeFallback] = useState(false);
+  const fallbackVideoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     let scanner: Html5QrcodeScannerInstance | null = null;
+    let fallbackStream: MediaStream | null = null;
+    let frameHandle: number | null = null;
     let cancelled = false;
+    let closed = false;
+
+    function closeWithValue(value: string) {
+      if (closed) {
+        return;
+      }
+
+      closed = true;
+      onScan(value);
+      onClose();
+    }
+
+    function stopFallbackStream() {
+      if (frameHandle !== null) {
+        cancelAnimationFrame(frameHandle);
+        frameHandle = null;
+      }
+
+      if (fallbackStream) {
+        fallbackStream.getTracks().forEach((track) => track.stop());
+        fallbackStream = null;
+      }
+
+      const video = fallbackVideoRef.current;
+      if (video) {
+        video.srcObject = null;
+      }
+    }
+
+    async function startNativeFallback(errorMessage?: string) {
+      setUseNativeFallback(true);
+
+      if (!window.BarcodeDetector) {
+        throw new Error(
+          errorMessage ?? "Camera scanning is not supported on this device.",
+        );
+      }
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error(
+          errorMessage ?? "Camera access is not supported on this device.",
+        );
+      }
+
+      const video = fallbackVideoRef.current;
+      if (!video) {
+        throw new Error("Camera preview could not be prepared.");
+      }
+
+      fallbackStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+        },
+      });
+
+      if (cancelled) {
+        stopFallbackStream();
+        return;
+      }
+
+      video.srcObject = fallbackStream;
+      video.setAttribute("playsinline", "true");
+      await video.play();
+
+      const detector = new window.BarcodeDetector({
+        formats: [
+          "qr_code",
+          "code_128",
+          "code_39",
+          "ean_13",
+          "ean_8",
+          "upc_a",
+          "upc_e",
+          "itf",
+          "codabar",
+        ],
+      });
+
+      setStatus("Align barcode within the frame to scan.");
+
+      const scanFrame = async () => {
+        if (cancelled || closed) {
+          return;
+        }
+
+        try {
+          if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            const results = await detector.detect(video);
+            const match = results.find((item) => item.rawValue?.trim());
+            if (match?.rawValue) {
+              stopFallbackStream();
+              closeWithValue(match.rawValue.trim());
+              return;
+            }
+          }
+        } catch {
+          // Ignore transient detection failures and keep scanning.
+        }
+
+        frameHandle = requestAnimationFrame(() => {
+          void scanFrame();
+        });
+      };
+
+      frameHandle = requestAnimationFrame(() => {
+        void scanFrame();
+      });
+    }
 
     async function startScanner() {
       try {
@@ -83,7 +238,7 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
           return;
         }
 
-        if (!window.Html5QrcodeScanner) {
+        if (!ensureScannerGlobal() || !window.Html5QrcodeScanner) {
           throw new Error("Scanner engine is unavailable on this device.");
         }
 
@@ -96,22 +251,29 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
 
         scanner.render(
           (decodedText: string) => {
-            onScan(decodedText);
+            closeWithValue(decodedText);
             if (scanner) {
               void scanner.clear();
             }
-            onClose();
           },
           () => {
             // Ignore transient scanner errors while the camera is live.
           },
         );
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Barcode scanner could not start on this device.";
-        setStatus(`${message} Enter the barcode manually.`);
+        try {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Barcode scanner could not start on this device.";
+          await startNativeFallback(message);
+        } catch (fallbackError) {
+          const message =
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : "Barcode scanner could not start on this device.";
+          setStatus(`${message} Enter the barcode manually.`);
+        }
       }
     }
 
@@ -119,6 +281,7 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
 
     return () => {
       cancelled = true;
+      stopFallbackStream();
       if (scanner) {
         void scanner.clear().catch(() => {
           // Ignore cleanup failures when leaving the modal.
@@ -140,7 +303,13 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
 
   return (
     <div className="barcode-modal-scanner">
-      <div id={readerId} className="barcode-modal-preview barcode-modal-reader" />
+      {useNativeFallback ? (
+        <div className="barcode-modal-preview barcode-modal-fallback">
+          <video ref={fallbackVideoRef} muted autoPlay playsInline />
+        </div>
+      ) : (
+        <div id={readerId} className="barcode-modal-preview barcode-modal-reader" />
+      )}
       <p className="barcode-modal-copy">{status}</p>
       <div className="barcode-manual-entry">
         <input

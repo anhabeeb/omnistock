@@ -1,5 +1,6 @@
 import { BarcodeScanner } from "./BarcodeScanner";
 import { CloseIcon } from "./AppIcons";
+import { createPortal } from "react-dom";
 
 interface Props {
   isOpen: boolean;
@@ -12,7 +13,11 @@ export function BarcodeScanModal({ isOpen, onClose, onScan }: Props) {
     return null;
   }
 
-  return (
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
     <div className="page-popup-scrim barcode-modal-scrim" onClick={onClose}>
       <div className="page-popup-card barcode-modal-card" onClick={(event) => event.stopPropagation()}>
         <div className="barcode-modal-header">
@@ -27,6 +32,7 @@ export function BarcodeScanModal({ isOpen, onClose, onScan }: Props) {
         <BarcodeScanner onScan={onScan} onClose={onClose} />
         <p className="barcode-modal-footnote">Position the barcode within the frame to scan it.</p>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
