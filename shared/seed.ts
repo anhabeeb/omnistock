@@ -1,4 +1,8 @@
-import { createDefaultReportPrintTemplate, DEFAULT_TIME_SOURCE } from "./defaults";
+import {
+  createDefaultNotificationSettings,
+  createDefaultReportPrintTemplate,
+  DEFAULT_TIME_SOURCE,
+} from "./defaults";
 import { ROLE_PRESETS } from "./permissions";
 import type {
   AppSettings,
@@ -698,6 +702,7 @@ const settings: AppSettings = {
   enableBarcode: true,
   strictFefo: true,
   reportPrintTemplate: createDefaultReportPrintTemplate("OmniStock Demo Holdings"),
+  notificationSettings: createDefaultNotificationSettings(),
 };
 
 export function createSeedSnapshot(): InventorySnapshot {
@@ -712,6 +717,7 @@ export function createSeedSnapshot(): InventorySnapshot {
     users: structuredClone(users),
     requests: structuredClone(requests),
     movementLedger: structuredClone(movementLedger),
+    notifications: [],
     rolePermissions: structuredClone(rolePermissions),
     activity: [
       {
@@ -827,6 +833,8 @@ export function createEmptySnapshot(): InventorySnapshot {
       enableBarcode: true,
       strictFefo: true,
       reportPrintTemplate: createDefaultReportPrintTemplate("OmniStock"),
+      notificationSettings: createDefaultNotificationSettings(),
     },
+    notifications: [],
   };
 }

@@ -11,6 +11,7 @@ import type {
   CreateUserRequest,
   InventorySnapshot,
   PermissionKey,
+  ReportPrintTemplate,
   ResetUserPasswordRequest,
   Role,
   UpdateSettingsRequest,
@@ -24,6 +25,8 @@ import {
   matchesDateFilter,
 } from "../lib/dateFilters";
 import { formatDateTime } from "../lib/format";
+import { AdminIcon, DeleteIcon, EditIcon, PlusIcon } from "../components/AppIcons";
+import { PrintDesigner } from "../components/PrintDesigner";
 
 interface Props {
   snapshot: InventorySnapshot;
@@ -34,6 +37,7 @@ interface Props {
   onUpdateRolePermissions: (input: UpdateRolePermissionsRequest) => Promise<void>;
   onResetUserPassword: (input: ResetUserPasswordRequest) => Promise<void>;
   onRemoveUser: (userId: string) => Promise<void>;
+  onSendTestTelegramNotification: (message?: string) => Promise<{ ok: boolean; detail: string }>;
 }
 
 interface UserFormState {
@@ -58,8 +62,8 @@ interface CreateFormState {
 }
 
 type SettingsFormState = UpdateSettingsRequest;
-type SettingsTabKey = "environment" | "print" | "permissions";
-type UserTabKey = "directory" | "controls";
+type SettingsTabKey = "environment" | "notifications" | "print" | "permissions";
+type UserDialogMode = "create" | "edit" | "access" | "remove";
 
 const FALLBACK_TIMEZONES = [
   "UTC",
@@ -183,6 +187,7 @@ function buildSettingsState(snapshot: InventorySnapshot): SettingsFormState {
     enableBarcode: snapshot.settings.enableBarcode,
     strictFefo: snapshot.settings.strictFefo,
     reportPrintTemplate: { ...snapshot.settings.reportPrintTemplate },
+    notificationSettings: structuredClone(snapshot.settings.notificationSettings),
   };
 }
 
@@ -203,6 +208,7 @@ export function AdminPage({
   onUpdateRolePermissions,
   onResetUserPassword,
   onRemoveUser,
+  onSendTestTelegramNotification,
 }: Props) {
   const location = useLocation();
   const activeSlug = location.pathname.split("/")[2] ?? ADMIN_SECTIONS[0].slug;
@@ -210,6 +216,7 @@ export function AdminPage({
     section.slug === "settings"
       ? can(currentUser, "admin.settings") ||
         can(currentUser, "admin.environment.edit") ||
+        can(currentUser, "admin.notifications.edit") ||
         can(currentUser, "admin.permissions.edit") ||
         can(currentUser, "admin.permissions.manage")
       : can(currentUser, SECTION_PERMISSION[section.slug]),
@@ -240,7 +247,7 @@ export function AdminPage({
     buildSettingsState(snapshot),
   );
   const [settingsTab, setSettingsTab] = useState<SettingsTabKey>("environment");
-  const [userTab, setUserTab] = useState<UserTabKey>("directory");
+  const [userDialogMode, setUserDialogMode] = useState<UserDialogMode | null>(null);
   const [selectedRoleDraft, setSelectedRoleDraft] = useState<Role>(currentUser.role);
   const [settingsFeedback, setSettingsFeedback] = useState<string>();
   const [newPassword, setNewPassword] = useState("");
@@ -251,9 +258,12 @@ export function AdminPage({
   const canResetUserPasswords = can(currentUser, "admin.users.password");
   const canRemoveUsers = can(currentUser, "admin.users.remove");
   const canEditEnvironmentSettings = can(currentUser, "admin.environment.edit");
+  const canEditNotificationSettings = can(currentUser, "admin.notifications.edit");
   const canEditRolePermissions = can(currentUser, "admin.permissions.edit");
   const canManagePermissionOverrides = can(currentUser, "admin.permissions.manage");
   const canDelegatePermissionAccess = currentUser.role === "superadmin";
+  const canOpenAccessControl =
+    canManagePermissionOverrides || canResetUserPasswords || canEditUsers;
   const assignableRoles = (Object.keys(ROLE_PRESETS) as Role[]).filter(
     (role) => currentUser.role === "superadmin" || role !== "superadmin",
   );
@@ -273,14 +283,6 @@ export function AdminPage({
   const selectedUser = useMemo(
     () => manageableUsers.find((user) => user.id === selectedUserId) ?? manageableUsers[0] ?? null,
     [manageableUsers, selectedUserId],
-  );
-  const userTabs = useMemo(
-    () =>
-      [
-        { key: "directory", label: "User Directory" },
-        { key: "controls", label: canManageUsers ? "Access Controls" : "Access Notice" },
-      ] satisfies Array<{ key: UserTabKey; label: string }>,
-    [canManageUsers],
   );
   const timezoneOptions = useMemo(
     () => getTimezoneOptions(settingsForm.timezone || snapshot.settings.timezone),
@@ -349,10 +351,23 @@ export function AdminPage({
   }, [currentUser.role]);
 
   useEffect(() => {
-    if (!userTabs.some((tab) => tab.key === userTab)) {
-      setUserTab(userTabs[0]?.key ?? "directory");
+    if (!userDialogMode) {
+      return;
     }
-  }, [userTab, userTabs]);
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape" || submitting) {
+        return;
+      }
+
+      setUserDialogMode(null);
+      setNewPassword("");
+      setFeedback(undefined);
+    }
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [submitting, userDialogMode]);
 
   function patchCreate<K extends keyof CreateFormState>(key: K, value: CreateFormState[K]) {
     setCreateForm((current) => ({ ...current, [key]: value }));
@@ -375,6 +390,62 @@ export function AdminPage({
       reportPrintTemplate: {
         ...current.reportPrintTemplate,
         [key]: value,
+      },
+    }));
+  }
+
+  function replacePrintTemplate(nextTemplate: ReportPrintTemplate) {
+    setSettingsForm((current) => ({
+      ...current,
+      reportPrintTemplate: nextTemplate,
+    }));
+  }
+
+  function patchNotificationSettings<K extends keyof SettingsFormState["notificationSettings"]>(
+    key: K,
+    value: SettingsFormState["notificationSettings"][K],
+  ) {
+    setSettingsForm((current) => ({
+      ...current,
+      notificationSettings: {
+        ...current.notificationSettings,
+        [key]: value,
+      },
+    }));
+  }
+
+  function patchNotificationRule(
+    key: Exclude<
+      keyof SettingsFormState["notificationSettings"],
+      "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
+    >,
+    field: "enabled" | "inApp" | "telegram",
+    value: boolean,
+  ) {
+    setSettingsForm((current) => ({
+      ...current,
+      notificationSettings: {
+        ...current.notificationSettings,
+        [key]: {
+          ...current.notificationSettings[key],
+          [field]: value,
+        },
+      },
+    }));
+  }
+
+  function patchDailySummarySetting(
+    field: "enabled" | "inApp" | "telegram" | "hour" | "scope",
+    value: boolean | number | "warehouse" | "branch",
+  ) {
+    setSettingsForm((current) => ({
+      ...current,
+      notificationSettings: {
+        ...current.notificationSettings,
+        dailySummary: {
+          ...current.notificationSettings.dailySummary,
+          [field]: value,
+        },
       },
     }));
   }
@@ -430,6 +501,38 @@ export function AdminPage({
     patchEdit("permissions", togglePermission(editForm.permissions, permission));
   }
 
+  function closeUserDialog(force = false) {
+    if (submitting && !force) {
+      return;
+    }
+
+    setUserDialogMode(null);
+    setNewPassword("");
+  }
+
+  function openCreateUserDialog() {
+    if (!canCreateUsers) {
+      return;
+    }
+
+    setCreateForm(buildCreateState(snapshot.rolePermissions));
+    setFeedback(undefined);
+    setNewPassword("");
+    setUserDialogMode("create");
+  }
+
+  function openUserDialog(mode: Exclude<UserDialogMode, "create">, user: User) {
+    if (user.role === "superadmin" && currentUser.role !== "superadmin") {
+      return;
+    }
+
+    setSelectedUserId(user.id);
+    setEditForm(buildEditState(user));
+    setFeedback(undefined);
+    setNewPassword("");
+    setUserDialogMode(mode);
+  }
+
   function toggleRolePermission(role: Role, permission: PermissionKey) {
     if (!canEditRolePermissions || role === "superadmin") {
       return;
@@ -473,7 +576,7 @@ export function AdminPage({
     JSON.stringify(settingsForm) !== JSON.stringify(buildSettingsState(snapshot));
 
   async function handleSaveSettings() {
-    if (!canEditEnvironmentSettings) {
+    if (!canEditEnvironmentSettings && !canEditNotificationSettings) {
       return;
     }
 
@@ -485,6 +588,25 @@ export function AdminPage({
     } catch (error) {
       setSettingsFeedback(
         error instanceof Error ? error.message : "Could not update the environment settings.",
+      );
+    } finally {
+      setSubmitting(undefined);
+    }
+  }
+
+  async function handleSendTelegramTest() {
+    if (!canEditNotificationSettings) {
+      return;
+    }
+
+    setSubmitting("telegram-test");
+    setSettingsFeedback(undefined);
+    try {
+      const result = await onSendTestTelegramNotification();
+      setSettingsFeedback(result.detail);
+    } catch (error) {
+      setSettingsFeedback(
+        error instanceof Error ? error.message : "Could not send the Telegram test message.",
       );
     } finally {
       setSubmitting(undefined);
@@ -691,6 +813,7 @@ export function AdminPage({
 
       setCreateForm(buildCreateState(snapshot.rolePermissions));
       setFeedback("New user account created successfully.");
+      closeUserDialog(true);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not create the user.");
     } finally {
@@ -698,13 +821,16 @@ export function AdminPage({
     }
   }
 
-  async function handleUpdateUser(event: React.FormEvent<HTMLFormElement>) {
+  async function handleUpdateUser(
+    event: React.FormEvent<HTMLFormElement>,
+    mode: "edit" | "access" = "edit",
+  ) {
     event.preventDefault();
     if (!editForm) {
       return;
     }
 
-    setSubmitting("update");
+    setSubmitting(mode === "access" ? "access" : "update");
     setFeedback(undefined);
 
     try {
@@ -719,9 +845,20 @@ export function AdminPage({
         permissions: editForm.permissions,
       });
 
-      setFeedback("User information updated successfully.");
+      setFeedback(
+        mode === "access"
+          ? "User access controls updated successfully."
+          : "User information updated successfully.",
+      );
+      closeUserDialog(true);
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Could not update the user.");
+      setFeedback(
+        error instanceof Error
+          ? error.message
+          : mode === "access"
+            ? "Could not update the access controls."
+            : "Could not update the user.",
+      );
     } finally {
       setSubmitting(undefined);
     }
@@ -748,6 +885,7 @@ export function AdminPage({
 
       setNewPassword("");
       setFeedback(`Password reset for ${selectedUser.name} completed.`);
+      closeUserDialog(true);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not reset the password.");
     } finally {
@@ -761,16 +899,13 @@ export function AdminPage({
       return;
     }
 
-    if (!window.confirm(`Remove ${target.name} from OmniStock access?`)) {
-      return;
-    }
-
     setSubmitting(`remove:${userId}`);
     setFeedback(undefined);
 
     try {
       await onRemoveUser(userId);
       setFeedback(`${target.name} has been removed from active access.`);
+      closeUserDialog(true);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not remove the user.");
     } finally {
@@ -824,28 +959,18 @@ export function AdminPage({
 
       {activeSection.slug === "users" ? (
         <section className="page-stack">
-          <div className="settings-tab-row" role="tablist" aria-label="User management views">
-            {userTabs.map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                role="tab"
-                aria-selected={userTab === tab.key}
-                className={`settings-tab-button${userTab === tab.key ? " is-active" : ""}`}
-                onClick={() => setUserTab(tab.key)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {userTab === "directory" ? (
           <article className="panel">
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Users</p>
                 <h2>Role Directory</h2>
               </div>
+              {canCreateUsers ? (
+                <button type="button" className="primary-button" onClick={openCreateUserDialog}>
+                  <PlusIcon size={16} />
+                  <span>Create User</span>
+                </button>
+              ) : null}
             </div>
             <div className="table-toolbar" style={{ marginBottom: "16px", justifyContent: "flex-start" }}>
               <input
@@ -883,220 +1008,334 @@ export function AdminPage({
                     <th>Assigned Sites</th>
                     <th>Permissions</th>
                     <th>Last Seen</th>
-                    {canManageUsers ? <th>Manage</th> : null}
+                    {canManageUsers ? <th>Actions</th> : null}
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredUsers.map((user) => (
-                    <tr key={user.id}>
-                      <td>
-                        {user.name}
-                        <small>{user.email}</small>
+                  {filteredUsers.length ? (
+                    filteredUsers.map((user) => {
+                      const isLocked =
+                        user.role === "superadmin" && currentUser.role !== "superadmin";
+
+                      return (
+                        <tr key={user.id}>
+                          <td>
+                            {user.name}
+                            <small>{user.email}</small>
+                          </td>
+                          <td>{user.username}</td>
+                          <td>{ROLE_PRESETS[user.role].label}</td>
+                          <td>{statusLabel(user.status)}</td>
+                          <td>{user.assignedLocationIds.length}</td>
+                          <td>{user.permissions.length}</td>
+                          <td>{formatDateTime(user.lastSeenAt)}</td>
+                          {canManageUsers ? (
+                            <td>
+                              <div className="row-action-group">
+                                <button
+                                  type="button"
+                                  className="action-icon-button"
+                                  title="Edit user"
+                                  aria-label={`Edit ${user.name}`}
+                                  disabled={!canEditUsers || isLocked}
+                                  onClick={() => openUserDialog("edit", user)}
+                                >
+                                  <EditIcon size={16} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="action-icon-button"
+                                  title="Access control"
+                                  aria-label={`Access control for ${user.name}`}
+                                  disabled={!canOpenAccessControl || isLocked}
+                                  onClick={() => openUserDialog("access", user)}
+                                >
+                                  <AdminIcon size={16} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="action-icon-button danger"
+                                  title="Remove user"
+                                  aria-label={`Remove ${user.name}`}
+                                  disabled={!canRemoveUsers || isLocked || user.id === currentUser.id}
+                                  onClick={() => openUserDialog("remove", user)}
+                                >
+                                  <DeleteIcon size={16} />
+                                </button>
+                              </div>
+                            </td>
+                          ) : null}
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={canManageUsers ? 8 : 7} className="empty-cell">
+                        No users matched the current filters.
                       </td>
-                      <td>{user.username}</td>
-                      <td>{ROLE_PRESETS[user.role].label}</td>
-                      <td>{statusLabel(user.status)}</td>
-                      <td>{user.assignedLocationIds.length}</td>
-                      <td>{user.permissions.length}</td>
-                      <td>{formatDateTime(user.lastSeenAt)}</td>
-                      {canManageUsers ? (
-                        <td>
-                          <button
-                            type="button"
-                            className={selectedUserId === user.id ? "chip-button active" : "chip-button"}
-                            onClick={() => {
-                              setSelectedUserId(user.id);
-                              setUserTab("controls");
-                            }}
-                            disabled={user.role === "superadmin" && currentUser.role !== "superadmin"}
-                          >
-                            {user.role === "superadmin" && currentUser.role !== "superadmin"
-                              ? "Locked"
-                              : selectedUserId === user.id
-                                ? "Selected"
-                                : "Manage"}
-                          </button>
-                        </td>
-                      ) : null}
                     </tr>
-                  ))}
+                  )}
                 </tbody>
               </table>
             </div>
+            {!canManageUsers ? (
+              <p className="helper-text">
+                This session can review the directory, but editing users and access control requires
+                the matching admin permissions.
+              </p>
+            ) : null}
+            {feedback ? <p className="feedback-copy">{feedback}</p> : null}
           </article>
-          ) : null}
 
-          {userTab === "controls" ? (
-          <article className="panel">
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">{canManageUsers ? "User Control" : "Access Notice"}</p>
-                <h2>{canManageUsers ? "Access Controls" : "Read-only session"}</h2>
-              </div>
-            </div>
-
-            {canManageUsers ? (
-              <div className="page-stack">
-                <div className="settings-role-toolbar">
-                  <label className="settings-role-picker">
-                    <span className="settings-field-label">User</span>
-                    <select
-                      value={selectedUserId}
-                      onChange={(event) => setSelectedUserId(event.target.value)}
-                    >
-                      {manageableUsers.map((user) => (
-                        <option key={user.id} value={user.id}>
-                          {user.name} ({user.username})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {selectedUser ? (
-                    <span className="status-chip neutral">{ROLE_PRESETS[selectedUser.role].label}</span>
-                  ) : null}
+          {userDialogMode ? (
+            <div className="page-popup-scrim" onClick={() => closeUserDialog()}>
+              <div
+                className="page-popup-card admin-user-popup-card"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="panel-heading compact-heading">
+                  <div>
+                    <p className="eyebrow">
+                      {userDialogMode === "create"
+                        ? "Create User"
+                        : userDialogMode === "edit"
+                          ? "Edit User"
+                          : userDialogMode === "access"
+                            ? "Access Control"
+                            : "Remove User"}
+                    </p>
+                    <h3>
+                      {userDialogMode === "create"
+                        ? "Add a new account"
+                        : selectedUser
+                          ? selectedUser.name
+                          : "User details"}
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => closeUserDialog()}
+                  >
+                    Cancel
+                  </button>
                 </div>
 
-                {canCreateUsers ? (
-                <form className="page-stack" onSubmit={handleCreateUser}>
-                  <div className="panel-heading compact-heading">
-                    <div>
-                      <p className="eyebrow">Create User</p>
-                      <h3>Add a new account</h3>
-                    </div>
-                  </div>
-                  <div className="form-grid">
-                    <label className="field">
-                      <span>Name</span>
-                      <input
-                        value={createForm.name}
-                        onChange={(event) => patchCreate("name", event.target.value)}
-                        placeholder="New team member"
-                      />
-                    </label>
-                    <label className="field">
-                      <span>Username</span>
-                      <input
-                        value={createForm.username}
-                        onChange={(event) => patchCreate("username", event.target.value)}
-                        placeholder="user.name"
-                        autoComplete="username"
-                      />
-                    </label>
-                    <label className="field">
-                      <span>Email</span>
-                      <input
-                        type="email"
-                        value={createForm.email}
-                        onChange={(event) => patchCreate("email", event.target.value)}
-                        placeholder="user@company.com"
-                      />
-                    </label>
-                    <label className="field">
-                      <span>Role</span>
-                      <select
-                        value={createForm.role}
-                        onChange={(event) => setCreateRole(event.target.value as Role)}
-                      >
-                        {assignableRoles.map((role) => (
-                          <option key={role} value={role}>
-                            {ROLE_PRESETS[role].label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="field">
-                      <span>Temporary password</span>
-                      <input
-                        type="password"
-                        value={createForm.password}
-                        onChange={(event) => patchCreate("password", event.target.value)}
-                        placeholder="Minimum 8 characters"
-                        autoComplete="new-password"
-                      />
-                    </label>
-                  </div>
+                {feedback ? <p className="feedback-copy">{feedback}</p> : null}
 
-                  <div className="stack-list">
-                    {snapshot.locations.map((locationEntry) => (
-                      <label key={locationEntry.id} className="list-row">
-                        <div>
-                          <strong>{locationEntry.name}</strong>
-                          <p>
-                            {locationEntry.code} - {locationEntry.city}
-                          </p>
-                        </div>
+                {userDialogMode === "create" ? (
+                  <form className="page-stack" onSubmit={handleCreateUser}>
+                    <div className="form-grid">
+                      <label className="field">
+                        <span>Name</span>
                         <input
-                          type="checkbox"
-                          checked={createForm.assignedLocationIds.includes(locationEntry.id)}
-                          onChange={() =>
-                            patchCreate(
-                              "assignedLocationIds",
-                              toggleLocation(createForm.assignedLocationIds, locationEntry.id),
-                            )
-                          }
+                          value={createForm.name}
+                          onChange={(event) => patchCreate("name", event.target.value)}
+                          placeholder="New team member"
                         />
                       </label>
-                    ))}
-                  </div>
+                      <label className="field">
+                        <span>Username</span>
+                        <input
+                          value={createForm.username}
+                          onChange={(event) => patchCreate("username", event.target.value)}
+                          placeholder="user.name"
+                          autoComplete="username"
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Email</span>
+                        <input
+                          type="email"
+                          value={createForm.email}
+                          onChange={(event) => patchCreate("email", event.target.value)}
+                          placeholder="user@company.com"
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Role</span>
+                        <select
+                          value={createForm.role}
+                          onChange={(event) => setCreateRole(event.target.value as Role)}
+                        >
+                          {assignableRoles.map((role) => (
+                            <option key={role} value={role}>
+                              {ROLE_PRESETS[role].label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span>Temporary password</span>
+                        <input
+                          type="password"
+                          value={createForm.password}
+                          onChange={(event) => patchCreate("password", event.target.value)}
+                          placeholder="Minimum 8 characters"
+                          autoComplete="new-password"
+                        />
+                      </label>
+                    </div>
 
-                  {canManagePermissionOverrides ? (
-                    renderPermissionChecklist(
-                      createForm.permissions,
-                      createForm.role,
-                      toggleCreatePermission,
-                    )
-                  ) : null}
+                    <div className="stack-list">
+                      {snapshot.locations.map((locationEntry) => (
+                        <label key={locationEntry.id} className="list-row">
+                          <div>
+                            <strong>{locationEntry.name}</strong>
+                            <p>
+                              {locationEntry.code} - {locationEntry.city}
+                            </p>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={createForm.assignedLocationIds.includes(locationEntry.id)}
+                            onChange={() =>
+                              patchCreate(
+                                "assignedLocationIds",
+                                toggleLocation(createForm.assignedLocationIds, locationEntry.id),
+                              )
+                            }
+                          />
+                        </label>
+                      ))}
+                    </div>
 
-                  <div className="button-row">
-                    <button
-                      type="submit"
-                      className="primary-button"
-                      disabled={submitting === "create"}
-                    >
-                      {submitting === "create" ? "Creating..." : "Create user"}
-                    </button>
-                  </div>
-                </form>
+                    {canManagePermissionOverrides ? (
+                      renderPermissionChecklist(
+                        createForm.permissions,
+                        createForm.role,
+                        toggleCreatePermission,
+                      )
+                    ) : null}
+
+                    <div className="button-row">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => closeUserDialog()}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="primary-button"
+                        disabled={submitting === "create"}
+                      >
+                        {submitting === "create" ? "Creating..." : "Create user"}
+                      </button>
+                    </div>
+                  </form>
                 ) : null}
 
-                {selectedUser && editForm ? (
-                  <>
-                    {canEditUsers ? (
-                    <form className="page-stack" onSubmit={handleUpdateUser}>
-                      <div className="panel-heading compact-heading">
-                        <div>
-                          <p className="eyebrow">Edit User</p>
-                          <h3>{selectedUser.name}</h3>
-                        </div>
-                      </div>
+                {userDialogMode === "edit" && selectedUser && editForm ? (
+                  <form
+                    className="page-stack"
+                    onSubmit={(event) => void handleUpdateUser(event, "edit")}
+                  >
+                    <div className="form-grid">
+                      <label className="field">
+                        <span>User ID</span>
+                        <input value={editForm.userId} readOnly />
+                      </label>
+                      <label className="field">
+                        <span>Name</span>
+                        <input
+                          value={editForm.name}
+                          onChange={(event) => patchEdit("name", event.target.value)}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Username</span>
+                        <input
+                          value={editForm.username}
+                          onChange={(event) => patchEdit("username", event.target.value)}
+                          autoComplete="username"
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Email</span>
+                        <input
+                          type="email"
+                          value={editForm.email}
+                          onChange={(event) => patchEdit("email", event.target.value)}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Status</span>
+                        <select
+                          value={editForm.status}
+                          onChange={(event) =>
+                            patchEdit("status", event.target.value as User["status"])
+                          }
+                        >
+                          <option value="active">Active</option>
+                          <option value="invited">Inactive</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    <div className="stack-list">
+                      {snapshot.locations.map((locationEntry) => (
+                        <label key={locationEntry.id} className="list-row">
+                          <div>
+                            <strong>{locationEntry.name}</strong>
+                            <p>
+                              {locationEntry.code} - {locationEntry.city}
+                            </p>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={editForm.assignedLocationIds.includes(locationEntry.id)}
+                            onChange={() =>
+                              patchEdit(
+                                "assignedLocationIds",
+                                toggleLocation(editForm.assignedLocationIds, locationEntry.id),
+                              )
+                            }
+                          />
+                        </label>
+                      ))}
+                    </div>
+
+                    <div className="button-row">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => closeUserDialog()}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="primary-button"
+                        disabled={submitting === "update"}
+                      >
+                        {submitting === "update" ? "Saving..." : "Save changes"}
+                      </button>
+                    </div>
+                  </form>
+                ) : null}
+
+                {userDialogMode === "access" && selectedUser && editForm ? (
+                  <div className="page-stack">
+                    <form
+                      className="page-stack"
+                      onSubmit={(event) => void handleUpdateUser(event, "access")}
+                    >
                       <div className="form-grid">
                         <label className="field">
-                          <span>Name</span>
-                          <input
-                            value={editForm.name}
-                            onChange={(event) => patchEdit("name", event.target.value)}
-                          />
+                          <span>User ID</span>
+                          <input value={editForm.userId} readOnly />
                         </label>
                         <label className="field">
                           <span>Username</span>
-                          <input
-                            value={editForm.username}
-                            onChange={(event) => patchEdit("username", event.target.value)}
-                            autoComplete="username"
-                          />
-                        </label>
-                        <label className="field">
-                          <span>Email</span>
-                          <input
-                            type="email"
-                            value={editForm.email}
-                            onChange={(event) => patchEdit("email", event.target.value)}
-                          />
+                          <input value={editForm.username} readOnly />
                         </label>
                         <label className="field">
                           <span>Role</span>
                           <select
                             value={editForm.role}
+                            disabled={!canEditUsers}
                             onChange={(event) => setEditRole(event.target.value as Role)}
                           >
                             {assignableRoles.map((role) => (
@@ -1106,41 +1345,6 @@ export function AdminPage({
                             ))}
                           </select>
                         </label>
-                        <label className="field">
-                          <span>Status</span>
-                          <select
-                            value={editForm.status}
-                            onChange={(event) =>
-                              patchEdit("status", event.target.value as User["status"])
-                            }
-                          >
-                            <option value="active">Active</option>
-                            <option value="invited">Inactive</option>
-                          </select>
-                        </label>
-                      </div>
-
-                      <div className="stack-list">
-                        {snapshot.locations.map((locationEntry) => (
-                          <label key={locationEntry.id} className="list-row">
-                            <div>
-                              <strong>{locationEntry.name}</strong>
-                              <p>
-                                {locationEntry.code} - {locationEntry.city}
-                              </p>
-                            </div>
-                            <input
-                              type="checkbox"
-                              checked={editForm.assignedLocationIds.includes(locationEntry.id)}
-                              onChange={() =>
-                                patchEdit(
-                                  "assignedLocationIds",
-                                  toggleLocation(editForm.assignedLocationIds, locationEntry.id),
-                                )
-                              }
-                            />
-                          </label>
-                        ))}
                       </div>
 
                       {canManagePermissionOverrides ? (
@@ -1149,19 +1353,32 @@ export function AdminPage({
                           editForm.role,
                           toggleEditPermission,
                         )
-                      ) : null}
+                      ) : (
+                        <p className="helper-text">
+                          This session cannot edit permission overrides for users.
+                        </p>
+                      )}
 
                       <div className="button-row">
                         <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => closeUserDialog()}
+                        >
+                          Cancel
+                        </button>
+                        <button
                           type="submit"
                           className="primary-button"
-                          disabled={submitting === "update"}
+                          disabled={
+                            submitting === "access" ||
+                            (!canManagePermissionOverrides && !canEditUsers)
+                          }
                         >
-                          {submitting === "update" ? "Saving..." : "Save changes"}
+                          {submitting === "access" ? "Saving..." : "Save access"}
                         </button>
                       </div>
                     </form>
-                    ) : null}
 
                     {canResetUserPasswords ? (
                       <form className="page-stack" onSubmit={handleResetPassword}>
@@ -1194,66 +1411,47 @@ export function AdminPage({
                         </div>
                       </form>
                     ) : null}
-
-                    {canRemoveUsers ? (
-                      <div className="page-stack">
-                        <div className="panel-heading compact-heading">
-                          <div>
-                            <p className="eyebrow">User Removal</p>
-                            <h3>Remove {selectedUser.name}</h3>
-                          </div>
-                        </div>
-                        <div className="button-row">
-                          <button
-                            type="button"
-                            className="secondary-button text-warning"
-                            disabled={
-                              selectedUser.id === currentUser.id ||
-                              submitting === `remove:${selectedUser.id}`
-                            }
-                            onClick={() => void handleRemoveUser(selectedUser.id)}
-                          >
-                            {submitting === `remove:${selectedUser.id}` ? "Removing..." : "Remove user"}
-                          </button>
-                        </div>
-                        {selectedUser.id === currentUser.id ? (
-                          <p className="helper-text">
-                            Your own superadmin account cannot be removed while this session is active.
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </>
+                  </div>
                 ) : null}
 
-                {feedback ? <p className="feedback-copy">{feedback}</p> : null}
-              </div>
-            ) : (
-              <div className="stack-list">
-                <div className="list-row">
-                  <div>
-                    <strong>Permission-managed actions</strong>
-                    <p>
-                      User management actions now depend on granular permissions granted by
-                      superadmins.
-                    </p>
+                {userDialogMode === "remove" && selectedUser ? (
+                  <div className="confirm-dialog">
+                    <div className="page-stack" style={{ gap: "10px" }}>
+                      <p className="helper-text">
+                        This will remove {selectedUser.name} from active OmniStock access.
+                      </p>
+                      {selectedUser.id === currentUser.id ? (
+                        <p className="helper-text">
+                          Your own active superadmin session cannot be removed.
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="button-row">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => closeUserDialog()}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="danger-button"
+                        disabled={
+                          selectedUser.id === currentUser.id ||
+                          submitting === `remove:${selectedUser.id}`
+                        }
+                        onClick={() => void handleRemoveUser(selectedUser.id)}
+                      >
+                        {submitting === `remove:${selectedUser.id}` ? "Removing..." : "Confirm remove"}
+                      </button>
+                    </div>
                   </div>
-                  <span className="status-chip neutral">Restricted</span>
-                </div>
-                <div className="list-row">
-                  <div>
-                    <strong>Your session</strong>
-                    <p>
-                      You can review configuration, permissions, and the audit stream, but account
-                      changes require the right user and permission access grants.
-                    </p>
-                  </div>
-                  <span className="status-chip neutral">{ROLE_PRESETS[currentUser.role].label}</span>
-                </div>
+                ) : null}
               </div>
-            )}
-          </article>
+            </div>
           ) : null}
+
         </section>
       ) : null}
 
@@ -1277,6 +1475,15 @@ export function AdminPage({
               onClick={() => setSettingsTab("print")}
             >
               Print Designer
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={settingsTab === "notifications"}
+              className={`settings-tab-button${settingsTab === "notifications" ? " is-active" : ""}`}
+              onClick={() => setSettingsTab("notifications")}
+            >
+              Notifications
             </button>
             <button
               type="button"
@@ -1415,6 +1622,17 @@ export function AdminPage({
                     />
                   </label>
                 </div>
+                <PrintDesigner
+                  template={settingsForm.reportPrintTemplate}
+                  companyName={snapshot.settings.companyName}
+                  generatedBy={currentUser.name}
+                  timeSourceLabel={
+                    settingsForm.timeSource === "system" ? "System clock" : "Browser clock"
+                  }
+                  disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                  onChange={replacePrintTemplate}
+                />
+
                 {settingsFeedback ? <p className="feedback-copy">{settingsFeedback}</p> : null}
                 {canEditEnvironmentSettings ? (
                   <div className="button-row">
@@ -1442,6 +1660,417 @@ export function AdminPage({
                   <p className="helper-text">
                     Grant <strong>Edit environment settings</strong> to let this user change these
                     controls.
+                  </p>
+                )}
+              </div>
+            </article>
+          ) : null}
+
+          {settingsTab === "notifications" ? (
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="eyebrow">Settings</p>
+                  <h2>Notification Delivery</h2>
+                </div>
+                <span className="status-chip neutral">
+                  {canEditNotificationSettings
+                    ? settingsDirty
+                      ? "Unsaved changes"
+                      : "Editable"
+                    : "View only"}
+                </span>
+              </div>
+              <div className="page-stack">
+                <p className="helper-text">
+                  Configure in-app and Telegram delivery for operational alerts. The Telegram bot
+                  token stays in Cloudflare Worker secrets, while this page controls the target
+                  chat and alert rules.
+                </p>
+
+                <div className="stack-list">
+                  <div className="list-row">
+                    <div>
+                      <strong>Telegram setup</strong>
+                      <p>
+                        1. Add your bot to the target group or channel. 2. Enter the numeric
+                        chat ID like <code>-1001234567890</code> or a channel username like{" "}
+                        <code>@omnistock_alerts</code>. 3. Save settings. 4. Send a test
+                        notification.
+                      </p>
+                    </div>
+                    <span className="status-chip neutral">
+                      {settingsForm.notificationSettings.telegramEnabled &&
+                      settingsForm.notificationSettings.telegramChatId.trim()
+                        ? "Ready to test"
+                        : "Needs setup"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="settings-fields-grid">
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Telegram Delivery</span>
+                    <select
+                      value={settingsForm.notificationSettings.telegramEnabled ? "enabled" : "disabled"}
+                      disabled={!canEditNotificationSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchNotificationSettings(
+                          "telegramEnabled",
+                          event.target.value === "enabled",
+                        )
+                      }
+                    >
+                      <option value="disabled">Disabled</option>
+                      <option value="enabled">Enabled</option>
+                    </select>
+                  </label>
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Telegram Chat ID</span>
+                    <input
+                      value={settingsForm.notificationSettings.telegramChatId}
+                      disabled={!canEditNotificationSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchNotificationSettings("telegramChatId", event.target.value)
+                      }
+                      placeholder="-1001234567890"
+                    />
+                  </label>
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Wastage Threshold</span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={settingsForm.notificationSettings.wastageCostThreshold}
+                      disabled={!canEditNotificationSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchNotificationSettings(
+                          "wastageCostThreshold",
+                          Number(event.target.value || 0),
+                        )
+                      }
+                    />
+                  </label>
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Daily Summary Hour</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="23"
+                      value={settingsForm.notificationSettings.dailySummary.hour}
+                      disabled={!canEditNotificationSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchDailySummarySetting("hour", Number(event.target.value || 0))
+                      }
+                    />
+                  </label>
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Daily Summary Scope</span>
+                    <select
+                      value={settingsForm.notificationSettings.dailySummary.scope}
+                      disabled={!canEditNotificationSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchDailySummarySetting(
+                          "scope",
+                          event.target.value as "warehouse" | "branch",
+                        )
+                      }
+                    >
+                      <option value="warehouse">Warehouse</option>
+                      <option value="branch">Branch / outlet</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="settings-fields-grid">
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Telegram Header</span>
+                    <input
+                      value={settingsForm.notificationSettings.style.telegramHeader}
+                      disabled={!canEditNotificationSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchNotificationSettings("style", {
+                          ...settingsForm.notificationSettings.style,
+                          telegramHeader: event.target.value,
+                        })
+                      }
+                      placeholder="OmniStock Alert"
+                    />
+                  </label>
+                  <label className="settings-field-card">
+                    <span className="settings-field-label">Telegram Footer</span>
+                    <input
+                      value={settingsForm.notificationSettings.style.telegramFooter}
+                      disabled={!canEditNotificationSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchNotificationSettings("style", {
+                          ...settingsForm.notificationSettings.style,
+                          telegramFooter: event.target.value,
+                        })
+                      }
+                      placeholder="Powered by OmniStock"
+                    />
+                  </label>
+                  <label className="settings-toggle-card">
+                    <div>
+                      <strong>Include Timestamp</strong>
+                      <p>Add the send time to Telegram messages.</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.notificationSettings.style.includeTimestamp}
+                      disabled={!canEditNotificationSettings || submitting === "settings"}
+                      onChange={(event) =>
+                        patchNotificationSettings("style", {
+                          ...settingsForm.notificationSettings.style,
+                          includeTimestamp: event.target.checked,
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div className="page-stack">
+                  <div className="panel-heading compact-heading">
+                    <div>
+                      <p className="eyebrow">Message Templates</p>
+                      <h3>Notification wording</h3>
+                    </div>
+                  </div>
+                  <p className="helper-text">
+                    Use placeholders like <code>{"{{itemName}}"}</code>, <code>{"{{locationName}}"}</code>,{" "}
+                    <code>{"{{quantity}}"}</code>, <code>{"{{lotCode}}"}</code>, <code>{"{{daysUntilExpiry}}"}</code>,{" "}
+                    <code>{"{{reference}}"}</code>, <code>{"{{requestKind}}"}</code>, <code>{"{{message}}"}</code>,{" "}
+                    <code>{"{{totalCost}}"}</code>, <code>{"{{movementCount}}"}</code>, and <code>{"{{wasteCost}}"}</code>.
+                  </p>
+                  <div className="stack-list">
+                    {(Object.entries(settingsForm.notificationSettings.templates) as Array<
+                      [keyof typeof settingsForm.notificationSettings.templates, { title: string; body: string }]
+                    >).map(([key, template]) => (
+                      <div key={key} className="page-stack" style={{ gap: "12px" }}>
+                        <div>
+                          <strong style={{ textTransform: "capitalize" }}>{key.replace(/-/g, " ")}</strong>
+                        </div>
+                        <div className="form-grid">
+                          <label className="field field-wide">
+                            <span>Title Template</span>
+                            <input
+                              value={template.title}
+                              disabled={!canEditNotificationSettings || submitting === "settings"}
+                              onChange={(event) =>
+                                patchNotificationSettings("templates", {
+                                  ...settingsForm.notificationSettings.templates,
+                                  [key]: {
+                                    ...template,
+                                    title: event.target.value,
+                                  },
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="field field-wide">
+                            <span>Body Template</span>
+                            <textarea
+                              value={template.body}
+                              disabled={!canEditNotificationSettings || submitting === "settings"}
+                              onChange={(event) =>
+                                patchNotificationSettings("templates", {
+                                  ...settingsForm.notificationSettings.templates,
+                                  [key]: {
+                                    ...template,
+                                    body: event.target.value,
+                                  },
+                                })
+                              }
+                              rows={3}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="button-row" style={{ justifyContent: "flex-start" }}>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={
+                      !canEditNotificationSettings ||
+                      submitting === "telegram-test" ||
+                      !settingsForm.notificationSettings.telegramEnabled ||
+                      !settingsForm.notificationSettings.telegramChatId.trim()
+                    }
+                    onClick={() => void handleSendTelegramTest()}
+                  >
+                    {submitting === "telegram-test"
+                      ? "Sending..."
+                      : "Send Telegram Test"}
+                  </button>
+                </div>
+
+                <div className="stack-list">
+                  {[
+                    ["lowStock", "Low stock"],
+                    ["nearExpiry", "Near expiry"],
+                    ["expired", "Expired stock"],
+                    ["approvalRequests", "Approval requests"],
+                    ["failedSync", "Failed sync"],
+                    ["wastageThresholdExceeded", "Wastage threshold"],
+                  ].map(([key, label]) => {
+                    const rule = settingsForm.notificationSettings[
+                      key as keyof typeof settingsForm.notificationSettings
+                    ] as { enabled: boolean; inApp: boolean; telegram: boolean };
+                    return (
+                      <div key={key} className="list-row">
+                        <div>
+                          <strong>{label}</strong>
+                          <p>Control whether this alert is active and where it should be sent.</p>
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "12px",
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <label className="inline-check">
+                            <input
+                              type="checkbox"
+                              checked={rule.enabled}
+                              disabled={!canEditNotificationSettings || submitting === "settings"}
+                              onChange={(event) =>
+                                patchNotificationRule(
+                                  key as Exclude<
+                                    keyof SettingsFormState["notificationSettings"],
+                                    "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
+                                  >,
+                                  "enabled",
+                                  event.target.checked,
+                                )
+                              }
+                            />
+                            <span>Enabled</span>
+                          </label>
+                          <label className="inline-check">
+                            <input
+                              type="checkbox"
+                              checked={rule.inApp}
+                              disabled={!canEditNotificationSettings || submitting === "settings"}
+                              onChange={(event) =>
+                                patchNotificationRule(
+                                  key as Exclude<
+                                    keyof SettingsFormState["notificationSettings"],
+                                    "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
+                                  >,
+                                  "inApp",
+                                  event.target.checked,
+                                )
+                              }
+                            />
+                            <span>In-app</span>
+                          </label>
+                          <label className="inline-check">
+                            <input
+                              type="checkbox"
+                              checked={rule.telegram}
+                              disabled={!canEditNotificationSettings || submitting === "settings"}
+                              onChange={(event) =>
+                                patchNotificationRule(
+                                  key as Exclude<
+                                    keyof SettingsFormState["notificationSettings"],
+                                    "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
+                                  >,
+                                  "telegram",
+                                  event.target.checked,
+                                )
+                              }
+                            />
+                            <span>Telegram</span>
+                          </label>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  <div className="list-row">
+                    <div>
+                      <strong>Daily summary</strong>
+                      <p>Send a scheduled branch or warehouse digest at the selected hour.</p>
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "12px",
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <label className="inline-check">
+                        <input
+                          type="checkbox"
+                          checked={settingsForm.notificationSettings.dailySummary.enabled}
+                          disabled={!canEditNotificationSettings || submitting === "settings"}
+                          onChange={(event) =>
+                            patchDailySummarySetting("enabled", event.target.checked)
+                          }
+                        />
+                        <span>Enabled</span>
+                      </label>
+                      <label className="inline-check">
+                        <input
+                          type="checkbox"
+                          checked={settingsForm.notificationSettings.dailySummary.inApp}
+                          disabled={!canEditNotificationSettings || submitting === "settings"}
+                          onChange={(event) =>
+                            patchDailySummarySetting("inApp", event.target.checked)
+                          }
+                        />
+                        <span>In-app</span>
+                      </label>
+                      <label className="inline-check">
+                        <input
+                          type="checkbox"
+                          checked={settingsForm.notificationSettings.dailySummary.telegram}
+                          disabled={!canEditNotificationSettings || submitting === "settings"}
+                          onChange={(event) =>
+                            patchDailySummarySetting("telegram", event.target.checked)
+                          }
+                        />
+                        <span>Telegram</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                {settingsFeedback ? <p className="feedback-copy">{settingsFeedback}</p> : null}
+                {canEditNotificationSettings ? (
+                  <div className="button-row">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={!settingsDirty || submitting === "settings"}
+                      onClick={() => {
+                        setSettingsForm(buildSettingsState(snapshot));
+                        setSettingsFeedback(undefined);
+                      }}
+                    >
+                      Reset
+                    </button>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      disabled={!settingsDirty || submitting === "settings"}
+                      onClick={() => void handleSaveSettings()}
+                    >
+                      {submitting === "settings" ? "Saving..." : "Save notification settings"}
+                    </button>
+                  </div>
+                ) : (
+                  <p className="helper-text">
+                    Grant <strong>Edit notification settings</strong> to let this user manage
+                    Telegram delivery and alert rules.
                   </p>
                 )}
               </div>

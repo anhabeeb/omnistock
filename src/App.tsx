@@ -42,6 +42,7 @@ import {
   ProfileIcon,
   RefreshIcon,
   ReportsIcon,
+  SearchIcon,
   SunIcon,
 } from "./components/AppIcons";
 import { formatDateTime } from "./lib/format";
@@ -55,6 +56,10 @@ import { InitializationPage } from "./pages/InitializationPage";
 import { InventoryOpsPage } from "./pages/InventoryOpsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MasterDataPage } from "./pages/MasterDataPage";
+import { MobileAlertsPage } from "./pages/MobileAlertsPage";
+import { MobileDashboardPage } from "./pages/MobileDashboardPage";
+import { MobileInventoryOpsPage } from "./pages/MobileInventoryOpsPage";
+import { MobileSearchPage } from "./pages/MobileSearchPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { SearchPage } from "./pages/SearchPage";
@@ -67,10 +72,15 @@ const PROFILE_VIEW = {
 };
 
 const SEARCH_ROUTE = "/search";
+const ALERTS_ROUTE = "/alerts";
 const SEARCH_VIEW = {
   label: "Item Lookup",
   description:
     "Quickly scan or search an item to review live quantity, movements, waste, supply sources, and market prices.",
+};
+const ALERTS_VIEW = {
+  label: "Alerts & Approvals",
+  description: "Review notifications and submitted approval requests in a mobile-focused inbox.",
 };
 
 const MODULE_ICONS = {
@@ -186,6 +196,9 @@ export default function App() {
     updateRolePermissionMatrix,
     resetAccountPassword,
     removeUserAccount,
+    markNotificationAsRead,
+    markEveryNotificationAsRead,
+    sendTelegramTest,
   } = useOmniStockApp();
   const { resolvedTheme, setThemeMode } = useThemePreference();
   const muiTheme = useMemo(() => buildMuiTheme(resolvedTheme), [resolvedTheme]);
@@ -238,6 +251,7 @@ export default function App() {
     const canViewSettings =
       can(currentUser, "admin.settings") ||
       can(currentUser, "admin.environment.edit") ||
+      can(currentUser, "admin.notifications.edit") ||
       can(currentUser, "admin.permissions.edit") ||
       can(currentUser, "admin.permissions.manage");
     const canViewActivity = can(currentUser, "admin.activity");
@@ -263,6 +277,7 @@ export default function App() {
     } else {
       const viewingProfile = location.pathname.startsWith("/profile");
       const viewingSearch = location.pathname.startsWith(SEARCH_ROUTE);
+      const viewingAlerts = location.pathname.startsWith(ALERTS_ROUTE);
       const activeModule =
         visibleModules.find((module) => moduleIsActive(location.pathname, module.path)) ??
         visibleModules[0];
@@ -273,6 +288,8 @@ export default function App() {
         ? PROFILE_VIEW
         : viewingSearch
           ? SEARCH_VIEW
+          : viewingAlerts
+            ? ALERTS_VIEW
           : activeSubpage
             ? { label: activeSubpage.label, description: activeSubpage.description }
             : activeModule;
@@ -280,28 +297,68 @@ export default function App() {
         .filter((locationEntry) => currentUser.assignedLocationIds.includes(locationEntry.id))
         .map((locationEntry) => locationEntry.code)
         .join(", ");
-      const mobileRoutes = sidebarModules
-        .map((module) => ({
-          key: module.key,
-          label: module.key === "inventoryOps" ? "Ops" : module.label,
-          to: moduleEntryPath(module.key),
-          end: module.path === "/",
-          icon: MODULE_ICONS[module.key],
-        }))
-        .filter(
-          (entry, index, array) =>
-            array.findIndex((candidate) => candidate.to === entry.to) === index,
-        )
-        .slice(0, 3);
+      const mobileRoutes = [
+        {
+          key: "dashboard",
+          label: "Home",
+          to: "/",
+          end: true,
+          icon: DashboardIcon,
+        },
+        {
+          key: "search",
+          label: "Search",
+          to: SEARCH_ROUTE,
+          end: false,
+          icon: SearchIcon,
+        },
+        ...(canAccessModule(currentUser, "inventoryOps")
+          ? [
+              {
+                key: "inventoryOps",
+                label: "Ops",
+                to: "/inventory/grn",
+                end: false,
+                icon: InventoryIcon,
+              },
+            ]
+          : []),
+        ...(canAccessModule(currentUser, "masterData")
+          ? [
+              {
+                key: "masterData",
+                label: "Master",
+                to: "/master-data/items",
+                end: false,
+                icon: DataIcon,
+              },
+            ]
+          : []),
+        ...(canAccessModule(currentUser, "reports")
+          ? [
+              {
+                key: "reports",
+                label: "Reports",
+                to: "/reports/analytics",
+                end: false,
+                icon: ReportsIcon,
+              },
+            ]
+          : []),
+      ];
       const breadcrumbRoot = viewingProfile
         ? "Account"
         : viewingSearch
           ? "Search"
+          : viewingAlerts
+            ? "Alerts"
           : activeModule?.label ?? "Workspace";
       const breadcrumbLeaf = viewingProfile
         ? "Profile"
         : viewingSearch
           ? SEARCH_VIEW.label
+          : viewingAlerts
+            ? ALERTS_VIEW.label
           : activeSubpage?.label ??
             (activeModule?.key === "dashboard" ? "Home" : activeModule?.label ?? "Workspace");
       const pageHeading =
@@ -309,6 +366,8 @@ export default function App() {
           ? "Profile"
           : viewingSearch
             ? SEARCH_VIEW.label
+            : viewingAlerts
+              ? ALERTS_VIEW.label
             : activeModule?.key === "dashboard" && !activeSubpage
             ? "Overview"
             : activeView.label;
@@ -719,7 +778,13 @@ export default function App() {
                     {currentTimeLabel}
                   </Button>
 
-                  <AppNotificationCenter snapshot={snapshot} />
+                  <AppNotificationCenter
+                    snapshot={snapshot}
+                    onMarkRead={markNotificationAsRead}
+                    onMarkAllRead={markEveryNotificationAsRead}
+                    pageMode={isTabletOrMobile}
+                    onOpenPage={() => navigate(ALERTS_ROUTE)}
+                  />
                 </Stack>
               </Stack>
             </Box>
@@ -827,11 +892,19 @@ export default function App() {
                   <Route
                     path="/"
                     element={
-                      <DashboardPage
-                        snapshot={snapshot}
-                        currentUser={currentUser}
-                        syncState={syncState}
-                      />
+                      isTabletOrMobile ? (
+                        <MobileDashboardPage
+                          snapshot={snapshot}
+                          currentUser={currentUser}
+                          syncState={syncState}
+                        />
+                      ) : (
+                        <DashboardPage
+                          snapshot={snapshot}
+                          currentUser={currentUser}
+                          syncState={syncState}
+                        />
+                      )
                     }
                   />
                 ) : null}
@@ -841,15 +914,27 @@ export default function App() {
                     <Route
                       path="/inventory/*"
                       element={
-                        <InventoryOpsPage
-                          snapshot={snapshot}
-                          currentUser={currentUser}
-                          syncState={syncState}
-                          onCreateOperation={createOperation}
-                          onEditOperation={editInventoryRequest}
-                          onDeleteOperation={removeInventoryRequest}
-                          onReverseOperation={reverseInventoryRequest}
-                        />
+                        isTabletOrMobile ? (
+                          <MobileInventoryOpsPage
+                            snapshot={snapshot}
+                            currentUser={currentUser}
+                            syncState={syncState}
+                            onCreateOperation={createOperation}
+                            onEditOperation={editInventoryRequest}
+                            onDeleteOperation={removeInventoryRequest}
+                            onReverseOperation={reverseInventoryRequest}
+                          />
+                        ) : (
+                          <InventoryOpsPage
+                            snapshot={snapshot}
+                            currentUser={currentUser}
+                            syncState={syncState}
+                            onCreateOperation={createOperation}
+                            onEditOperation={editInventoryRequest}
+                            onDeleteOperation={removeInventoryRequest}
+                            onReverseOperation={reverseInventoryRequest}
+                          />
+                        )
                       }
                     />
                   </>
@@ -907,6 +992,7 @@ export default function App() {
                           onUpdateRolePermissions={updateRolePermissionMatrix}
                           onResetUserPassword={resetAccountPassword}
                           onRemoveUser={removeUserAccount}
+                          onSendTestTelegramNotification={sendTelegramTest}
                         />
                       }
                     />
@@ -914,7 +1000,23 @@ export default function App() {
                 ) : null}
                 <Route
                   path={SEARCH_ROUTE}
-                  element={<SearchPage snapshot={snapshot} />}
+                  element={
+                    isTabletOrMobile ? (
+                      <MobileSearchPage snapshot={snapshot} />
+                    ) : (
+                      <SearchPage snapshot={snapshot} />
+                    )
+                  }
+                />
+                <Route
+                  path={ALERTS_ROUTE}
+                  element={
+                    <MobileAlertsPage
+                      snapshot={snapshot}
+                      onMarkRead={markNotificationAsRead}
+                      onMarkAllRead={markEveryNotificationAsRead}
+                    />
+                  }
                 />
                 <Route
                   path="/profile"
@@ -952,9 +1054,12 @@ export default function App() {
               <Stack direction="row" spacing={0.75}>
                 {mobileRoutes.map((item) => {
                   const Icon = item.icon;
-                  const active = item.end
-                    ? location.pathname === item.to
-                    : moduleIsActive(location.pathname, item.to);
+                  const active =
+                    item.to === SEARCH_ROUTE
+                      ? viewingSearch
+                      : item.end
+                        ? location.pathname === item.to
+                        : moduleIsActive(location.pathname, item.to);
                   return (
                     <Button
                       key={item.key}
@@ -984,31 +1089,6 @@ export default function App() {
                     </Button>
                   );
                 })}
-                <Button
-                  fullWidth
-                  variant={viewingProfile ? "contained" : "text"}
-                  color="inherit"
-                  onClick={() => navigate("/profile")}
-                  sx={{
-                    minHeight: 52,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 0.5,
-                    borderRadius: 2,
-                    color: viewingProfile ? "text.primary" : "text.secondary",
-                    bgcolor:
-                      viewingProfile
-                        ? muiTheme.palette.mode === "dark"
-                          ? alpha(muiTheme.palette.common.white, 0.12)
-                          : alpha(muiTheme.palette.text.primary, 0.08)
-                        : "transparent",
-                  }}
-                >
-                  <ProfileIcon size={18} />
-                  <Typography variant="caption" sx={{ fontWeight: 800 }}>
-                    Profile
-                  </Typography>
-                </Button>
               </Stack>
             </Paper>
           ) : null}

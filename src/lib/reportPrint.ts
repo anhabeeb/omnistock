@@ -24,7 +24,7 @@ function escapeHtml(value: string): string {
 
 function cellValue(value: unknown): string {
   if (value === null || value === undefined || value === "") {
-    return "—";
+    return "--";
   }
   return String(value);
 }
@@ -114,16 +114,128 @@ function buildSectionMarkup(sheet: WorkbookSheet): string {
   `;
 }
 
+function buildSummaryMarkup(summaryMetrics: Record<string, unknown>[]): string {
+  if (!summaryMetrics.length) {
+    return "";
+  }
+
+  return `
+    <section class="report-section">
+      <div class="report-section__header">
+        <h2>Summary</h2>
+      </div>
+      <div class="summary-grid">
+        ${summaryMetrics
+          .slice(0, 6)
+          .map(
+            (row) => `
+              <article class="summary-card">
+                <span class="metric-card__label">${escapeHtml(cellValue(row.Metric))}</span>
+                <strong class="summary-card__value">${escapeHtml(cellValue(row.Value))}</strong>
+                <small class="summary-card__detail">${escapeHtml(cellValue(row.Window))}</small>
+              </article>
+            `,
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function buildTextBlock(label: string, content: string, title = false): string {
+  if (!content.trim()) {
+    return "";
+  }
+
+  return `
+    <section class="designer-text-block${title ? " designer-text-block--title" : ""}">
+      <span class="${title ? "report-kicker" : "designer-text-block__label"}">${escapeHtml(label)}</span>
+      ${title ? `<h1>${escapeHtml(content)}</h1>` : `<p>${escapeHtml(content)}</p>`}
+    </section>
+  `;
+}
+
+function buildMetaBlock(label: string, value: string): string {
+  if (!value.trim()) {
+    return "";
+  }
+
+  return `
+    <article class="report-meta__card designer-meta-card">
+      <span class="report-meta__label">${escapeHtml(label)}</span>
+      <strong class="report-meta__value">${escapeHtml(value)}</strong>
+    </article>
+  `;
+}
+
+function buildSignatureMarkup(template: ReportPrintTemplate): string {
+  return `
+    <section class="report-section">
+      <div class="report-section__header">
+        <h2>Sign-Off</h2>
+      </div>
+      <div class="signature-grid">
+        <div class="signature-card">
+          <strong>${escapeHtml(template.signatureLabelLeft)}</strong>
+        </div>
+        <div class="signature-card">
+          <strong>${escapeHtml(template.signatureLabelRight)}</strong>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function buildLayoutMarkup(
+  options: ReportDocumentOptions,
+  summaryMetrics: Record<string, unknown>[],
+): string {
+  const template = options.settings.reportPrintTemplate;
+  return template.layoutBlocks
+    .filter((block) => block.enabled)
+    .map((block) => {
+      switch (block.type) {
+        case "company-name":
+          return buildMetaBlock(block.label, options.companyName);
+        case "generated-by":
+          return buildMetaBlock(block.label, options.generatedBy);
+        case "generated-at":
+          return buildMetaBlock(block.label, options.generatedAt);
+        case "filters":
+          return buildMetaBlock(block.label, options.filtersLabel ?? "");
+        case "report-title":
+          return buildTextBlock(block.label, options.title, true);
+        case "report-subtitle":
+          return buildTextBlock(block.label, options.subtitle);
+        case "header-note":
+          return buildTextBlock(block.label, template.headerNote || block.content);
+        case "summary":
+          return buildSummaryMarkup(summaryMetrics);
+        case "report-sections":
+          return options.sheets.map((sheet) => buildSectionMarkup(sheet)).join("");
+        case "footer-note":
+          return buildTextBlock(block.label, template.footerNote || block.content);
+        case "signatures":
+          return template.showSignatures ? buildSignatureMarkup(template) : "";
+        case "custom-text":
+          return buildTextBlock(block.label, block.content);
+        default:
+          return "";
+      }
+    })
+    .join("");
+}
+
 function buildReportDocumentHtml(options: ReportDocumentOptions): string {
   const template = options.settings.reportPrintTemplate;
   const density = densityValues(template.density);
   const paperSize = template.paperSize === "letter" ? "Letter" : "A4";
-  const orientation = template.orientation;
   const summarySheet = template.showSummary ? options.sheets[0] : undefined;
   const summaryMetrics =
     summarySheet?.rows?.filter(
       (row) => "Metric" in row && "Value" in row && "Window" in row,
     ) ?? [];
+  const layoutMarkup = buildLayoutMarkup(options, summaryMetrics);
 
   return `<!DOCTYPE html>
   <html lang="en">
@@ -132,7 +244,7 @@ function buildReportDocumentHtml(options: ReportDocumentOptions): string {
       <title>${escapeHtml(options.title)}</title>
       <style>
         @page {
-          size: ${paperSize} ${orientation};
+          size: ${paperSize} ${template.orientation};
           margin: ${template.marginMm}mm;
         }
 
@@ -163,49 +275,8 @@ function buildReportDocumentHtml(options: ReportDocumentOptions): string {
           gap: ${density.bodyGap};
         }
 
-        .report-header {
-          border-bottom: 2px solid var(--accent);
-          padding-bottom: 14px;
-        }
-
-        .report-kicker {
-          font-size: 11px;
-          letter-spacing: 0.16em;
-          text-transform: uppercase;
-          color: var(--accent);
-          font-weight: 800;
-        }
-
-        .report-header h1 {
-          margin: 8px 0 0;
-          font-size: ${density.headingSize};
-          line-height: 1.15;
-        }
-
-        .report-subtitle {
-          margin: 8px 0 0;
-          color: var(--muted);
-        }
-
-        .report-meta {
-          display: grid;
-          gap: 10px;
-          grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-          margin-top: 14px;
-        }
-
-        .report-meta__card,
-        .metric-card,
-        .summary-card {
-          border: 1px solid var(--line);
-          border-radius: 14px;
-          background: var(--panel);
-        }
-
-        .report-meta__card {
-          padding: 12px 14px;
-        }
-
+        .report-kicker,
+        .designer-text-block__label,
         .report-meta__label,
         .metric-card__label {
           display: block;
@@ -214,6 +285,45 @@ function buildReportDocumentHtml(options: ReportDocumentOptions): string {
           letter-spacing: 0.08em;
           text-transform: uppercase;
           font-weight: 700;
+        }
+
+        .report-kicker {
+          color: var(--accent);
+          letter-spacing: 0.16em;
+          font-weight: 800;
+        }
+
+        .designer-text-block,
+        .report-meta__card,
+        .metric-card,
+        .summary-card {
+          border: 1px solid var(--line);
+          border-radius: 14px;
+          background: var(--panel);
+        }
+
+        .designer-text-block {
+          display: grid;
+          gap: 6px;
+          padding: ${density.sectionPadding};
+        }
+
+        .designer-text-block--title {
+          border-top: 3px solid var(--accent);
+        }
+
+        .designer-text-block p,
+        .designer-text-block h1 {
+          margin: 0;
+        }
+
+        .designer-text-block h1 {
+          font-size: ${density.headingSize};
+          line-height: 1.15;
+        }
+
+        .report-meta__card {
+          padding: 12px 14px;
         }
 
         .report-meta__value,
@@ -243,7 +353,8 @@ function buildReportDocumentHtml(options: ReportDocumentOptions): string {
         }
 
         .summary-grid,
-        .metric-grid {
+        .metric-grid,
+        .signature-grid {
           display: grid;
           gap: 12px;
           grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -284,13 +395,6 @@ function buildReportDocumentHtml(options: ReportDocumentOptions): string {
           border-bottom: 0;
         }
 
-        .signature-grid {
-          display: grid;
-          gap: 16px;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          margin-top: 6px;
-        }
-
         .signature-card {
           padding-top: 18px;
           border-top: 1px solid var(--line);
@@ -319,110 +423,10 @@ function buildReportDocumentHtml(options: ReportDocumentOptions): string {
     </head>
     <body>
       <main class="report-shell">
-        <header class="report-header">
-          <span class="report-kicker">${escapeHtml(template.templateName)}</span>
-          <h1>${escapeHtml(options.title)}</h1>
-          <p class="report-subtitle">${escapeHtml(options.subtitle)}</p>
-          ${
-            template.headerNote
-              ? `<p class="report-subtitle">${escapeHtml(template.headerNote)}</p>`
-              : ""
-          }
-          <section class="report-meta">
-            ${
-              template.showCompanyName
-                ? `
-                  <article class="report-meta__card">
-                    <span class="report-meta__label">Company</span>
-                    <strong class="report-meta__value">${escapeHtml(options.companyName)}</strong>
-                  </article>
-                `
-                : ""
-            }
-            ${
-              template.showGeneratedBy
-                ? `
-                  <article class="report-meta__card">
-                    <span class="report-meta__label">Generated By</span>
-                    <strong class="report-meta__value">${escapeHtml(options.generatedBy)}</strong>
-                  </article>
-                `
-                : ""
-            }
-            ${
-              template.showGeneratedAt
-                ? `
-                  <article class="report-meta__card">
-                    <span class="report-meta__label">Generated At</span>
-                    <strong class="report-meta__value">${escapeHtml(options.generatedAt)}</strong>
-                  </article>
-                `
-                : ""
-            }
-            ${
-              template.showFilters && options.filtersLabel
-                ? `
-                  <article class="report-meta__card">
-                    <span class="report-meta__label">Filters</span>
-                    <strong class="report-meta__value">${escapeHtml(options.filtersLabel)}</strong>
-                  </article>
-                `
-                : ""
-            }
-          </section>
-        </header>
-
-        ${
-          template.showSummary && summaryMetrics.length > 0
-            ? `
-              <section class="report-section">
-                <div class="report-section__header">
-                  <h2>Summary</h2>
-                </div>
-                <div class="summary-grid">
-                  ${summaryMetrics
-                    .slice(0, 6)
-                    .map(
-                      (row) => `
-                        <article class="summary-card">
-                          <span class="metric-card__label">${escapeHtml(cellValue(row.Metric))}</span>
-                          <strong class="summary-card__value">${escapeHtml(cellValue(row.Value))}</strong>
-                          <small class="summary-card__detail">${escapeHtml(cellValue(row.Window))}</small>
-                        </article>
-                      `,
-                    )
-                    .join("")}
-                </div>
-              </section>
-            `
-            : ""
-        }
-
-        ${options.sheets.map((sheet) => buildSectionMarkup(sheet)).join("")}
-
-        ${
-          template.showSignatures
-            ? `
-              <section class="report-section">
-                <div class="report-section__header">
-                  <h2>Sign-Off</h2>
-                </div>
-                <div class="signature-grid">
-                  <div class="signature-card">
-                    <strong>${escapeHtml(template.signatureLabelLeft)}</strong>
-                  </div>
-                  <div class="signature-card">
-                    <strong>${escapeHtml(template.signatureLabelRight)}</strong>
-                  </div>
-                </div>
-              </section>
-            `
-            : ""
-        }
-
+        ${layoutMarkup}
         <footer class="report-footer">
-          <span>${escapeHtml(template.footerNote || "OmniStock report output")}</span>
-          <span>${escapeHtml(options.settings.timezone)}${template.showGeneratedAt ? " · Page " : ""}<span class="page-count"></span></span>
+          <span>${escapeHtml(template.templateName)}</span>
+          <span>${escapeHtml(options.settings.timezone)} · Page <span class="page-count"></span></span>
         </footer>
       </main>
     </body>
@@ -440,9 +444,7 @@ export function openReportDocument(options: ReportDocumentOptions) {
   popup.document.close();
 
   if (options.autoPrint) {
-    window.setTimeout(() => {
-      popup.focus();
-      popup.print();
-    }, 180);
+    popup.focus();
+    popup.print();
   }
 }

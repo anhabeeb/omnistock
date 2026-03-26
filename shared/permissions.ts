@@ -163,6 +163,12 @@ export const PERMISSION_CATALOG: Array<{
     description: "Change environment toggles, time source, print defaults, FEFO behavior, thresholds, and timezone settings.",
   },
   {
+    code: "admin.notifications.edit",
+    moduleKey: "administration",
+    label: "Edit notification settings",
+    description: "Configure notification rules, delivery channels, Telegram delivery, and daily summaries.",
+  },
+  {
     code: "admin.permissions.edit",
     moduleKey: "administration",
     label: "Edit role permissions",
@@ -219,6 +225,7 @@ export function permissionsForRole(role: Role): PermissionKey[] {
         "admin.users.edit",
         "admin.users.password",
         "admin.environment.edit",
+        "admin.notifications.edit",
         "admin.settings",
         "admin.activity",
       ];
@@ -298,6 +305,7 @@ export const MODULE_ACCESS: Record<ModuleKey, PermissionKey[]> = {
     "admin.settings",
     "admin.activity",
     "admin.environment.edit",
+    "admin.notifications.edit",
     "admin.permissions.edit",
     "admin.permissions.manage",
   ],

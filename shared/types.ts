@@ -11,6 +11,31 @@ export type TimeSource = "system" | "browser";
 export type PrintPaperSize = "a4" | "letter";
 export type PrintOrientation = "portrait" | "landscape";
 export type PrintDensity = "comfortable" | "compact";
+export type NotificationSeverity = "info" | "warning" | "critical";
+export type NotificationChannel = "in-app" | "telegram";
+export type NotificationStatus = "unread" | "read";
+export type NotificationSummaryScope = "warehouse" | "branch";
+export type NotificationType =
+  | "low-stock"
+  | "near-expiry"
+  | "expired"
+  | "approval-request"
+  | "failed-sync"
+  | "wastage-threshold"
+  | "daily-summary";
+export type PrintLayoutBlockType =
+  | "company-name"
+  | "report-title"
+  | "report-subtitle"
+  | "header-note"
+  | "generated-by"
+  | "generated-at"
+  | "filters"
+  | "summary"
+  | "report-sections"
+  | "footer-note"
+  | "signatures"
+  | "custom-text";
 
 export type PermissionKey =
   | "dashboard.view"
@@ -39,6 +64,7 @@ export type PermissionKey =
   | "admin.users.password"
   | "admin.users.remove"
   | "admin.environment.edit"
+  | "admin.notifications.edit"
   | "admin.permissions.edit"
   | "admin.permissions.manage"
   | "admin.settings"
@@ -89,6 +115,52 @@ export interface ReportPrintTemplate {
   showSignatures: boolean;
   signatureLabelLeft: string;
   signatureLabelRight: string;
+  layoutBlocks: PrintLayoutBlock[];
+}
+
+export interface NotificationRuleSettings {
+  enabled: boolean;
+  inApp: boolean;
+  telegram: boolean;
+}
+
+export interface NotificationMessageTemplate {
+  title: string;
+  body: string;
+}
+
+export interface NotificationStyleSettings {
+  telegramHeader: string;
+  telegramFooter: string;
+  includeTimestamp: boolean;
+}
+
+export interface DailySummaryNotificationSettings extends NotificationRuleSettings {
+  hour: number;
+  scope: NotificationSummaryScope;
+}
+
+export interface NotificationSettings {
+  telegramEnabled: boolean;
+  telegramChatId: string;
+  lowStock: NotificationRuleSettings;
+  nearExpiry: NotificationRuleSettings;
+  expired: NotificationRuleSettings;
+  approvalRequests: NotificationRuleSettings;
+  failedSync: NotificationRuleSettings;
+  wastageThresholdExceeded: NotificationRuleSettings;
+  dailySummary: DailySummaryNotificationSettings;
+  wastageCostThreshold: number;
+  style: NotificationStyleSettings;
+  templates: Record<NotificationType, NotificationMessageTemplate>;
+}
+
+export interface PrintLayoutBlock {
+  id: string;
+  type: PrintLayoutBlockType;
+  label: string;
+  enabled: boolean;
+  content: string;
 }
 
 export interface Location {
@@ -258,6 +330,25 @@ export interface ActivityLog {
   severity: ActivitySeverity;
 }
 
+export interface NotificationRecord {
+  id: string;
+  type: NotificationType;
+  severity: NotificationSeverity;
+  title: string;
+  message: string;
+  status: NotificationStatus;
+  channels: NotificationChannel[];
+  createdAt: string;
+  readAt?: string;
+  resolvedAt?: string;
+  itemId?: string;
+  itemName?: string;
+  locationId?: string;
+  locationName?: string;
+  requestId?: string;
+  metadata?: Record<string, boolean | number | string | null>;
+}
+
 export interface AppSettings {
   companyName: string;
   currency: string;
@@ -270,6 +361,7 @@ export interface AppSettings {
   enableBarcode: boolean;
   strictFefo: boolean;
   reportPrintTemplate: ReportPrintTemplate;
+  notificationSettings: NotificationSettings;
 }
 
 export interface InventorySnapshot {
@@ -284,6 +376,7 @@ export interface InventorySnapshot {
   requests: InventoryRequest[];
   movementLedger: MovementLedgerEntry[];
   activity: ActivityLog[];
+  notifications: NotificationRecord[];
   settings: AppSettings;
   rolePermissions: Record<Role, PermissionKey[]>;
 }
@@ -641,10 +734,32 @@ export interface UpdateSettingsRequest {
   enableBarcode: boolean;
   strictFefo: boolean;
   reportPrintTemplate: ReportPrintTemplate;
+  notificationSettings: NotificationSettings;
 }
 
 export interface SettingsResponse {
   snapshot: InventorySnapshot;
+}
+
+export interface MarkNotificationReadRequest {
+  notificationId: string;
+}
+
+export interface ReportSyncFailureRequest {
+  message: string;
+}
+
+export interface NotificationActionResponse {
+  snapshot: InventorySnapshot;
+}
+
+export interface TestTelegramNotificationRequest {
+  message?: string;
+}
+
+export interface TestTelegramNotificationResponse {
+  ok: boolean;
+  detail: string;
 }
 
 export interface UpdateRolePermissionsRequest {
@@ -700,7 +815,7 @@ export type RealtimeMessage =
   | { type: "pong"; cursor: number }
   | {
       type: "snapshot-refresh";
-      scope: "inventory-ops" | "market-prices" | "master-data";
+      scope: "inventory-ops" | "market-prices" | "master-data" | "notifications";
       triggeredAt: string;
     }
   | { type: "error"; message: string };

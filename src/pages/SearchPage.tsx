@@ -32,7 +32,7 @@ import type {
   MarketPriceEntry,
   WasteEntry,
 } from "../../shared/types";
-import { BarcodeScanner } from "../components/BarcodeScanner";
+import { BarcodeScanModal } from "../components/BarcodeScanModal";
 import { formatCompactNumber, formatCurrency, formatDateTime } from "../lib/format";
 import {
   AlertIcon,
@@ -276,9 +276,9 @@ export function SearchPage({ snapshot }: Props) {
               color="inherit"
               startIcon={<QrCodeScannerRoundedIcon sx={{ fontSize: 18 }} />}
               disabled={!snapshot.settings.enableBarcode}
-              onClick={() => setScannerOpen((current) => !current)}
+              onClick={() => setScannerOpen(true)}
             >
-              {scannerOpen ? "Hide Scanner" : "Scan Barcode"}
+              Scan Barcode
             </Button>
           </Stack>
         </Stack>
@@ -307,11 +307,6 @@ export function SearchPage({ snapshot }: Props) {
           </Typography>
         ) : null}
 
-        {scannerOpen ? (
-          <Box sx={{ mt: 2 }}>
-            <BarcodeScanner onDetected={handleBarcodeDetected} />
-          </Box>
-        ) : null}
       </Paper>
 
       <Box
@@ -922,6 +917,12 @@ export function SearchPage({ snapshot }: Props) {
           </Stack>
         ) : null}
       </Box>
+
+      <BarcodeScanModal
+        isOpen={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onScan={handleBarcodeDetected}
+      />
     </Stack>
   );
 }

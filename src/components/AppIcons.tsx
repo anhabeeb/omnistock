@@ -61,6 +61,15 @@ export function ReportsIcon({ size = 20, ...props }: AppIconProps) {
   );
 }
 
+export function SearchIcon({ size = 20, ...props }: AppIconProps) {
+  return (
+    <svg {...baseProps(size, props)}>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="m16 16 5 5" />
+    </svg>
+  );
+}
+
 export function AdminIcon({ size = 20, ...props }: AppIconProps) {
   return (
     <svg {...baseProps(size, props)}>

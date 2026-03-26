@@ -21,11 +21,16 @@ import {
   loadBootstrapPayload,
   loadCurrentCursor,
   loadUserIdForSessionToken,
+  markAllNotificationsReadInD1,
+  markNotificationReadInD1,
   logoutSessionInD1,
   pullChangesFromD1,
+  reportSyncFailureInD1,
   removeUserInD1,
   reverseInventoryRequestInD1,
   resetUserPasswordInD1,
+  sendDueDailySummariesInD1,
+  sendTestTelegramNotificationInD1,
   updateItemInD1,
   updateLocationInD1,
   updateMarketPriceEntryInD1,
@@ -51,7 +56,9 @@ import type {
   EditInventoryRequest,
   InitializeSystemRequest,
   LoginRequest,
+  MarkNotificationReadRequest,
   RemoveUserRequest,
+  ReportSyncFailureRequest,
   ResetUserPasswordRequest,
   PullRequest,
   PushRequest,
@@ -65,12 +72,14 @@ import type {
   UpdateRolePermissionsRequest,
   UpdateSupplierRequest,
   UpdateUserRequest,
+  TestTelegramNotificationRequest,
 } from "../shared/types";
 
 export interface Env {
   ASSETS: Fetcher;
   OMNISTOCK_DB: D1Database;
   OMNISTOCK_HUB: DurableObjectNamespace<OmniStockHub>;
+  TELEGRAM_BOT_TOKEN?: string;
 }
 
 const SESSION_COOKIE = "omnistock_session";
@@ -158,6 +167,18 @@ export default {
       return errorResponse(error);
     }
   },
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    _ctx: ExecutionContext,
+  ) {
+    try {
+      await ensureDatabaseReady(env.OMNISTOCK_DB);
+      await sendDueDailySummariesInD1(env.OMNISTOCK_DB, env.TELEGRAM_BOT_TOKEN);
+    } catch (error) {
+      console.error("OmniStock scheduled notification run failed:", error);
+    }
+  },
 } satisfies ExportedHandler<Env>;
 
 export class OmniStockHub extends DurableObject<Env> {
@@ -238,7 +259,11 @@ export class OmniStockHub extends DurableObject<Env> {
 
     const body = await readJson<PushRequest>(request);
     const response = await this.ctx.blockConcurrencyWhile(() =>
-      applyMutationsToD1(this.env.OMNISTOCK_DB, body.mutations ?? []),
+      applyMutationsToD1(
+        this.env.OMNISTOCK_DB,
+        body.mutations ?? [],
+        this.env.TELEGRAM_BOT_TOKEN,
+      ),
     );
     this.latestCursor = response.cursor;
 
@@ -532,7 +557,12 @@ export class OmniStockHub extends DurableObject<Env> {
 
     const body = await readJson<ReverseInventoryRequest>(request);
     const response = await this.ctx.blockConcurrencyWhile(() =>
-      reverseInventoryRequestInD1(this.env.OMNISTOCK_DB, actorId, body),
+      reverseInventoryRequestInD1(
+        this.env.OMNISTOCK_DB,
+        actorId,
+        body,
+        this.env.TELEGRAM_BOT_TOKEN,
+      ),
     );
 
     this.broadcast({
@@ -554,7 +584,12 @@ export class OmniStockHub extends DurableObject<Env> {
 
     const body = await readJson<EditInventoryRequest>(request);
     const response = await this.ctx.blockConcurrencyWhile(() =>
-      editInventoryRequestInD1(this.env.OMNISTOCK_DB, actorId, body),
+      editInventoryRequestInD1(
+        this.env.OMNISTOCK_DB,
+        actorId,
+        body,
+        this.env.TELEGRAM_BOT_TOKEN,
+      ),
     );
 
     this.broadcast({
@@ -576,7 +611,12 @@ export class OmniStockHub extends DurableObject<Env> {
 
     const body = await readJson<DeleteInventoryRequest>(request);
     const response = await this.ctx.blockConcurrencyWhile(() =>
-      deleteInventoryRequestInD1(this.env.OMNISTOCK_DB, actorId, body),
+      deleteInventoryRequestInD1(
+        this.env.OMNISTOCK_DB,
+        actorId,
+        body,
+        this.env.TELEGRAM_BOT_TOKEN,
+      ),
     );
 
     this.broadcast({
@@ -734,7 +774,85 @@ export class OmniStockHub extends DurableObject<Env> {
     const body = await readJson<UpdateSettingsRequest>(request);
     return json(
       await this.ctx.blockConcurrencyWhile(() =>
-        updateSettingsInD1(this.env.OMNISTOCK_DB, actorId, body),
+        updateSettingsInD1(
+          this.env.OMNISTOCK_DB,
+          actorId,
+          body,
+          this.env.TELEGRAM_BOT_TOKEN,
+        ),
+      ),
+    );
+  }
+
+  private async handleMarkNotificationRead(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<MarkNotificationReadRequest>(request);
+    return json(
+      await this.ctx.blockConcurrencyWhile(() =>
+        markNotificationReadInD1(this.env.OMNISTOCK_DB, actorId, body),
+      ),
+    );
+  }
+
+  private async handleMarkAllNotificationsRead(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    return json(
+      await this.ctx.blockConcurrencyWhile(() =>
+        markAllNotificationsReadInD1(this.env.OMNISTOCK_DB, actorId),
+      ),
+    );
+  }
+
+  private async handleReportSyncFailure(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<ReportSyncFailureRequest>(request);
+    return json(
+      await this.ctx.blockConcurrencyWhile(() =>
+        reportSyncFailureInD1(
+          this.env.OMNISTOCK_DB,
+          actorId,
+          body,
+          this.env.TELEGRAM_BOT_TOKEN,
+        ),
+      ),
+    );
+  }
+
+  private async handleTestTelegram(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<TestTelegramNotificationRequest>(request);
+    return json(
+      await this.ctx.blockConcurrencyWhile(() =>
+        sendTestTelegramNotificationInD1(
+          this.env.OMNISTOCK_DB,
+          actorId,
+          body,
+          this.env.TELEGRAM_BOT_TOKEN,
+        ),
       ),
     );
   }
@@ -929,6 +1047,22 @@ export class OmniStockHub extends DurableObject<Env> {
 
       if (request.method === "PATCH" && url.pathname === "/settings") {
         return this.handleUpdateSettings(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/notifications/read") {
+        return this.handleMarkNotificationRead(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/notifications/read-all") {
+        return this.handleMarkAllNotificationsRead(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/notifications/report-sync-failure") {
+        return this.handleReportSyncFailure(request);
+      }
+
+      if (request.method === "POST" && url.pathname === "/notifications/test-telegram") {
+        return this.handleTestTelegram(request);
       }
 
       if (request.method === "POST" && url.pathname === "/users/reset-password") {

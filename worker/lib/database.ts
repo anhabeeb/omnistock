@@ -1,5 +1,6 @@
 import {
   DEFAULT_TIME_SOURCE,
+  createDefaultNotificationSettings,
   createDefaultReportPrintTemplate,
 } from "../../shared/defaults";
 import {
@@ -10,12 +11,18 @@ import {
 } from "../../shared/permissions";
 import { applyMutation } from "../../shared/operations";
 import type { MutationResult } from "../../shared/operations";
-import { buildBootstrapPayload } from "../../shared/selectors";
+import {
+  buildBootstrapPayload,
+  expiredAlerts,
+  lowStockAlerts,
+  nearExpiryAlerts,
+} from "../../shared/selectors";
 import type {
   ActivateSuperadminRequest,
   ActivityLog,
   BootstrapPayload,
   ChangeOwnPasswordRequest,
+  DailySummaryNotificationSettings,
   CreateItemRequest,
   CreateItemResponse,
   CreateLocationRequest,
@@ -44,10 +51,20 @@ import type {
   Location,
   MarketPriceEntry,
   MutationEnvelope,
+  NotificationActionResponse,
+  NotificationChannel,
+  NotificationRecord,
+  NotificationRuleSettings,
+  NotificationSettings,
+  NotificationSeverity,
+  NotificationStatus,
+  NotificationType,
   PermissionKey,
+  PrintLayoutBlock,
   PullResponse,
   PushResponse,
   RequestKind,
+  ReportSyncFailureRequest,
   ReportPrintTemplate,
   ReverseInventoryRequest,
   ResetUserPasswordRequest,
@@ -57,6 +74,9 @@ import type {
   Supplier,
   SyncEvent,
   SettingsResponse,
+  MarkNotificationReadRequest,
+  TestTelegramNotificationRequest,
+  TestTelegramNotificationResponse,
   UpdateItemRequest,
   UpdateItemResponse,
   UpdateLocationRequest,
@@ -84,7 +104,20 @@ const SEQUENCE_DEFAULT_WIDTH = 5;
 const DOCUMENT_SEQUENCE_START = 1001;
 const PASSWORD_ITERATIONS = 100_000;
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
+const DAILY_SUMMARY_STATE_PREFIX = "daily_summary_sent_on:";
 const textEncoder = new TextEncoder();
+
+const NOTIFICATION_TYPE_TO_SETTINGS_KEY: Record<
+  Exclude<NotificationType, "daily-summary">,
+  keyof Omit<NotificationSettings, "telegramEnabled" | "telegramChatId" | "dailySummary" | "wastageCostThreshold">
+> = {
+  "low-stock": "lowStock",
+  "near-expiry": "nearExpiry",
+  expired: "expired",
+  "approval-request": "approvalRequests",
+  "failed-sync": "failedSync",
+  "wastage-threshold": "wastageThresholdExceeded",
+};
 
 const DOCUMENT_PREFIX_BY_KIND: Record<RequestKind, string> = {
   grn: "GRN",
@@ -152,6 +185,36 @@ function futureIso(msFromNow: number): string {
 
 function isPastIso(value: string): boolean {
   return Date.parse(value) <= Date.now();
+}
+
+function todayKeyInTimeZone(timeZone: string, date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function hourInTimeZone(timeZone: string, date = new Date()): number {
+  return Number.parseInt(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour: "2-digit",
+      hour12: false,
+    }).format(date),
+    10,
+  );
+}
+
+function normalizeNotificationRule<T extends object>(
+  input: Partial<T> | undefined,
+  fallback: T,
+): T {
+  return {
+    ...fallback,
+    ...(typeof input === "object" && input ? input : {}),
+  } as T;
 }
 
 function assertPasswordStrength(password: string) {
@@ -531,6 +594,109 @@ function ensurePrivilegedUserManagementAllowed(
   }
 }
 
+function validateNotificationSettings(
+  input: NotificationSettings | undefined,
+): NotificationSettings {
+  const fallback = createDefaultNotificationSettings();
+  const safeInput = input ?? fallback;
+  const dailySummaryInput = safeInput.dailySummary ?? fallback.dailySummary;
+  const dailySummaryHour = Number(dailySummaryInput.hour);
+  const wastageCostThreshold = Number(safeInput.wastageCostThreshold);
+  const templates = Object.fromEntries(
+    (Object.keys(fallback.templates) as NotificationType[]).map((type) => {
+      const inputTemplate = safeInput.templates?.[type];
+      const fallbackTemplate = fallback.templates[type];
+      return [
+        type,
+        {
+          title:
+            typeof inputTemplate?.title === "string" && inputTemplate.title.trim()
+              ? inputTemplate.title.trim()
+              : fallbackTemplate.title,
+          body:
+            typeof inputTemplate?.body === "string" && inputTemplate.body.trim()
+              ? inputTemplate.body.trim()
+              : fallbackTemplate.body,
+        },
+      ];
+    }),
+  ) as NotificationSettings["templates"];
+  const style = {
+    telegramHeader:
+      typeof safeInput.style?.telegramHeader === "string" &&
+      safeInput.style.telegramHeader.trim()
+        ? safeInput.style.telegramHeader.trim()
+        : fallback.style.telegramHeader,
+    telegramFooter:
+      typeof safeInput.style?.telegramFooter === "string"
+        ? safeInput.style.telegramFooter.trim()
+        : fallback.style.telegramFooter,
+    includeTimestamp:
+      typeof safeInput.style?.includeTimestamp === "boolean"
+        ? safeInput.style.includeTimestamp
+        : fallback.style.includeTimestamp,
+  };
+
+  const normalized: NotificationSettings = {
+    telegramEnabled: Boolean(safeInput.telegramEnabled),
+    telegramChatId: String(safeInput.telegramChatId ?? "").trim(),
+    lowStock: normalizeNotificationRule(safeInput.lowStock, fallback.lowStock),
+    nearExpiry: normalizeNotificationRule(safeInput.nearExpiry, fallback.nearExpiry),
+    expired: normalizeNotificationRule(safeInput.expired, fallback.expired),
+    approvalRequests: normalizeNotificationRule(
+      safeInput.approvalRequests,
+      fallback.approvalRequests,
+    ),
+    failedSync: normalizeNotificationRule(safeInput.failedSync, fallback.failedSync),
+    wastageThresholdExceeded: normalizeNotificationRule(
+      safeInput.wastageThresholdExceeded,
+      fallback.wastageThresholdExceeded,
+    ),
+    dailySummary: {
+      ...(normalizeNotificationRule(
+        dailySummaryInput,
+        fallback.dailySummary,
+      ) as DailySummaryNotificationSettings),
+      hour:
+        Number.isFinite(dailySummaryHour) && dailySummaryHour >= 0 && dailySummaryHour <= 23
+          ? Math.floor(dailySummaryHour)
+          : fallback.dailySummary.hour,
+      scope:
+        dailySummaryInput.scope === "branch" || dailySummaryInput.scope === "warehouse"
+          ? dailySummaryInput.scope
+          : fallback.dailySummary.scope,
+    },
+    wastageCostThreshold:
+      Number.isFinite(wastageCostThreshold) && wastageCostThreshold >= 0
+        ? wastageCostThreshold
+        : fallback.wastageCostThreshold,
+    style,
+    templates,
+  };
+
+  const telegramRequested =
+    normalized.lowStock.telegram ||
+    normalized.nearExpiry.telegram ||
+    normalized.expired.telegram ||
+    normalized.approvalRequests.telegram ||
+    normalized.failedSync.telegram ||
+    normalized.wastageThresholdExceeded.telegram ||
+    normalized.dailySummary.telegram;
+
+  if (
+    normalized.telegramEnabled &&
+    telegramRequested &&
+    normalized.telegramChatId &&
+    !/^(-?\d{6,}|@\w{5,})$/.test(normalized.telegramChatId)
+  ) {
+    throw new Error(
+      "Telegram chat ID must be a numeric chat ID like -1001234567890 or a channel username like @omnistock_alerts.",
+    );
+  }
+
+  return normalized;
+}
+
 function validateEnvironmentSettings(
   input: UpdateSettingsRequest,
   companyName = "OmniStock",
@@ -550,6 +716,7 @@ function validateEnvironmentSettings(
     throw new Error("Expiry alert days must be zero or greater.");
   }
 
+  const notificationSettings = validateNotificationSettings(input.notificationSettings);
   const timeSource: TimeSource = input.timeSource === "browser" ? "browser" : DEFAULT_TIME_SOURCE;
   const fallbackTemplate = createDefaultReportPrintTemplate(companyName);
   const template = input.reportPrintTemplate;
@@ -557,6 +724,40 @@ function validateEnvironmentSettings(
     typeof template?.accentColor === "string" && /^#[0-9a-fA-F]{6}$/.test(template.accentColor)
       ? template.accentColor
       : fallbackTemplate.accentColor;
+  const fallbackBlocks = fallbackTemplate.layoutBlocks;
+  const reportLayoutBlocks: PrintLayoutBlock[] = Array.isArray(template?.layoutBlocks)
+    ? template.layoutBlocks
+        .map((block, index) => {
+          const fallbackBlock = fallbackBlocks[index] ?? fallbackBlocks[0];
+          if (!block || typeof block !== "object" || typeof fallbackBlock !== "object") {
+            return null;
+          }
+
+          const type =
+            typeof block.type === "string" &&
+            fallbackBlocks.some((candidate) => candidate.type === block.type)
+              ? block.type
+              : fallbackBlock.type;
+
+          return {
+            id:
+              typeof block.id === "string" && block.id.trim()
+                ? block.id.trim()
+                : `blk-${type}-${index + 1}`,
+            type,
+            label:
+              typeof block.label === "string" && block.label.trim()
+                ? block.label.trim()
+                : fallbackBlocks.find((candidate) => candidate.type === type)?.label ??
+                  fallbackBlock.label,
+            enabled:
+              typeof block.enabled === "boolean" ? block.enabled : fallbackBlock.enabled,
+            content:
+              typeof block.content === "string" ? block.content : fallbackBlock.content,
+          } satisfies PrintLayoutBlock;
+        })
+        .filter((block): block is PrintLayoutBlock => Boolean(block))
+    : fallbackBlocks;
   const reportPrintTemplate: ReportPrintTemplate = {
     templateName:
       typeof template?.templateName === "string" && template.templateName.trim()
@@ -619,6 +820,7 @@ function validateEnvironmentSettings(
       typeof template?.signatureLabelRight === "string" && template.signatureLabelRight.trim()
         ? template.signatureLabelRight.trim()
         : fallbackTemplate.signatureLabelRight,
+    layoutBlocks: reportLayoutBlocks.length ? reportLayoutBlocks : fallbackBlocks,
   };
 
   return {
@@ -631,6 +833,7 @@ function validateEnvironmentSettings(
     enableBarcode: Boolean(input.enableBarcode),
     strictFefo: Boolean(input.strictFefo),
     reportPrintTemplate,
+    notificationSettings,
   };
 }
 
@@ -833,6 +1036,92 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
       "ALTER TABLE app_settings ADD COLUMN report_print_template_json TEXT NOT NULL DEFAULT '{}'",
     );
   }
+  if (!(await columnExists(db, "app_settings", "notification_settings_json"))) {
+    await execute(
+      db,
+      "ALTER TABLE app_settings ADD COLUMN notification_settings_json TEXT NOT NULL DEFAULT '{}'",
+    );
+  }
+
+  if (!(await tableExists(db, "notifications"))) {
+    await executeScript(
+      db,
+      `
+      CREATE TABLE IF NOT EXISTS notifications (
+        id TEXT PRIMARY KEY,
+        sequence_no INTEGER NOT NULL UNIQUE,
+        type TEXT NOT NULL CHECK (type IN ('low-stock', 'near-expiry', 'expired', 'approval-request', 'failed-sync', 'wastage-threshold', 'daily-summary')),
+        severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'critical')),
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('unread', 'read')),
+        channels_json TEXT NOT NULL,
+        dedupe_key TEXT NOT NULL UNIQUE,
+        item_id TEXT,
+        item_name TEXT,
+        location_id TEXT,
+        location_name TEXT,
+        request_id TEXT,
+        metadata_json TEXT,
+        read_at TEXT,
+        resolved_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (item_id) REFERENCES items(id),
+        FOREIGN KEY (location_id) REFERENCES locations(id),
+        FOREIGN KEY (request_id) REFERENCES inventory_requests(id)
+      ) STRICT
+    `,
+    );
+  }
+
+  if (!(await tableExists(db, "notification_deliveries"))) {
+    await executeScript(
+      db,
+      `
+      CREATE TABLE IF NOT EXISTS notification_deliveries (
+        id TEXT PRIMARY KEY,
+        sequence_no INTEGER NOT NULL UNIQUE,
+        notification_id TEXT NOT NULL,
+        channel TEXT NOT NULL CHECK (channel IN ('in-app', 'telegram')),
+        target TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'failed', 'skipped')),
+        provider_message_id TEXT,
+        error_message TEXT,
+        attempted_at TEXT NOT NULL,
+        delivered_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (notification_id) REFERENCES notifications(id) ON DELETE CASCADE
+      ) STRICT
+    `,
+    );
+  }
+
+  await execute(
+    db,
+    "CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at DESC)",
+  );
+  await execute(
+    db,
+    "CREATE INDEX IF NOT EXISTS idx_notifications_type_created_at ON notifications(type, created_at DESC)",
+  );
+  await execute(
+    db,
+    "CREATE INDEX IF NOT EXISTS idx_notifications_status_created_at ON notifications(status, created_at DESC)",
+  );
+  await execute(
+    db,
+    "CREATE INDEX IF NOT EXISTS idx_notifications_resolved_at ON notifications(resolved_at)",
+  );
+  await execute(
+    db,
+    "CREATE INDEX IF NOT EXISTS idx_notification_deliveries_notification_id ON notification_deliveries(notification_id)",
+  );
+  await execute(
+    db,
+    "CREATE INDEX IF NOT EXISTS idx_notification_deliveries_status_attempted_at ON notification_deliveries(status, attempted_at DESC)",
+  );
   if (!(await tableExists(db, "market_price_entries"))) {
     await executeScript(
       db,
@@ -1188,6 +1477,26 @@ interface SettingsRow {
   enable_barcode: number;
   strict_fefo: number;
   report_print_template_json: string;
+  notification_settings_json: string;
+}
+
+interface NotificationRow {
+  id: string;
+  type: NotificationType;
+  severity: NotificationSeverity;
+  title: string;
+  message: string;
+  status: NotificationStatus;
+  channels_json: string;
+  item_id: string | null;
+  item_name: string | null;
+  location_id: string | null;
+  location_name: string | null;
+  request_id: string | null;
+  metadata_json: string | null;
+  read_at: string | null;
+  resolved_at: string | null;
+  created_at: string;
 }
 
 interface ExistingEventRow {
@@ -1300,6 +1609,63 @@ async function loadRolePermissionMap(db: D1Database): Promise<Record<User["role"
   return loadRolePermissionMapFromRows(rows);
 }
 
+function parseNotificationSettings(settingsRow: SettingsRow | null): NotificationSettings {
+  try {
+    const parsed = settingsRow?.notification_settings_json
+      ? (JSON.parse(settingsRow.notification_settings_json) as NotificationSettings)
+      : undefined;
+    return validateNotificationSettings(parsed);
+  } catch {
+    return createDefaultNotificationSettings();
+  }
+}
+
+function parseNotificationRows(rows: NotificationRow[]): NotificationRecord[] {
+  return rows.map((row) => {
+    let channels: NotificationChannel[] = ["in-app"];
+    let metadata: NotificationRecord["metadata"];
+
+    try {
+      const parsedChannels = JSON.parse(row.channels_json) as NotificationChannel[];
+      if (Array.isArray(parsedChannels) && parsedChannels.length > 0) {
+        channels = parsedChannels.filter(
+          (channel): channel is NotificationChannel =>
+            channel === "in-app" || channel === "telegram",
+        );
+      }
+    } catch {
+      channels = ["in-app"];
+    }
+
+    try {
+      metadata = row.metadata_json
+        ? (JSON.parse(row.metadata_json) as NotificationRecord["metadata"])
+        : undefined;
+    } catch {
+      metadata = undefined;
+    }
+
+    return {
+      id: row.id,
+      type: row.type,
+      severity: row.severity,
+      title: row.title,
+      message: row.message,
+      status: row.status,
+      channels,
+      createdAt: row.created_at,
+      readAt: row.read_at ?? undefined,
+      resolvedAt: row.resolved_at ?? undefined,
+      itemId: row.item_id ?? undefined,
+      itemName: row.item_name ?? undefined,
+      locationId: row.location_id ?? undefined,
+      locationName: row.location_name ?? undefined,
+      requestId: row.request_id ?? undefined,
+      metadata,
+    };
+  });
+}
+
 export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
   await ensureDatabaseReady(db);
 
@@ -1318,6 +1684,7 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
     wasteEntryRows,
     ledgerRows,
     activityRows,
+    notificationRows,
     settingsRow,
   ] = await Promise.all([
     all<LocationRow>(
@@ -1496,9 +1863,32 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
       ORDER BY al.created_at DESC, al.sequence_no DESC
       LIMIT 160`,
     ),
+    all<NotificationRow>(
+      db,
+      `SELECT
+        id,
+        type,
+        severity,
+        title,
+        message,
+        status,
+        channels_json,
+        item_id,
+        item_name,
+        location_id,
+        location_name,
+        request_id,
+        metadata_json,
+        read_at,
+        resolved_at,
+        created_at
+      FROM notifications
+      ORDER BY created_at DESC, sequence_no DESC
+      LIMIT 180`,
+    ),
     first<SettingsRow>(
       db,
-        "SELECT company_name, currency, timezone, time_source, low_stock_threshold, expiry_alert_days, enable_offline, enable_realtime, enable_barcode, strict_fefo, report_print_template_json FROM app_settings LIMIT 1",
+        "SELECT company_name, currency, timezone, time_source, low_stock_threshold, expiry_alert_days, enable_offline, enable_realtime, enable_barcode, strict_fefo, report_print_template_json, notification_settings_json FROM app_settings LIMIT 1",
     ),
   ]);
 
@@ -1506,6 +1896,7 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
   const batchMap = mapBatchesByStock(batchRows);
   const stockMap = mapStocksByItem(stockRows, batchMap);
   const rolePermissionMap = loadRolePermissionMapFromRows(rolePermissionRows);
+  const notificationSettings = parseNotificationSettings(settingsRow);
   const assignmentMap = groupValues(
     assignmentRows.map((row) => ({ user_id: row.user_id, value: row.location_id })),
   );
@@ -1669,23 +2060,25 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
       module: row.module_key,
       severity: row.severity,
     })),
-      settings: {
-        companyName: settingsRow?.company_name ?? "OmniStock",
-        currency: settingsRow?.currency ?? "PKR",
-        timezone: settingsRow?.timezone ?? "Asia/Karachi",
-        timeSource: settingsRow?.time_source === "browser" ? "browser" : DEFAULT_TIME_SOURCE,
-        lowStockThreshold: Number(settingsRow?.low_stock_threshold ?? 1),
-        expiryAlertDays: Number(settingsRow?.expiry_alert_days ?? 14),
-        enableOffline: Boolean(settingsRow?.enable_offline ?? 1),
-        enableRealtime: Boolean(settingsRow?.enable_realtime ?? 1),
-        enableBarcode: Boolean(settingsRow?.enable_barcode ?? 1),
-        strictFefo: Boolean(settingsRow?.strict_fefo ?? 1),
-        reportPrintTemplate: (() => {
-          try {
-            const parsed = settingsRow?.report_print_template_json
-              ? (JSON.parse(settingsRow.report_print_template_json) as Partial<ReportPrintTemplate>)
-              : undefined;
-            return validateEnvironmentSettings({
+    notifications: parseNotificationRows(notificationRows),
+    settings: {
+      companyName: settingsRow?.company_name ?? "OmniStock",
+      currency: settingsRow?.currency ?? "PKR",
+      timezone: settingsRow?.timezone ?? "Asia/Karachi",
+      timeSource: settingsRow?.time_source === "browser" ? "browser" : DEFAULT_TIME_SOURCE,
+      lowStockThreshold: Number(settingsRow?.low_stock_threshold ?? 1),
+      expiryAlertDays: Number(settingsRow?.expiry_alert_days ?? 14),
+      enableOffline: Boolean(settingsRow?.enable_offline ?? 1),
+      enableRealtime: Boolean(settingsRow?.enable_realtime ?? 1),
+      enableBarcode: Boolean(settingsRow?.enable_barcode ?? 1),
+      strictFefo: Boolean(settingsRow?.strict_fefo ?? 1),
+      reportPrintTemplate: (() => {
+        try {
+          const parsed = settingsRow?.report_print_template_json
+            ? (JSON.parse(settingsRow.report_print_template_json) as Partial<ReportPrintTemplate>)
+            : undefined;
+          return validateEnvironmentSettings(
+            {
               timezone: settingsRow?.timezone ?? "Asia/Karachi",
               timeSource: settingsRow?.time_source === "browser" ? "browser" : DEFAULT_TIME_SOURCE,
               lowStockThreshold: Number(settingsRow?.low_stock_threshold ?? 1),
@@ -1697,20 +2090,850 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
               reportPrintTemplate:
                 (parsed as ReportPrintTemplate | undefined) ??
                 createDefaultReportPrintTemplate(settingsRow?.company_name ?? "OmniStock"),
-            }, settingsRow?.company_name ?? "OmniStock").reportPrintTemplate;
-          } catch {
-            return createDefaultReportPrintTemplate(settingsRow?.company_name ?? "OmniStock");
-          }
-        })(),
-      },
+              notificationSettings,
+            },
+            settingsRow?.company_name ?? "OmniStock",
+          ).reportPrintTemplate;
+        } catch {
+          return createDefaultReportPrintTemplate(settingsRow?.company_name ?? "OmniStock");
+        }
+      })(),
+      notificationSettings,
+    },
   };
+}
+
+interface NotificationInput {
+  type: NotificationType;
+  severity: NotificationSeverity;
+  title: string;
+  message: string;
+  dedupeKey: string;
+  channels: NotificationChannel[];
+  itemId?: string;
+  itemName?: string;
+  locationId?: string;
+  locationName?: string;
+  requestId?: string;
+  metadata?: NotificationRecord["metadata"];
+}
+
+interface NotificationDedupeRow {
+  id: string;
+  dedupe_key: string;
+  resolved_at: string | null;
+}
+
+function ruleForNotification(
+  settings: NotificationSettings,
+  type: NotificationType,
+): NotificationRuleSettings | DailySummaryNotificationSettings {
+  if (type === "daily-summary") {
+    return settings.dailySummary;
+  }
+
+  return settings[
+    NOTIFICATION_TYPE_TO_SETTINGS_KEY[type]
+  ] as NotificationRuleSettings;
+}
+
+function channelsForNotification(
+  settings: NotificationSettings,
+  type: NotificationType,
+): NotificationChannel[] {
+  const rule = ruleForNotification(settings, type);
+  const channels: NotificationChannel[] = [];
+  if (rule.inApp) {
+    channels.push("in-app");
+  }
+  if (rule.telegram && settings.telegramEnabled && settings.telegramChatId.trim()) {
+    channels.push("telegram");
+  }
+  return channels;
+}
+
+function renderNotificationTemplate(
+  template: string,
+  values: Record<string, boolean | number | string | null | undefined>,
+): string {
+  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key: string) => {
+    const value = values[key];
+    if (value === null || value === undefined) {
+      return "";
+    }
+    return String(value);
+  });
+}
+
+function composeNotificationContent(
+  settings: NotificationSettings,
+  type: NotificationType,
+  values: Record<string, boolean | number | string | null | undefined>,
+): Pick<NotificationInput, "title" | "message"> {
+  const template = settings.templates[type];
+  return {
+    title: renderNotificationTemplate(template.title, values).trim(),
+    message: renderNotificationTemplate(template.body, values).trim(),
+  };
+}
+
+function formatTelegramMessage(
+  companyName: string,
+  settings: NotificationSettings,
+  notification: NotificationInput,
+): string {
+  const lines: string[] = [];
+  const header = settings.style.telegramHeader.trim();
+  if (header) {
+    lines.push(`${header}`);
+  } else {
+    lines.push(`${companyName}`);
+  }
+  lines.push(notification.title, notification.message);
+
+  if (notification.locationName) {
+    lines.push(`Location: ${notification.locationName}`);
+  }
+  if (notification.itemName) {
+    lines.push(`Item: ${notification.itemName}`);
+  }
+  if (settings.style.includeTimestamp) {
+    lines.push(`At: ${new Date().toISOString()}`);
+  }
+  if (settings.style.telegramFooter.trim()) {
+    lines.push(settings.style.telegramFooter.trim());
+  }
+
+  return lines.join("\n");
+}
+
+async function recordNotificationDelivery(
+  db: D1Database,
+  notificationId: string,
+  channel: NotificationChannel,
+  target: string,
+  status: "pending" | "delivered" | "failed" | "skipped",
+  errorMessage?: string,
+  providerMessageId?: string,
+): Promise<void> {
+  const id = await reserveNextId(db, "notification_deliveries", "ndl");
+  const attemptedAt = new Date().toISOString();
+  await execute(
+    db,
+    `INSERT INTO notification_deliveries (
+      id,
+      sequence_no,
+      notification_id,
+      channel,
+      target,
+      status,
+      provider_message_id,
+      error_message,
+      attempted_at,
+      delivered_at,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      numberPart(id),
+      notificationId,
+      channel,
+      target,
+      status,
+      providerMessageId ?? null,
+      errorMessage ?? null,
+      attemptedAt,
+      status === "delivered" ? attemptedAt : null,
+      attemptedAt,
+      attemptedAt,
+    ],
+  );
+}
+
+async function deliverNotificationToTelegram(
+  db: D1Database,
+  notificationId: string,
+  companyName: string,
+  settings: NotificationSettings,
+  notification: NotificationInput,
+  telegramBotToken?: string,
+): Promise<void> {
+  const chatId = settings.telegramChatId.trim();
+  if (!telegramBotToken || !chatId) {
+    await recordNotificationDelivery(
+      db,
+      notificationId,
+      "telegram",
+      chatId || "unconfigured",
+      "skipped",
+      "Telegram delivery is not configured yet.",
+    );
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.telegram.org/bot${telegramBotToken}/sendMessage`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: formatTelegramMessage(companyName, settings, notification),
+        }),
+      },
+    );
+
+    const payload = (await response.json()) as {
+      ok?: boolean;
+      result?: { message_id?: number };
+      description?: string;
+    };
+
+    if (!response.ok || !payload.ok) {
+      await recordNotificationDelivery(
+        db,
+        notificationId,
+        "telegram",
+        chatId,
+        "failed",
+        payload.description ?? "Telegram delivery failed.",
+      );
+      return;
+    }
+
+    await recordNotificationDelivery(
+      db,
+      notificationId,
+      "telegram",
+      chatId,
+      "delivered",
+      undefined,
+      payload.result?.message_id ? String(payload.result.message_id) : undefined,
+    );
+  } catch (error) {
+    await recordNotificationDelivery(
+      db,
+      notificationId,
+      "telegram",
+      chatId,
+      "failed",
+      error instanceof Error ? error.message : "Telegram delivery failed.",
+    );
+  }
+}
+
+async function upsertNotification(
+  db: D1Database,
+  snapshot: InventorySnapshot,
+  input: NotificationInput,
+  telegramBotToken?: string,
+): Promise<void> {
+  const existing = await first<{
+    id: string;
+    status: NotificationStatus;
+    resolved_at: string | null;
+  }>(
+    db,
+    "SELECT id, status, resolved_at FROM notifications WHERE dedupe_key = ? LIMIT 1",
+    [input.dedupeKey],
+  );
+
+  const now = new Date().toISOString();
+  const channelsJson = JSON.stringify(input.channels);
+  const metadataJson = input.metadata ? JSON.stringify(input.metadata) : null;
+  let notificationId = existing?.id;
+  let shouldDispatchTelegram = false;
+
+  if (!existing) {
+    notificationId = await reserveNextId(db, "notifications", "ntf");
+    await execute(
+      db,
+      `INSERT INTO notifications (
+        id,
+        sequence_no,
+        type,
+        severity,
+        title,
+        message,
+        status,
+        channels_json,
+        dedupe_key,
+        item_id,
+        item_name,
+        location_id,
+        location_name,
+        request_id,
+        metadata_json,
+        read_at,
+        resolved_at,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'unread', ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+      [
+        notificationId,
+        numberPart(notificationId),
+        input.type,
+        input.severity,
+        input.title,
+        input.message,
+        channelsJson,
+        input.dedupeKey,
+        input.itemId ?? null,
+        input.itemName ?? null,
+        input.locationId ?? null,
+        input.locationName ?? null,
+        input.requestId ?? null,
+        metadataJson,
+        now,
+        now,
+      ],
+    );
+    shouldDispatchTelegram = true;
+  } else {
+    shouldDispatchTelegram = Boolean(existing.resolved_at);
+    await execute(
+      db,
+      `UPDATE notifications
+        SET type = ?,
+            severity = ?,
+            title = ?,
+            message = ?,
+            channels_json = ?,
+            item_id = ?,
+            item_name = ?,
+            location_id = ?,
+            location_name = ?,
+            request_id = ?,
+            metadata_json = ?,
+            resolved_at = NULL,
+            status = CASE WHEN resolved_at IS NOT NULL THEN 'unread' ELSE status END,
+            read_at = CASE WHEN resolved_at IS NOT NULL THEN NULL ELSE read_at END,
+            updated_at = ?
+      WHERE id = ?`,
+      [
+        input.type,
+        input.severity,
+        input.title,
+        input.message,
+        channelsJson,
+        input.itemId ?? null,
+        input.itemName ?? null,
+        input.locationId ?? null,
+        input.locationName ?? null,
+        input.requestId ?? null,
+        metadataJson,
+        now,
+        existing.id,
+      ],
+    );
+  }
+
+  if (
+    shouldDispatchTelegram &&
+    notificationId &&
+    input.channels.includes("telegram")
+  ) {
+    await deliverNotificationToTelegram(
+      db,
+      notificationId,
+      snapshot.settings.companyName,
+      snapshot.settings.notificationSettings,
+      input,
+      telegramBotToken,
+    );
+  }
+}
+
+async function resolveMissingNotifications(
+  db: D1Database,
+  type: NotificationType,
+  activeKeys: Set<string>,
+): Promise<void> {
+  const rows = await all<NotificationDedupeRow>(
+    db,
+    "SELECT id, dedupe_key, resolved_at FROM notifications WHERE type = ?",
+    [type],
+  );
+  const now = new Date().toISOString();
+  for (const row of rows) {
+    if (activeKeys.has(row.dedupe_key) || row.resolved_at) {
+      continue;
+    }
+    await execute(
+      db,
+      "UPDATE notifications SET resolved_at = ?, updated_at = ? WHERE id = ?",
+      [now, now, row.id],
+    );
+  }
+}
+
+async function synchronizeNotificationSet(
+  db: D1Database,
+  snapshot: InventorySnapshot,
+  type: NotificationType,
+  inputs: NotificationInput[],
+  telegramBotToken?: string,
+): Promise<void> {
+  const activeKeys = new Set(inputs.map((entry) => entry.dedupeKey));
+  for (const entry of inputs) {
+    await upsertNotification(db, snapshot, entry, telegramBotToken);
+  }
+  await resolveMissingNotifications(db, type, activeKeys);
+}
+
+function buildStateNotifications(snapshot: InventorySnapshot): NotificationInput[] {
+  const settings = snapshot.settings.notificationSettings;
+  const notifications: NotificationInput[] = [];
+
+  for (const alert of lowStockAlerts(snapshot)) {
+    const rule = settings.lowStock;
+    if (!rule.enabled) {
+      continue;
+    }
+    const values = {
+      itemName: alert.itemName,
+      locationName: alert.locationName,
+      quantity: alert.quantity,
+    };
+    const content = composeNotificationContent(settings, "low-stock", values);
+    notifications.push({
+      type: "low-stock",
+      severity: "warning",
+      title: content.title,
+      message: content.message,
+      dedupeKey: `low-stock:${alert.itemId}:${alert.locationId}`,
+      channels: channelsForNotification(settings, "low-stock"),
+      itemId: alert.itemId,
+      itemName: alert.itemName,
+      locationId: alert.locationId,
+      locationName: alert.locationName,
+      metadata: {
+        quantity: alert.quantity,
+      },
+    });
+  }
+
+  for (const alert of nearExpiryAlerts(snapshot)) {
+    const rule = settings.nearExpiry;
+    if (!rule.enabled) {
+      continue;
+    }
+    const values = {
+      itemName: alert.itemName,
+      locationName: alert.locationName,
+      quantity: alert.quantity,
+      daysUntilExpiry: alert.daysUntilExpiry ?? "",
+      lotCode: alert.lotCode ?? "",
+    };
+    const content = composeNotificationContent(settings, "near-expiry", values);
+    notifications.push({
+      type: "near-expiry",
+      severity: "warning",
+      title: content.title,
+      message: content.message,
+      dedupeKey: `near-expiry:${alert.itemId}:${alert.locationId}:${alert.lotCode ?? "n/a"}`,
+      channels: channelsForNotification(settings, "near-expiry"),
+      itemId: alert.itemId,
+      itemName: alert.itemName,
+      locationId: alert.locationId,
+      locationName: alert.locationName,
+      metadata: {
+        quantity: alert.quantity,
+        daysUntilExpiry: alert.daysUntilExpiry ?? null,
+        lotCode: alert.lotCode ?? null,
+      },
+    });
+  }
+
+  for (const alert of expiredAlerts(snapshot)) {
+    const rule = settings.expired;
+    if (!rule.enabled) {
+      continue;
+    }
+    const values = {
+      itemName: alert.itemName,
+      locationName: alert.locationName,
+      quantity: alert.quantity,
+      daysUntilExpiry: alert.daysUntilExpiry ?? "",
+      lotCode: alert.lotCode ?? "",
+    };
+    const content = composeNotificationContent(settings, "expired", values);
+    notifications.push({
+      type: "expired",
+      severity: "critical",
+      title: content.title,
+      message: content.message,
+      dedupeKey: `expired:${alert.itemId}:${alert.locationId}:${alert.lotCode ?? "n/a"}`,
+      channels: channelsForNotification(settings, "expired"),
+      itemId: alert.itemId,
+      itemName: alert.itemName,
+      locationId: alert.locationId,
+      locationName: alert.locationName,
+      metadata: {
+        quantity: alert.quantity,
+        daysUntilExpiry: alert.daysUntilExpiry ?? null,
+        lotCode: alert.lotCode ?? null,
+      },
+    });
+  }
+
+  if (settings.approvalRequests.enabled) {
+    for (const request of snapshot.requests.filter((entry) => entry.status === "submitted")) {
+      const values = {
+        reference: request.reference,
+        requestKind: request.kind.toUpperCase(),
+        itemName: request.itemName,
+        locationName: request.toLocationName ?? request.fromLocationName ?? "",
+        quantity: request.quantity,
+      };
+      const content = composeNotificationContent(settings, "approval-request", values);
+      notifications.push({
+        type: "approval-request",
+        severity: "info",
+        title: content.title,
+        message: content.message,
+        dedupeKey: `approval-request:${request.id}`,
+        channels: channelsForNotification(settings, "approval-request"),
+        itemId: request.itemId,
+        itemName: request.itemName,
+        locationId: request.toLocationId ?? request.fromLocationId,
+        locationName: request.toLocationName ?? request.fromLocationName,
+        requestId: request.id,
+        metadata: {
+          quantity: request.quantity,
+        },
+      });
+    }
+  }
+
+  if (settings.wastageThresholdExceeded.enabled) {
+    const now = Date.now();
+    const locationTotals = new Map<
+      string,
+      { locationName: string; totalCost: number; count: number }
+    >();
+    for (const entry of snapshot.wasteEntries) {
+      if (now - Date.parse(entry.createdAt) > 24 * 60 * 60 * 1000) {
+        continue;
+      }
+      const current = locationTotals.get(entry.locationId) ?? {
+        locationName: entry.locationName,
+        totalCost: 0,
+        count: 0,
+      };
+      current.totalCost += entry.estimatedCost;
+      current.count += 1;
+      locationTotals.set(entry.locationId, current);
+    }
+
+    for (const [locationId, total] of locationTotals) {
+      if (total.totalCost < settings.wastageCostThreshold) {
+        continue;
+      }
+      const values = {
+        locationName: total.locationName,
+        totalCost: Number(total.totalCost.toFixed(0)),
+        entries: total.count,
+      };
+      const content = composeNotificationContent(settings, "wastage-threshold", values);
+      notifications.push({
+        type: "wastage-threshold",
+        severity: "warning",
+        title: content.title,
+        message: content.message,
+        dedupeKey: `wastage-threshold:${locationId}`,
+        channels: channelsForNotification(settings, "wastage-threshold"),
+        locationId,
+        locationName: total.locationName,
+        metadata: {
+          totalCost: Number(total.totalCost.toFixed(2)),
+          entries: total.count,
+        },
+      });
+    }
+  }
+
+  return notifications;
+}
+
+async function synchronizeStateNotifications(
+  db: D1Database,
+  snapshot: InventorySnapshot,
+  telegramBotToken?: string,
+): Promise<void> {
+  const grouped = new Map<NotificationType, NotificationInput[]>();
+  for (const notification of buildStateNotifications(snapshot)) {
+    const bucket = grouped.get(notification.type) ?? [];
+    bucket.push(notification);
+    grouped.set(notification.type, bucket);
+  }
+
+  for (const type of [
+    "low-stock",
+    "near-expiry",
+    "expired",
+    "approval-request",
+    "wastage-threshold",
+  ] as const) {
+    await synchronizeNotificationSet(
+      db,
+      snapshot,
+      type,
+      grouped.get(type) ?? [],
+      telegramBotToken,
+    );
+  }
+}
+
+async function createSingleNotification(
+  db: D1Database,
+  snapshot: InventorySnapshot,
+  input: NotificationInput,
+  telegramBotToken?: string,
+): Promise<void> {
+  await upsertNotification(db, snapshot, input, telegramBotToken);
+}
+
+export async function markNotificationReadInD1(
+  db: D1Database,
+  actorId: string,
+  input: MarkNotificationReadRequest,
+): Promise<NotificationActionResponse> {
+  await ensureDatabaseReady(db);
+  const snapshot = await loadSnapshot(db);
+  requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "dashboard.view",
+    "You do not have permission to access notifications.",
+  );
+
+  const now = new Date().toISOString();
+  await execute(
+    db,
+    "UPDATE notifications SET status = 'read', read_at = ?, updated_at = ? WHERE id = ?",
+    [now, now, input.notificationId],
+  );
+
+  return { snapshot: await loadSnapshot(db) };
+}
+
+export async function markAllNotificationsReadInD1(
+  db: D1Database,
+  actorId: string,
+): Promise<NotificationActionResponse> {
+  await ensureDatabaseReady(db);
+  const snapshot = await loadSnapshot(db);
+  requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "dashboard.view",
+    "You do not have permission to access notifications.",
+  );
+
+  const now = new Date().toISOString();
+  await execute(
+    db,
+    "UPDATE notifications SET status = 'read', read_at = ?, updated_at = ? WHERE status = 'unread' AND resolved_at IS NULL",
+    [now, now],
+  );
+
+  return { snapshot: await loadSnapshot(db) };
+}
+
+export async function reportSyncFailureInD1(
+  db: D1Database,
+  actorId: string,
+  input: ReportSyncFailureRequest,
+  telegramBotToken?: string,
+): Promise<NotificationActionResponse> {
+  await ensureDatabaseReady(db);
+  const snapshot = await loadSnapshot(db);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "dashboard.view",
+    "You do not have permission to access notifications.",
+  );
+  if (!snapshot.settings.notificationSettings.failedSync.enabled) {
+    return { snapshot };
+  }
+
+  const nowKey = todayKeyInTimeZone(snapshot.settings.timezone);
+  const content = composeNotificationContent(
+    snapshot.settings.notificationSettings,
+    "failed-sync",
+    {
+      actorName: actor.name,
+      message: input.message.trim() || "A device failed to sync with OmniStock.",
+    },
+  );
+  await createSingleNotification(
+    db,
+    snapshot,
+    {
+      type: "failed-sync",
+      severity: "critical",
+      title: content.title,
+      message: content.message,
+      dedupeKey: `failed-sync:${actor.id}:${nowKey}`,
+      channels: channelsForNotification(snapshot.settings.notificationSettings, "failed-sync"),
+      metadata: {
+        actorId: actor.id,
+      },
+    },
+    telegramBotToken,
+  );
+
+  return { snapshot: await loadSnapshot(db) };
+}
+
+export async function sendTestTelegramNotificationInD1(
+  db: D1Database,
+  actorId: string,
+  input: TestTelegramNotificationRequest,
+  telegramBotToken?: string,
+): Promise<TestTelegramNotificationResponse> {
+  await ensureDatabaseReady(db);
+  const snapshot = await loadSnapshot(db);
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "admin.notifications.edit",
+    "You do not have permission to edit notification settings.",
+  );
+  const settings = snapshot.settings.notificationSettings;
+
+  if (!settings.telegramEnabled) {
+    throw new Error("Enable Telegram delivery in Settings before sending a test message.");
+  }
+  if (!settings.telegramChatId.trim()) {
+    throw new Error("Enter a valid Telegram chat ID before sending a test message.");
+  }
+  if (!telegramBotToken) {
+    throw new Error(
+      "Telegram bot token is not configured on the Worker yet. Add TELEGRAM_BOT_TOKEN as a Worker secret first.",
+    );
+  }
+
+  const response = await fetch(`https://api.telegram.org/bot${telegramBotToken}/sendMessage`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({
+      chat_id: settings.telegramChatId.trim(),
+      text: `${snapshot.settings.companyName} - Telegram setup test\nTriggered by ${actor.name} from OmniStock Settings.`,
+    }),
+  });
+  const payload = (await response.json()) as { ok?: boolean; description?: string };
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.description ?? "Telegram delivery failed.");
+  }
+
+  return {
+    ok: true,
+    detail: input.message?.trim() || "Telegram test message sent successfully.",
+  };
+}
+
+export async function sendDueDailySummariesInD1(
+  db: D1Database,
+  telegramBotToken?: string,
+): Promise<void> {
+  await ensureDatabaseReady(db);
+  const snapshot = await loadSnapshot(db);
+  const settings = snapshot.settings.notificationSettings;
+  if (!settings.dailySummary.enabled) {
+    return;
+  }
+
+  const currentHour = hourInTimeZone(snapshot.settings.timezone);
+  if (currentHour !== settings.dailySummary.hour) {
+    return;
+  }
+
+  const todayKey = todayKeyInTimeZone(snapshot.settings.timezone);
+  const stateKey = `${DAILY_SUMMARY_STATE_PREFIX}${settings.dailySummary.scope}`;
+  const lastSent = await first<ValueTextRow>(
+    db,
+    "SELECT value_text FROM system_state WHERE key = ?",
+    [stateKey],
+  );
+  if (lastSent?.value_text === todayKey) {
+    return;
+  }
+
+  const relevantLocations = snapshot.locations.filter((location) =>
+    settings.dailySummary.scope === "warehouse"
+      ? location.type === "warehouse"
+      : location.type === "outlet",
+  );
+
+  const lowStock = lowStockAlerts(snapshot);
+  const nearExpiry = nearExpiryAlerts(snapshot);
+  const expired = expiredAlerts(snapshot);
+  const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+
+  for (const location of relevantLocations) {
+    const movementCount = snapshot.movementLedger.filter(
+      (entry) =>
+        entry.locationId === location.id && Date.parse(entry.createdAt) >= dayAgo,
+    ).length;
+    const wasteCost = snapshot.wasteEntries
+      .filter(
+        (entry) =>
+          entry.locationId === location.id && Date.parse(entry.createdAt) >= dayAgo,
+      )
+      .reduce((sum, entry) => sum + entry.estimatedCost, 0);
+
+    const content = composeNotificationContent(settings, "daily-summary", {
+      locationName: location.name,
+      movementCount,
+      lowStockCount: lowStock.filter((entry) => entry.locationId === location.id).length,
+      nearExpiryCount: nearExpiry.filter((entry) => entry.locationId === location.id).length,
+      expiredCount: expired.filter((entry) => entry.locationId === location.id).length,
+      wasteCost: Number(wasteCost.toFixed(0)),
+    });
+    await createSingleNotification(
+      db,
+      snapshot,
+      {
+        type: "daily-summary",
+        severity: "info",
+        title: content.title,
+        message: content.message,
+        dedupeKey: `daily-summary:${settings.dailySummary.scope}:${location.id}:${todayKey}`,
+        channels: channelsForNotification(snapshot.settings.notificationSettings, "daily-summary"),
+        locationId: location.id,
+        locationName: location.name,
+        metadata: {
+          movementCount,
+          wasteCost: Number(wasteCost.toFixed(2)),
+          date: todayKey,
+        },
+      },
+      telegramBotToken,
+    );
+  }
+
+  const now = new Date().toISOString();
+  await execute(
+    db,
+    "INSERT OR REPLACE INTO system_state (key, value_integer, value_text, updated_at) VALUES (?, NULL, ?, ?)",
+    [stateKey, todayKey, now],
+  );
 }
 
 export async function loadBootstrapPayload(
   db: D1Database,
   userId?: string,
 ): Promise<BootstrapPayload> {
-  const snapshot = await loadSnapshot(db);
+  let snapshot = await loadSnapshot(db);
+  if (snapshot.items.length > 0 && snapshot.notifications.length === 0) {
+    await synchronizeStateNotifications(db, snapshot);
+    snapshot = await loadSnapshot(db);
+  }
   const payload = buildBootstrapPayload(snapshot, userId);
   return {
     ...payload,
@@ -2437,15 +3660,44 @@ export async function updateSettingsInD1(
   db: D1Database,
   actorId: string,
   input: UpdateSettingsRequest,
+  telegramBotToken?: string,
 ): Promise<SettingsResponse> {
   await ensureDatabaseReady(db);
   const snapshot = await loadSnapshot(db);
-  const actor = requirePermission(
-    snapshot.users.find((user) => user.id === actorId),
-    "admin.environment.edit",
-    "You do not have permission to edit environment settings.",
-  );
+  const actor = snapshot.users.find((user) => user.id === actorId);
+  if (!actor) {
+    throw new Error("Authentication required.");
+  }
   const nextSettings = validateEnvironmentSettings(input, snapshot.settings.companyName);
+  const environmentChanged =
+    snapshot.settings.timezone !== nextSettings.timezone ||
+    snapshot.settings.timeSource !== nextSettings.timeSource ||
+    snapshot.settings.lowStockThreshold !== nextSettings.lowStockThreshold ||
+    snapshot.settings.expiryAlertDays !== nextSettings.expiryAlertDays ||
+    snapshot.settings.enableOffline !== nextSettings.enableOffline ||
+    snapshot.settings.enableRealtime !== nextSettings.enableRealtime ||
+    snapshot.settings.enableBarcode !== nextSettings.enableBarcode ||
+    snapshot.settings.strictFefo !== nextSettings.strictFefo ||
+    JSON.stringify(snapshot.settings.reportPrintTemplate) !==
+      JSON.stringify(nextSettings.reportPrintTemplate);
+  const notificationChanged =
+    JSON.stringify(snapshot.settings.notificationSettings) !==
+    JSON.stringify(nextSettings.notificationSettings);
+
+  if (environmentChanged) {
+    requirePermission(
+      actor,
+      "admin.environment.edit",
+      "You do not have permission to edit environment settings.",
+    );
+  }
+  if (notificationChanged) {
+    requirePermission(
+      actor,
+      "admin.notifications.edit",
+      "You do not have permission to edit notification settings.",
+    );
+  }
   const now = new Date().toISOString();
 
   await execute(
@@ -2460,6 +3712,7 @@ export async function updateSettingsInD1(
           enable_barcode = ?,
           strict_fefo = ?,
           report_print_template_json = ?,
+          notification_settings_json = ?,
           updated_at = ?
       WHERE id = ?`,
     [
@@ -2472,6 +3725,7 @@ export async function updateSettingsInD1(
       nextSettings.enableBarcode ? 1 : 0,
       nextSettings.strictFefo ? 1 : 0,
       JSON.stringify(nextSettings.reportPrintTemplate),
+      JSON.stringify(nextSettings.notificationSettings),
       now,
       SETTINGS_ID,
     ],
@@ -2481,7 +3735,13 @@ export async function updateSettingsInD1(
     db,
     actor.id,
     "Environment settings updated",
-    `${actor.name} updated time preferences, print defaults, and runtime environment controls.`,
+    `${actor.name} updated runtime settings, print defaults, and notification delivery controls.`,
+  );
+
+  await synchronizeStateNotifications(
+    db,
+    await loadSnapshot(db),
+    telegramBotToken,
   );
 
   return { snapshot: await loadSnapshot(db) };
@@ -2774,6 +4034,7 @@ async function recordInventoryMutation(
   db: D1Database,
   snapshot: InventorySnapshot,
   mutation: MutationEnvelope,
+  telegramBotToken?: string,
 ): Promise<MutationResult> {
   const nextSeq = snapshot.syncCursor + 1;
   const previewCounters = new Map<string, number>();
@@ -2795,7 +4056,12 @@ async function recordInventoryMutation(
   });
 
   await persistMutationResult(db, mutation, result.event, context);
-  return result;
+  const latestSnapshot = await loadSnapshot(db);
+  await synchronizeStateNotifications(db, latestSnapshot, telegramBotToken);
+  return {
+    ...result,
+    snapshot: await loadSnapshot(db),
+  };
 }
 
 async function loadInventoryRequestActionRow(
@@ -3825,6 +5091,7 @@ export async function initializeSystemInD1(
     strictFefo: input.strictFefo,
     reportPrintTemplate:
       input.reportPrintTemplate ?? createDefaultReportPrintTemplate(companyName),
+    notificationSettings: createDefaultNotificationSettings(),
   }, companyName);
 
   const locations = input.locations
@@ -3927,7 +5194,7 @@ export async function initializeSystemInD1(
 
   await execute(
     db,
-    "INSERT INTO app_settings (id, sequence_no, company_name, currency, timezone, time_source, low_stock_threshold, expiry_alert_days, enable_offline, enable_realtime, enable_barcode, strict_fefo, report_print_template_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO app_settings (id, sequence_no, company_name, currency, timezone, time_source, low_stock_threshold, expiry_alert_days, enable_offline, enable_realtime, enable_barcode, strict_fefo, report_print_template_json, notification_settings_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       SETTINGS_ID,
       numberPart(SETTINGS_ID),
@@ -3942,6 +5209,7 @@ export async function initializeSystemInD1(
       initialSettings.enableBarcode ? 1 : 0,
       initialSettings.strictFefo ? 1 : 0,
       JSON.stringify(initialSettings.reportPrintTemplate),
+      JSON.stringify(initialSettings.notificationSettings),
       now,
     ],
   );
@@ -3980,6 +5248,7 @@ export async function reverseInventoryRequestInD1(
   db: D1Database,
   actorId: string,
   input: ReverseInventoryRequest,
+  telegramBotToken?: string,
 ): Promise<InventoryActionResponse> {
   await ensureDatabaseReady(db);
 
@@ -4005,7 +5274,12 @@ export async function reverseInventoryRequestInD1(
   const quantityBefore =
     request.kind === "stock-count" ? await loadFirstLedgerBefore(db, request.id) : null;
   const reversalMutation = buildReversalMutation(actor.id, request, reason, quantityBefore);
-  const reversalResult = await recordInventoryMutation(db, snapshot, reversalMutation);
+  const reversalResult = await recordInventoryMutation(
+    db,
+    snapshot,
+    reversalMutation,
+    telegramBotToken,
+  );
   snapshot = reversalResult.snapshot;
 
   await markInventoryRequestRejected(
@@ -4030,6 +5304,7 @@ export async function editInventoryRequestInD1(
   db: D1Database,
   actorId: string,
   input: EditInventoryRequest,
+  telegramBotToken?: string,
 ): Promise<InventoryActionResponse> {
   await ensureDatabaseReady(db);
 
@@ -4055,7 +5330,12 @@ export async function editInventoryRequestInD1(
   const quantityBefore =
     request.kind === "stock-count" ? await loadFirstLedgerBefore(db, request.id) : null;
   const reversalMutation = buildReversalMutation(actor.id, request, reason, quantityBefore);
-  const reversalResult = await recordInventoryMutation(db, snapshot, reversalMutation);
+  const reversalResult = await recordInventoryMutation(
+    db,
+    snapshot,
+    reversalMutation,
+    telegramBotToken,
+  );
   snapshot = reversalResult.snapshot;
 
   const correctedMutation: MutationEnvelope = {
@@ -4085,7 +5365,12 @@ export async function editInventoryRequestInD1(
     },
   };
 
-  const correctedResult = await recordInventoryMutation(db, snapshot, correctedMutation);
+  const correctedResult = await recordInventoryMutation(
+    db,
+    snapshot,
+    correctedMutation,
+    telegramBotToken,
+  );
 
   await markInventoryRequestRejected(
     db,
@@ -4110,6 +5395,7 @@ export async function deleteInventoryRequestInD1(
   db: D1Database,
   actorId: string,
   input: DeleteInventoryRequest,
+  telegramBotToken?: string,
 ): Promise<InventoryActionResponse> {
   await ensureDatabaseReady(db);
 
@@ -4135,7 +5421,12 @@ export async function deleteInventoryRequestInD1(
       "Deleted from Inventory OPS.",
       quantityBefore,
     );
-    const reversalResult = await recordInventoryMutation(db, snapshot, reversalMutation);
+    const reversalResult = await recordInventoryMutation(
+      db,
+      snapshot,
+      reversalMutation,
+      telegramBotToken,
+    );
     snapshot = reversalResult.snapshot;
     reversalRequest = reversalResult.event.request;
   }
@@ -4162,6 +5453,7 @@ export async function deleteInventoryRequestInD1(
 export async function applyMutationsToD1(
   db: D1Database,
   mutations: MutationEnvelope[],
+  telegramBotToken?: string,
 ): Promise<PushResponse> {
   await ensureDatabaseReady(db);
 
@@ -4188,7 +5480,12 @@ export async function applyMutationsToD1(
         inventoryPermissionForKind(mutation.kind),
         "You do not have permission to create this inventory entry.",
       );
-      const result = await recordInventoryMutation(db, snapshot, mutation);
+      const result = await recordInventoryMutation(
+        db,
+        snapshot,
+        mutation,
+        telegramBotToken,
+      );
       snapshot = result.snapshot;
       appliedMutationIds.push(mutation.clientMutationId);
       events.push(result.event);

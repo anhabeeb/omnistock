@@ -23,15 +23,20 @@ import type {
   InventoryActionResponse,
   LoginRequest,
   LoginResponse,
+  MarkNotificationReadRequest,
   MutationEnvelope,
+  NotificationActionResponse,
   PullResponse,
   ProfileResponse,
   PushResponse,
+  ReportSyncFailureRequest,
   RemoveUserRequest,
   ReverseInventoryRequest,
   ResetUserPasswordRequest,
   RolePermissionsResponse,
   SettingsResponse,
+  TestTelegramNotificationRequest,
+  TestTelegramNotificationResponse,
   UpdateItemRequest,
   UpdateItemResponse,
   UpdateLocationRequest,
@@ -432,6 +437,56 @@ export async function updateSettings(input: UpdateSettingsRequest): Promise<Sett
   });
 
   return parseJson<SettingsResponse>(response);
+}
+
+export async function markNotificationRead(
+  input: MarkNotificationReadRequest,
+): Promise<NotificationActionResponse> {
+  const response = await fetch("/api/notifications/read", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<NotificationActionResponse>(response);
+}
+
+export async function markAllNotificationsRead(): Promise<NotificationActionResponse> {
+  const response = await fetch("/api/notifications/read-all", {
+    method: "POST",
+  });
+
+  return parseJson<NotificationActionResponse>(response);
+}
+
+export async function reportSyncFailure(
+  input: ReportSyncFailureRequest,
+): Promise<NotificationActionResponse> {
+  const response = await fetch("/api/notifications/report-sync-failure", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<NotificationActionResponse>(response);
+}
+
+export async function sendTestTelegramNotification(
+  input: TestTelegramNotificationRequest,
+): Promise<TestTelegramNotificationResponse> {
+  const response = await fetch("/api/notifications/test-telegram", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<TestTelegramNotificationResponse>(response);
 }
 
 export async function resetUserPassword(

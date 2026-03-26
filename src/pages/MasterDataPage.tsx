@@ -27,7 +27,7 @@ import type {
   User,
 } from "../../shared/types";
 import { DeleteIcon, EditIcon, ViewIcon } from "../components/AppIcons";
-import { BarcodeScanner } from "../components/BarcodeScanner";
+import { BarcodeScanModal } from "../components/BarcodeScanModal";
 import {
   DATE_FILTER_OPTIONS,
   type DateFilterPreset,
@@ -1605,14 +1605,12 @@ export function MasterDataPage({
                     <button
                       type="button"
                       className="secondary-button"
-                      onClick={() => setBarcodeScannerOpen((current) => !current)}
+                      onClick={() => setBarcodeScannerOpen(true)}
                     >
-                      {barcodeScannerOpen ? "Hide Scanner" : "Scan Barcode"}
+                      Scan Barcode
                     </button>
                   </div>
                 </div>
-
-                {barcodeScannerOpen ? <BarcodeScanner onDetected={handleItemBarcodeDetected} /> : null}
 
                 <label className="field">
                   <span>Category</span>
@@ -1948,6 +1946,16 @@ export function MasterDataPage({
           </div>
         </div>
       ) : null}
+
+      <BarcodeScanModal
+        isOpen={
+          barcodeScannerOpen &&
+          activeSection.slug === "items" &&
+          (dialogMode === "create" || dialogMode === "edit")
+        }
+        onClose={() => setBarcodeScannerOpen(false)}
+        onScan={handleItemBarcodeDetected}
+      />
     </div>
   );
 }

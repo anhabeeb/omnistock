@@ -904,7 +904,7 @@ a {
 .page-popup-scrim {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 1600;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1271,6 +1271,14 @@ a {
 .settings-toggle-card p,
 .settings-toggle-card strong {
   margin: 0;
+}
+
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.92rem;
+  color: var(--text-primary);
 }
 
 .settings-role-toolbar {
@@ -1666,6 +1674,171 @@ textarea {
   cursor: not-allowed;
 }
 
+.row-action-group {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.empty-cell {
+  padding: 22px 18px !important;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.admin-user-popup-card {
+  width: min(920px, 100%);
+}
+
+.print-designer-shell {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.print-designer-sidebar,
+.print-designer-preview {
+  display: grid;
+  gap: 16px;
+}
+
+.print-designer-add {
+  display: grid;
+  gap: 12px;
+}
+
+.print-designer-inspector {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: rgba(15, 23, 42, 0.42);
+}
+
+:root[data-theme="light"] .print-designer-inspector {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.print-designer-page {
+  width: min(100%, 760px);
+  margin-inline: auto;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.3), rgba(15, 23, 42, 0.16));
+}
+
+:root[data-theme="light"] .print-designer-page {
+  background: linear-gradient(180deg, rgba(226, 232, 240, 0.7), rgba(248, 250, 252, 0.94));
+}
+
+.print-designer-page-inner {
+  aspect-ratio: 210 / 297;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 18px;
+  border-top: 4px solid var(--blue);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: var(--shadow);
+}
+
+.print-designer-page.is-landscape .print-designer-page-inner {
+  aspect-ratio: 297 / 210;
+}
+
+.print-designer-block {
+  appearance: none;
+  width: 100%;
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.96);
+  color: #0f172a;
+  text-align: left;
+  cursor: grab;
+}
+
+.print-designer-block.is-selected {
+  border-color: rgba(37, 99, 235, 0.45);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.print-designer-block.is-disabled {
+  opacity: 0.58;
+}
+
+.print-designer-block-label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.print-designer-block strong {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.45;
+}
+
+.print-designer-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.print-designer-summary span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.print-designer-table {
+  display: grid;
+  gap: 4px;
+}
+
+.print-designer-table-row {
+  display: grid;
+  grid-template-columns: 1.7fr 0.8fr 1fr;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(226, 232, 240, 0.7);
+  font-size: 0.84rem;
+}
+
+.print-designer-table-row.is-head {
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+  font-weight: 800;
+}
+
+.field textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+
+@media (max-width: 1080px) {
+  .print-designer-shell {
+    grid-template-columns: 1fr;
+  }
+}
+
 .action-icon-button.danger,
 .danger-button {
   border-color: rgba(239, 68, 68, 0.28);
@@ -1706,6 +1879,30 @@ textarea {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
+}
+
+.barcode-modal-scrim {
+  z-index: 80;
+}
+
+.barcode-modal-card {
+  width: min(100%, 520px);
+}
+
+.barcode-modal-scanner {
+  display: grid;
+  gap: 16px;
+}
+
+.barcode-modal-scanner > div {
+  min-height: 320px;
+}
+
+.barcode-modal-copy {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.94rem;
+  text-align: center;
 }
 
 .detail-list {

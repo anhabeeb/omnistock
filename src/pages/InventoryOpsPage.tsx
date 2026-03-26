@@ -13,7 +13,7 @@ import type {
   WasteReason,
 } from "../../shared/types";
 import { DeleteIcon, EditIcon, ReverseIcon, ViewIcon } from "../components/AppIcons";
-import { BarcodeScanner } from "../components/BarcodeScanner";
+import { BarcodeScanModal } from "../components/BarcodeScanModal";
 import {
   DATE_FILTER_OPTIONS,
   type DateFilterPreset,
@@ -169,6 +169,7 @@ export function InventoryOpsPage({
   const [dialogMode, setDialogMode] = useState<InventoryDialogMode | null>(null);
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [actionReason, setActionReason] = useState("");
+  const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const deferredLogSearch = useDeferredValue(logSearch);
@@ -183,6 +184,7 @@ export function InventoryOpsPage({
     setDialogMode(null);
     setSelectedRequestId(null);
     setActionReason("");
+    setBarcodeScannerOpen(false);
   }, [activeSection.kind, currentUser.id, snapshot.generatedAt]);
 
   useEffect(() => {
@@ -258,6 +260,7 @@ export function InventoryOpsPage({
   function handleBarcode(value: string) {
     patch("barcode", value);
     setSearchTerm(value);
+    setBarcodeScannerOpen(false);
     const match = findItemByBarcode(snapshot, value);
 
     if (match) {
@@ -297,6 +300,7 @@ export function InventoryOpsPage({
     setSelectedRequestId(null);
     setActionReason("");
     setSearchTerm("");
+    setBarcodeScannerOpen(false);
   }
 
   function openCreateModal() {
@@ -310,6 +314,7 @@ export function InventoryOpsPage({
     setDialogMode("create");
     setSelectedRequestId(null);
     setActionReason("");
+    setBarcodeScannerOpen(false);
   }
 
   function fillFormFromRequest(request: InventoryRequest) {
@@ -356,6 +361,7 @@ export function InventoryOpsPage({
     setFeedback(undefined);
     setSelectedRequestId(request.id);
     setActionReason("");
+    setBarcodeScannerOpen(false);
 
     if (mode === "edit") {
       fillFormFromRequest(request);
@@ -823,17 +829,25 @@ export function InventoryOpsPage({
               </div>
             ) : null}
 
-            {dialogMode === "create" || dialogMode === "edit" ? <BarcodeScanner onDetected={handleBarcode} /> : null}
-
             {dialogMode === "create" || dialogMode === "edit" ? (
             <form className="form-grid" onSubmit={dialogMode === "edit" ? handleEditSubmit : handleSubmit}>
               <label className="field">
                 <span>Search items</span>
-                <input
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder="Type item name, SKU, or barcode"
-                />
+                <div className="barcode-field-toolbar">
+                  <input
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    placeholder="Type item name, SKU, or barcode"
+                  />
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => setBarcodeScannerOpen(true)}
+                    disabled={!snapshot.settings.enableBarcode}
+                  >
+                    Scan Barcode
+                  </button>
+                </div>
               </label>
 
               <label className="field">
@@ -1035,6 +1049,12 @@ export function InventoryOpsPage({
           </div>
         </div>
       ) : null}
+
+      <BarcodeScanModal
+        isOpen={barcodeScannerOpen && (dialogMode === "create" || dialogMode === "edit")}
+        onClose={() => setBarcodeScannerOpen(false)}
+        onScan={handleBarcode}
+      />
     </div>
   );
 }

@@ -54,9 +54,13 @@ import {
   openRealtimeSocket,
   pullChanges,
   pushMutations,
+  reportSyncFailure,
   removeUser,
   reverseInventoryRequestEntry,
   resetUserPassword,
+  markAllNotificationsRead,
+  markNotificationRead,
+  sendTestTelegramNotification,
   updateItemRecord,
   updateLocationRecord,
   updateMarketPriceEntry,
@@ -111,6 +115,7 @@ function normalizePayload(nextPayload: BootstrapPayload): BootstrapPayload {
       ...nextPayload.snapshot,
       marketPrices: nextPayload.snapshot.marketPrices ?? [],
       wasteEntries: nextPayload.snapshot.wasteEntries ?? [],
+      notifications: nextPayload.snapshot.notifications ?? [],
     },
     initialization: nextPayload.initialization ?? {
       required: (nextPayload.snapshot.users ?? []).length === 0,
@@ -138,6 +143,7 @@ export function useOmniStockApp() {
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
   const pendingMutationIdsRef = useRef(new Set<string>());
+  const lastReportedSyncFailureRef = useRef("");
   const lastUserIdRef = useRef(safeLastUserId());
 
   function clearPayload() {
@@ -274,11 +280,26 @@ export function useOmniStockApp() {
         clearPayload();
         setAuthRequired(true);
       } else {
+        const message =
+          error instanceof Error ? error.message : "Could not sync queued changes right now.";
         setSyncState((current) => ({
           ...current,
-          error:
-            error instanceof Error ? error.message : "Could not sync queued changes right now.",
+          error: message,
         }));
+        const reportKey = `${currentPayload.currentUser.id}:${new Date().toISOString().slice(0, 13)}:${message}`;
+        if (lastReportedSyncFailureRef.current !== reportKey) {
+          lastReportedSyncFailureRef.current = reportKey;
+          void reportSyncFailure({ message })
+            .then((response) => {
+              rememberPayload(
+                buildBootstrapPayload(response.snapshot, currentPayload.currentUser.id),
+                "server",
+              );
+            })
+            .catch(() => {
+              // Ignore follow-on failures while the system is already degraded.
+            });
+        }
       }
     } finally {
       if (currentPayload) {
@@ -796,6 +817,20 @@ export function useOmniStockApp() {
     await applyAdminSnapshot(response.snapshot);
   }
 
+  async function markNotificationAsRead(notificationId: string) {
+    const response = await markNotificationRead({ notificationId });
+    await applyAdminSnapshot(response.snapshot);
+  }
+
+  async function markEveryNotificationAsRead() {
+    const response = await markAllNotificationsRead();
+    await applyAdminSnapshot(response.snapshot);
+  }
+
+  async function sendTelegramTest(message?: string) {
+    return sendTestTelegramNotification({ message });
+  }
+
   async function resetAccountPassword(input: ResetUserPasswordRequest) {
     const response = await resetUserPassword(input);
     await applyAdminSnapshot(response.snapshot);
@@ -861,5 +896,8 @@ export function useOmniStockApp() {
     updateRolePermissionMatrix,
     resetAccountPassword,
     removeUserAccount,
+    markNotificationAsRead,
+    markEveryNotificationAsRead,
+    sendTelegramTest,
   };
 }
