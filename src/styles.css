@@ -2048,6 +2048,21 @@ textarea {
   padding: 10px;
 }
 
+.barcode-modal-empty {
+  display: grid;
+  place-items: center;
+  min-height: 298px;
+  border-radius: 20px;
+  background: rgba(10, 15, 31, 0.92);
+  color: rgba(222, 231, 250, 0.78);
+  text-align: center;
+  padding: 20px;
+}
+
+.barcode-modal-empty p {
+  margin: 0;
+}
+
 .barcode-modal-reader > div {
   border: 0 !important;
   background: transparent !important;
@@ -2086,6 +2101,12 @@ textarea {
   text-align: center;
 }
 
+.barcode-manual-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
 .barcode-modal-footnote {
   margin: 0;
   padding: 0 22px 22px;
@@ -2110,6 +2131,10 @@ textarea {
 
   .barcode-modal-scanner {
     padding: 18px;
+  }
+
+  .barcode-manual-entry {
+    grid-template-columns: 1fr;
   }
 
   .barcode-modal-preview {
