@@ -14,7 +14,9 @@ import {
 import { alpha, useTheme } from "@mui/material/styles";
 import { useLocation } from "react-router-dom";
 import {
+  batchBarcodeValues,
   expiredAlerts,
+  itemBarcodeValues,
   lowStockAlerts,
   nearExpiryAlerts,
   totalOnHand,
@@ -186,6 +188,10 @@ function wasteCostBreakdown(materialCost: number) {
   };
 }
 
+function itemBatchBarcodeValues(item: Item): string[] {
+  return [...new Set(item.stocks.flatMap((stock) => stock.batches.flatMap((batch) => batchBarcodeValues(batch))))];
+}
+
 function SectionCard({
   eyebrow,
   title,
@@ -340,7 +346,7 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
       const supplierName = supplierNameById.get(item.supplierId) ?? "";
       const matchesSearch =
         !normalizedSearch ||
-        `${item.sku} ${item.barcode} ${item.name} ${item.category} ${supplierName}`
+        `${item.sku} ${item.name} ${item.category} ${supplierName} ${itemBarcodeValues(item).join(" ")} ${itemBatchBarcodeValues(item).join(" ")}`
           .toLowerCase()
           .includes(normalizedSearch);
 
@@ -1014,7 +1020,9 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
           const isOver = scopedStocks.some((stock) => stock.maxLevel > 0 && stock.onHand > stock.maxLevel);
           return {
             SKU: item.sku,
-            Barcode: item.barcode,
+            "Primary Barcode": item.barcode,
+            Barcodes: itemBarcodeValues(item).join(", "),
+            "Batch Barcodes": itemBatchBarcodeValues(item).join(", "),
             Item: item.name,
             Category: item.category,
             Supplier: supplierNameById.get(item.supplierId) ?? "",

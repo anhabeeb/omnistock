@@ -186,6 +186,30 @@ function buildSignatureMarkup(template: ReportPrintTemplate): string {
   `;
 }
 
+function wrapPlacedBlock(
+  block: ReportPrintTemplate["layoutBlocks"][number],
+  content: string,
+): string {
+  if (!content.trim()) {
+    return "";
+  }
+
+  return `
+    <section
+      class="report-placed-block"
+      style="
+        left: ${block.x}%;
+        top: ${block.y}%;
+        width: ${block.width}%;
+        z-index: ${block.z};
+        min-height: ${block.minHeight}px;
+      "
+    >
+      ${content}
+    </section>
+  `;
+}
+
 function buildLayoutMarkup(
   options: ReportDocumentOptions,
   summaryMetrics: Record<string, unknown>[],
@@ -193,35 +217,50 @@ function buildLayoutMarkup(
   const template = options.settings.reportPrintTemplate;
   return template.layoutBlocks
     .filter((block) => block.enabled)
+    .sort((left, right) => left.z - right.z || left.y - right.y || left.x - right.x)
     .map((block) => {
+      let content = "";
       switch (block.type) {
         case "company-name":
-          return buildMetaBlock(block.label, options.companyName);
+          content = buildMetaBlock(block.label, options.companyName);
+          break;
         case "generated-by":
-          return buildMetaBlock(block.label, options.generatedBy);
+          content = buildMetaBlock(block.label, options.generatedBy);
+          break;
         case "generated-at":
-          return buildMetaBlock(block.label, options.generatedAt);
+          content = buildMetaBlock(block.label, options.generatedAt);
+          break;
         case "filters":
-          return buildMetaBlock(block.label, options.filtersLabel ?? "");
+          content = buildMetaBlock(block.label, options.filtersLabel ?? "");
+          break;
         case "report-title":
-          return buildTextBlock(block.label, options.title, true);
+          content = buildTextBlock(block.label, options.title, true);
+          break;
         case "report-subtitle":
-          return buildTextBlock(block.label, options.subtitle);
+          content = buildTextBlock(block.label, options.subtitle);
+          break;
         case "header-note":
-          return buildTextBlock(block.label, template.headerNote || block.content);
+          content = buildTextBlock(block.label, template.headerNote || block.content);
+          break;
         case "summary":
-          return buildSummaryMarkup(summaryMetrics);
+          content = buildSummaryMarkup(summaryMetrics);
+          break;
         case "report-sections":
-          return options.sheets.map((sheet) => buildSectionMarkup(sheet)).join("");
+          content = options.sheets.map((sheet) => buildSectionMarkup(sheet)).join("");
+          break;
         case "footer-note":
-          return buildTextBlock(block.label, template.footerNote || block.content);
+          content = buildTextBlock(block.label, template.footerNote || block.content);
+          break;
         case "signatures":
-          return template.showSignatures ? buildSignatureMarkup(template) : "";
+          content = template.showSignatures ? buildSignatureMarkup(template) : "";
+          break;
         case "custom-text":
-          return buildTextBlock(block.label, block.content);
+          content = buildTextBlock(block.label, block.content);
+          break;
         default:
-          return "";
+          content = "";
       }
+      return wrapPlacedBlock(block, content);
     })
     .join("");
 }
@@ -273,6 +312,19 @@ function buildReportDocumentHtml(options: ReportDocumentOptions): string {
         .report-shell {
           display: grid;
           gap: ${density.bodyGap};
+          min-height: 100%;
+        }
+
+        .report-canvas {
+          position: relative;
+          min-height: 1180px;
+        }
+
+        .report-placed-block {
+          position: absolute;
+          display: block;
+          padding-right: 8px;
+          break-inside: avoid;
         }
 
         .report-kicker,
@@ -421,10 +473,12 @@ function buildReportDocumentHtml(options: ReportDocumentOptions): string {
         }
       </style>
     </head>
-    <body>
-      <main class="report-shell">
-        ${layoutMarkup}
-        <footer class="report-footer">
+      <body>
+        <main class="report-shell">
+          <section class="report-canvas">
+            ${layoutMarkup}
+          </section>
+          <footer class="report-footer">
           <span>${escapeHtml(template.templateName)}</span>
           <span>${escapeHtml(options.settings.timezone)} · Page <span class="page-count"></span></span>
         </footer>

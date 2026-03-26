@@ -17,7 +17,7 @@ import {
 } from "@mui/material";
 import { OPERATION_LABELS } from "../../shared/operations";
 import { can } from "../../shared/permissions";
-import { findItemByBarcode } from "../../shared/selectors";
+import { findBarcodeMatch, itemBarcodeValues, itemUnitOptions } from "../../shared/selectors";
 import type {
   InventoryRequest,
   InventorySnapshot,
@@ -47,12 +47,14 @@ interface FormState {
   kind: RequestKind;
   itemId: string;
   quantity: string;
+  quantityUnit: string;
   fromLocationId: string;
   toLocationId: string;
   supplierId: string;
   note: string;
   barcode: string;
   lotCode: string;
+  batchBarcode: string;
   expiryDate: string;
   receivedDate: string;
   wasteReason: WasteReason;
@@ -94,12 +96,14 @@ function defaultForm(snapshot: InventorySnapshot, currentUser: User, kind: Reque
     kind,
     itemId: "",
     quantity: "1",
+    quantityUnit: "",
     fromLocationId: fallbackLocation,
     toLocationId: fallbackLocation,
     supplierId: snapshot.suppliers[0]?.id ?? "",
     note: "",
     barcode: "",
     lotCode: "",
+    batchBarcode: "",
     expiryDate: "",
     receivedDate: getDateInputValueForWorkspace(),
     wasteReason: "spoilage",
@@ -158,6 +162,9 @@ export function MobileInventoryOpsPage({
   const selectedRequest = selectedRequestId
     ? snapshot.requests.find((request) => request.id === selectedRequestId)
     : undefined;
+  const availableUnits = selectedItem ? itemUnitOptions(selectedItem) : [];
+  const selectedUnitOption =
+    availableUnits.find((entry) => entry.unitName === form.quantityUnit) ?? availableUnits[0];
   const needsSource =
     form.kind === "gin" ||
     form.kind === "transfer" ||
@@ -180,7 +187,7 @@ export function MobileInventoryOpsPage({
       return (
         item.name.toLowerCase().includes(value) ||
         item.sku.toLowerCase().includes(value) ||
-        item.barcode.toLowerCase().includes(value)
+        itemBarcodeValues(item).some((barcode) => barcode.toLowerCase().includes(value))
       );
     });
   }, [deferredItemSearch, snapshot.items]);
@@ -206,6 +213,18 @@ export function MobileInventoryOpsPage({
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  useEffect(() => {
+    if (!selectedItem) {
+      return;
+    }
+
+    if (availableUnits.some((entry) => entry.unitName === form.quantityUnit)) {
+      return;
+    }
+
+    setForm((current) => ({ ...current, quantityUnit: selectedItem.unit }));
+  }, [availableUnits, form.quantityUnit, selectedItem]);
+
   function closeDialog() {
     if (submitting) {
       return;
@@ -220,10 +239,22 @@ export function MobileInventoryOpsPage({
     patch("barcode", value);
     setItemSearch(value);
     setBarcodeScannerOpen(false);
-    const match = findItemByBarcode(snapshot, value);
+    const match = findBarcodeMatch(snapshot, value);
     if (match) {
-      patch("itemId", match.id);
-      setFeedback(`Matched ${match.name} using barcode ${value}.`);
+      patch("itemId", match.item.id);
+      if (match.source === "batch-barcode" && match.batch) {
+        patch("lotCode", match.batch.lotCode);
+        patch("batchBarcode", match.batchBarcode?.barcode ?? value);
+        patch("expiryDate", match.batch.expiryDate ?? "");
+        patch("quantityUnit", match.item.unit);
+        if (!needsDestination) {
+          patch("fromLocationId", match.batch.locationId);
+        }
+        setFeedback(`Matched batch ${match.batch.lotCode} for ${match.item.name}.`);
+      } else {
+        patch("quantityUnit", match.itemBarcode?.unitName ?? match.item.unit);
+        setFeedback(`Matched ${match.item.name} using barcode ${value}.`);
+      }
       return;
     }
     setFeedback(`No exact item matched ${value}.`);
@@ -248,12 +279,14 @@ export function MobileInventoryOpsPage({
         kind: request.kind,
         itemId: request.itemId,
         quantity: String(request.quantity),
+        quantityUnit: request.unit,
         fromLocationId: request.fromLocationId ?? currentUser.assignedLocationIds[0] ?? "",
         toLocationId: request.toLocationId ?? currentUser.assignedLocationIds[0] ?? "",
         supplierId: request.supplierId ?? snapshot.suppliers[0]?.id ?? "",
         note: request.note,
         barcode: request.barcode,
         lotCode: request.lotCode ?? "",
+        batchBarcode: request.batchBarcode ?? "",
         expiryDate: request.expiryDate ?? "",
         receivedDate: request.receivedDate ?? getDateInputValueForWorkspace(),
         wasteReason: request.wasteReason ?? "spoilage",
@@ -279,11 +312,13 @@ export function MobileInventoryOpsPage({
         quantity: Number(form.quantity),
         note: form.note,
         barcode: form.barcode || selectedItem?.barcode,
+        quantityUnit: form.quantityUnit || selectedItem?.unit,
         supplierId: needsSupplier ? form.supplierId : undefined,
         fromLocationId: needsSource ? form.fromLocationId : undefined,
         toLocationId: needsDestination ? form.toLocationId : undefined,
         countedQuantity: form.kind === "stock-count" ? Number(form.quantity) : undefined,
         lotCode: capturesBatchMetadata ? form.lotCode || undefined : undefined,
+        batchBarcode: capturesBatchMetadata ? form.batchBarcode || undefined : undefined,
         expiryDate: capturesBatchMetadata ? form.expiryDate || undefined : undefined,
         receivedDate: capturesBatchMetadata ? form.receivedDate || undefined : undefined,
         wasteReason: capturesWasteMetadata ? form.wasteReason : undefined,
@@ -314,11 +349,13 @@ export function MobileInventoryOpsPage({
         quantity: Number(form.quantity),
         note: form.note,
         barcode: form.barcode || selectedItem?.barcode,
+        quantityUnit: form.quantityUnit || selectedItem?.unit,
         supplierId: needsSupplier ? form.supplierId : undefined,
         fromLocationId: needsSource ? form.fromLocationId : undefined,
         toLocationId: needsDestination ? form.toLocationId : undefined,
         countedQuantity: form.kind === "stock-count" ? Number(form.quantity) : undefined,
         lotCode: capturesBatchMetadata ? form.lotCode || undefined : undefined,
+        batchBarcode: capturesBatchMetadata ? form.batchBarcode || undefined : undefined,
         expiryDate: capturesBatchMetadata ? form.expiryDate || undefined : undefined,
         receivedDate: capturesBatchMetadata ? form.receivedDate || undefined : undefined,
         wasteReason: capturesWasteMetadata ? form.wasteReason : undefined,
@@ -452,6 +489,9 @@ export function MobileInventoryOpsPage({
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         {request.itemName} · {request.quantity} {request.unit}
+                        {request.unitFactor > 1 || request.baseUnit !== request.unit
+                          ? ` · ${request.baseQuantity} ${request.baseUnit} base`
+                          : ""}
                       </Typography>
                     </Box>
                     <Chip size="small" variant="outlined" label={request.status} />
@@ -529,10 +569,13 @@ export function MobileInventoryOpsPage({
                 ["Item", selectedRequest.itemName],
                 ["Barcode", selectedRequest.barcode || "No barcode"],
                 ["Quantity", `${selectedRequest.quantity} ${selectedRequest.unit}`],
+                ["Base Quantity", `${selectedRequest.baseQuantity} ${selectedRequest.baseUnit}`],
+                ["Unit Factor", `${selectedRequest.unitFactor}x`],
                 ["Supplier", selectedRequest.supplierName ?? "Not set"],
                 ["From", selectedRequest.fromLocationName ?? "Not set"],
                 ["To", selectedRequest.toLocationName ?? "Not set"],
                 ["Lot", selectedRequest.lotCode ?? "Not set"],
+                ["Batch Barcode", selectedRequest.batchBarcode ?? "Not set"],
                 ["Received", selectedRequest.receivedDate ?? "Not set"],
                 ["Expiry", selectedRequest.expiryDate ?? "Not set"],
                 ["Note", selectedRequest.note || "No note provided"],
@@ -571,7 +614,15 @@ export function MobileInventoryOpsPage({
                 select
                 label="Selected item"
                 value={form.itemId}
-                onChange={(event) => patch("itemId", event.target.value)}
+                onChange={(event) => {
+                  const nextItemId = event.target.value;
+                  const nextItem = snapshot.items.find((item) => item.id === nextItemId);
+                  setForm((current) => ({
+                    ...current,
+                    itemId: nextItemId,
+                    quantityUnit: nextItem?.unit ?? "",
+                  }));
+                }}
               >
                 <MenuItem value="">Select an item</MenuItem>
                 {visibleItems.map((item) => (
@@ -587,6 +638,29 @@ export function MobileInventoryOpsPage({
                 value={form.quantity}
                 onChange={(event) => patch("quantity", event.target.value)}
               />
+
+              <TextField
+                select
+                label="Unit / pack size"
+                value={form.quantityUnit}
+                onChange={(event) => patch("quantityUnit", event.target.value)}
+                disabled={!selectedItem}
+                helperText={
+                  selectedItem && selectedUnitOption
+                    ? `1 ${selectedUnitOption.unitName} = ${selectedUnitOption.quantityInBase} ${selectedItem.unit}`
+                    : "Select an item first"
+                }
+              >
+                {selectedItem ? (
+                  availableUnits.map((entry) => (
+                    <MenuItem key={entry.unitName} value={entry.unitName}>
+                      {entry.unitName}
+                    </MenuItem>
+                  ))
+                ) : (
+                  <MenuItem value="">Select an item first</MenuItem>
+                )}
+              </TextField>
 
               {needsSource ? (
                 <TextField
@@ -636,6 +710,7 @@ export function MobileInventoryOpsPage({
               {capturesBatchMetadata ? (
                 <>
                   <TextField label="Lot / batch code" value={form.lotCode} onChange={(event) => patch("lotCode", event.target.value)} />
+                  <TextField label="Batch barcode" value={form.batchBarcode} onChange={(event) => patch("batchBarcode", event.target.value)} />
                   <TextField label="Received date" type="date" value={form.receivedDate} onChange={(event) => patch("receivedDate", event.target.value)} InputLabelProps={{ shrink: true }} />
                   <TextField label="Expiry date" type="date" value={form.expiryDate} onChange={(event) => patch("expiryDate", event.target.value)} InputLabelProps={{ shrink: true }} />
                 </>

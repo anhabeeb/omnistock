@@ -2,7 +2,7 @@ import { useDeferredValue, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { OPERATION_LABELS } from "../../shared/operations";
 import { can } from "../../shared/permissions";
-import { findItemByBarcode } from "../../shared/selectors";
+import { findBarcodeMatch, itemBarcodeValues, itemUnitOptions } from "../../shared/selectors";
 import type {
   InventoryRequest,
   InventorySnapshot,
@@ -37,12 +37,14 @@ interface FormState {
   kind: RequestKind;
   itemId: string;
   quantity: string;
+  quantityUnit: string;
   fromLocationId: string;
   toLocationId: string;
   supplierId: string;
   note: string;
   barcode: string;
   lotCode: string;
+  batchBarcode: string;
   expiryDate: string;
   receivedDate: string;
   wasteReason: WasteReason;
@@ -128,12 +130,14 @@ function defaultForm(snapshot: InventorySnapshot, currentUser: User, kind: Reque
     kind,
     itemId: "",
     quantity: "1",
+    quantityUnit: "",
     fromLocationId: fallbackLocation,
     toLocationId: fallbackLocation,
     supplierId: snapshot.suppliers[0]?.id ?? "",
     note: "",
     barcode: "",
     lotCode: "",
+    batchBarcode: "",
     expiryDate: "",
     receivedDate: getDateInputValueForWorkspace(),
     wasteReason: "spoilage",
@@ -230,7 +234,7 @@ export function InventoryOpsPage({
       });
       const matchesSearch =
         !deferredLogSearch.trim() ||
-        `${request.reference} ${request.itemName} ${request.barcode} ${request.requestedByName} ${request.fromLocationName ?? ""} ${request.toLocationName ?? ""} ${request.supplierName ?? ""}`
+        `${request.reference} ${request.itemName} ${request.barcode} ${request.batchBarcode ?? ""} ${request.requestedByName} ${request.fromLocationName ?? ""} ${request.toLocationName ?? ""} ${request.supplierName ?? ""}`
           .toLowerCase()
           .includes(deferredLogSearch.trim().toLowerCase());
       return matchesKind && matchesStatus && matchesDate && matchesSearch;
@@ -240,6 +244,9 @@ export function InventoryOpsPage({
     ? snapshot.requests.find((request) => request.id === selectedRequestId)
     : undefined;
   const logPanelId = `inventory-${activeSection.slug}-logs`;
+  const availableUnits = selectedItem ? itemUnitOptions(selectedItem) : [];
+  const selectedUnitOption =
+    availableUnits.find((entry) => entry.unitName === form.quantityUnit) ?? availableUnits[0];
   const visibleItems = snapshot.items.filter((item) => {
     if (!deferredSearchTerm.trim()) {
       return true;
@@ -249,7 +256,7 @@ export function InventoryOpsPage({
     return (
       item.name.toLowerCase().includes(value) ||
       item.sku.toLowerCase().includes(value) ||
-      item.barcode.includes(value)
+      itemBarcodeValues(item).some((barcode) => barcode.toLowerCase().includes(value))
     );
   });
 
@@ -257,15 +264,39 @@ export function InventoryOpsPage({
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  useEffect(() => {
+    if (!selectedItem) {
+      return;
+    }
+
+    if (availableUnits.some((entry) => entry.unitName === form.quantityUnit)) {
+      return;
+    }
+
+    setForm((current) => ({ ...current, quantityUnit: selectedItem.unit }));
+  }, [availableUnits, form.quantityUnit, selectedItem]);
+
   function handleBarcode(value: string) {
     patch("barcode", value);
     setSearchTerm(value);
     setBarcodeScannerOpen(false);
-    const match = findItemByBarcode(snapshot, value);
+    const match = findBarcodeMatch(snapshot, value);
 
     if (match) {
-      patch("itemId", match.id);
-      setFeedback(`Matched ${match.name} using barcode ${value}.`);
+      patch("itemId", match.item.id);
+      if (match.source === "batch-barcode" && match.batch) {
+        patch("lotCode", match.batch.lotCode);
+        patch("batchBarcode", match.batchBarcode?.barcode ?? value);
+        patch("expiryDate", match.batch.expiryDate ?? "");
+        patch("quantityUnit", match.item.unit);
+        if (!needsDestination) {
+          patch("fromLocationId", match.batch.locationId);
+        }
+        setFeedback(`Matched batch ${match.batch.lotCode} for ${match.item.name}.`);
+      } else {
+        patch("quantityUnit", match.itemBarcode?.unitName ?? match.item.unit);
+        setFeedback(`Matched ${match.item.name} using barcode ${value}.`);
+      }
       return;
     }
 
@@ -322,6 +353,7 @@ export function InventoryOpsPage({
       kind: request.kind,
       itemId: request.itemId,
       quantity: String(request.kind === "stock-count" ? request.quantity : request.quantity),
+      quantityUnit: request.unit,
       fromLocationId:
         request.fromLocationId ??
         currentUser.assignedLocationIds[0] ??
@@ -336,6 +368,7 @@ export function InventoryOpsPage({
       note: request.note,
       barcode: request.barcode,
       lotCode: request.lotCode ?? "",
+      batchBarcode: request.batchBarcode ?? "",
       expiryDate: request.expiryDate ?? "",
       receivedDate: request.receivedDate ?? getDateInputValueForWorkspace(),
       wasteReason: request.wasteReason ?? "spoilage",
@@ -389,11 +422,13 @@ export function InventoryOpsPage({
         quantity,
         note: form.note,
         barcode: form.barcode || selectedItem?.barcode,
+        quantityUnit: form.quantityUnit || selectedItem?.unit,
         supplierId: needsSupplier ? form.supplierId : undefined,
         fromLocationId: needsSource ? form.fromLocationId : undefined,
         toLocationId: needsDestination ? form.toLocationId : undefined,
         countedQuantity: form.kind === "stock-count" ? quantity : undefined,
         lotCode: capturesBatchMetadata ? form.lotCode || undefined : undefined,
+        batchBarcode: capturesBatchMetadata ? form.batchBarcode || undefined : undefined,
         expiryDate: capturesBatchMetadata ? form.expiryDate || undefined : undefined,
         receivedDate: capturesBatchMetadata ? form.receivedDate || undefined : undefined,
         wasteReason: capturesWasteMetadata ? form.wasteReason : undefined,
@@ -407,7 +442,9 @@ export function InventoryOpsPage({
         quantity: "1",
         note: "",
         barcode: "",
+        quantityUnit: current.quantityUnit || selectedItem?.unit || "",
         lotCode: "",
+        batchBarcode: "",
         expiryDate: "",
         receivedDate: getDateInputValueForWorkspace(),
         wasteReason: "spoilage",
@@ -451,11 +488,13 @@ export function InventoryOpsPage({
         quantity: Number(form.quantity),
         note: form.note,
         barcode: form.barcode || selectedItem?.barcode,
+        quantityUnit: form.quantityUnit || selectedItem?.unit,
         supplierId: needsSupplier ? form.supplierId : undefined,
         fromLocationId: needsSource ? form.fromLocationId : undefined,
         toLocationId: needsDestination ? form.toLocationId : undefined,
         countedQuantity: form.kind === "stock-count" ? Number(form.quantity) : undefined,
         lotCode: capturesBatchMetadata ? form.lotCode || undefined : undefined,
+        batchBarcode: capturesBatchMetadata ? form.batchBarcode || undefined : undefined,
         expiryDate: capturesBatchMetadata ? form.expiryDate || undefined : undefined,
         receivedDate: capturesBatchMetadata ? form.receivedDate || undefined : undefined,
         wasteReason: capturesWasteMetadata ? form.wasteReason : undefined,
@@ -645,6 +684,11 @@ export function InventoryOpsPage({
                       </td>
                       <td>
                         {request.quantity} {request.unit}
+                        {request.unitFactor > 1 || request.baseUnit !== request.unit ? (
+                          <small>
+                            Base quantity: {request.baseQuantity} {request.baseUnit}
+                          </small>
+                        ) : null}
                         {request.allocationSummary ? <small>{request.allocationSummary}</small> : null}
                         {request.kind === "wastage" ? (
                           <small>
@@ -774,10 +818,13 @@ export function InventoryOpsPage({
                 <div><dt>Item</dt><dd>{selectedRequest.itemName}</dd></div>
                 <div><dt>Barcode</dt><dd>{selectedRequest.barcode || "No barcode"}</dd></div>
                 <div><dt>Quantity</dt><dd>{selectedRequest.quantity} {selectedRequest.unit}</dd></div>
+                <div><dt>Base Quantity</dt><dd>{selectedRequest.baseQuantity} {selectedRequest.baseUnit}</dd></div>
+                <div><dt>Unit Factor</dt><dd>{selectedRequest.unitFactor}x</dd></div>
                 <div><dt>Supplier</dt><dd>{selectedRequest.supplierName ?? "Not set"}</dd></div>
                 <div><dt>From</dt><dd>{selectedRequest.fromLocationName ?? "Not set"}</dd></div>
                 <div><dt>To</dt><dd>{selectedRequest.toLocationName ?? "Not set"}</dd></div>
                 <div><dt>Lot Code</dt><dd>{selectedRequest.lotCode ?? "Not set"}</dd></div>
+                <div><dt>Batch Barcode</dt><dd>{selectedRequest.batchBarcode ?? "Not set"}</dd></div>
                 <div><dt>Received</dt><dd>{selectedRequest.receivedDate ?? "Not set"}</dd></div>
                 <div><dt>Expiry</dt><dd>{selectedRequest.expiryDate ?? "Not set"}</dd></div>
                 <div><dt>Waste</dt><dd>{selectedRequest.wasteReason ? `${selectedRequest.wasteReason} / ${selectedRequest.wasteShift} / ${selectedRequest.wasteStation}` : "Not a wastage entry"}</dd></div>
@@ -852,7 +899,18 @@ export function InventoryOpsPage({
 
               <label className="field">
                 <span>Selected item</span>
-                <select value={form.itemId} onChange={(event) => patch("itemId", event.target.value)}>
+                <select
+                  value={form.itemId}
+                  onChange={(event) => {
+                    const nextItemId = event.target.value;
+                    const nextItem = snapshot.items.find((item) => item.id === nextItemId);
+                    setForm((current) => ({
+                      ...current,
+                      itemId: nextItemId,
+                      quantityUnit: nextItem?.unit ?? "",
+                    }));
+                  }}
+                >
                   <option value="">Select an item</option>
                   {visibleItems.slice(0, 50).map((item) => (
                     <option key={item.id} value={item.id}>
@@ -872,10 +930,35 @@ export function InventoryOpsPage({
                 </span>
                 <input
                   type="number"
-                  step="1"
+                  step="0.01"
                   value={form.quantity}
                   onChange={(event) => patch("quantity", event.target.value)}
                 />
+              </label>
+
+              <label className="field">
+                <span>Unit / pack size</span>
+                <select
+                  value={form.quantityUnit}
+                  onChange={(event) => patch("quantityUnit", event.target.value)}
+                  disabled={!selectedItem}
+                >
+                  {selectedItem ? (
+                    availableUnits.map((entry) => (
+                      <option key={entry.unitName} value={entry.unitName}>
+                        {entry.unitName}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">Select an item first</option>
+                  )}
+                </select>
+                {selectedItem && selectedUnitOption ? (
+                  <small>
+                    1 {selectedUnitOption.unitName} = {selectedUnitOption.quantityInBase}{" "}
+                    {selectedItem.unit}
+                  </small>
+                ) : null}
               </label>
 
               {needsSource ? (
@@ -944,6 +1027,15 @@ export function InventoryOpsPage({
                       value={form.lotCode}
                       onChange={(event) => patch("lotCode", event.target.value)}
                       placeholder="Optional inbound lot reference"
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Batch barcode</span>
+                    <input
+                      value={form.batchBarcode}
+                      onChange={(event) => patch("batchBarcode", event.target.value)}
+                      placeholder="Optional batch barcode"
                     />
                   </label>
 

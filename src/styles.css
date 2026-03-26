@@ -1451,6 +1451,47 @@ a {
   grid-column: 1 / -1;
 }
 
+.field-inline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.small-button {
+  min-height: 36px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  font-size: 0.82rem;
+}
+
+.barcode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.barcode-list-row {
+  display: grid;
+  gap: 12px;
+  align-items: center;
+}
+
+.barcode-unit-row {
+  grid-template-columns: minmax(0, 160px) minmax(0, 1fr) minmax(0, 180px) auto;
+}
+
+.barcode-conversion-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 220px) auto;
+}
+
+.form-helper-copy {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
 input,
 select,
 textarea {
@@ -1691,6 +1732,55 @@ textarea {
   width: min(920px, 100%);
 }
 
+.compact-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-dual-pane {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.settings-pane-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: rgba(15, 23, 42, 0.42);
+  box-shadow: var(--shadow-sm);
+}
+
+:root[data-theme="light"] .settings-pane-card {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.notification-template-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.notification-template-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: rgba(15, 23, 42, 0.42);
+  box-shadow: var(--shadow-sm);
+}
+
+:root[data-theme="light"] .notification-template-card {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.notification-template-card strong {
+  text-transform: capitalize;
+}
+
 .print-designer-shell {
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
@@ -1737,10 +1827,8 @@ textarea {
 
 .print-designer-page-inner {
   aspect-ratio: 210 / 297;
-  overflow: auto;
-  display: grid;
-  align-content: start;
-  gap: 12px;
+  overflow: hidden;
+  position: relative;
   padding: 18px;
   border-top: 4px solid var(--blue);
   border-radius: 18px;
@@ -1754,7 +1842,7 @@ textarea {
 
 .print-designer-block {
   appearance: none;
-  width: 100%;
+  position: absolute;
   display: grid;
   gap: 8px;
   padding: 14px;
@@ -1764,6 +1852,7 @@ textarea {
   color: #0f172a;
   text-align: left;
   cursor: grab;
+  overflow: hidden;
 }
 
 .print-designer-block.is-selected {
@@ -1787,6 +1876,10 @@ textarea {
   margin: 0;
   font-size: 1rem;
   line-height: 1.45;
+}
+
+.print-designer-block:active {
+  cursor: grabbing;
 }
 
 .print-designer-summary {
@@ -1834,6 +1927,11 @@ textarea {
 }
 
 @media (max-width: 1080px) {
+  .settings-dual-pane,
+  .notification-template-grid {
+    grid-template-columns: 1fr;
+  }
+
   .print-designer-shell {
     grid-template-columns: 1fr;
   }
@@ -1883,63 +1981,147 @@ textarea {
 
 .barcode-modal-scrim {
   z-index: 80;
+  background: rgba(5, 10, 24, 0.78);
+  backdrop-filter: blur(8px);
 }
 
 .barcode-modal-card {
   width: min(100%, 520px);
+  padding: 0;
+  overflow: hidden;
+  background: rgba(12, 18, 34, 0.98);
+  border: 1px solid rgba(93, 118, 178, 0.24);
+  box-shadow: 0 28px 70px rgba(3, 8, 20, 0.45);
+}
+
+.barcode-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  border-bottom: 1px solid rgba(93, 118, 178, 0.16);
+  background: rgba(12, 18, 34, 0.92);
+}
+
+.barcode-modal-header h2 {
+  margin: 4px 0 0;
+  font-size: 1.05rem;
+  color: #f6f9ff;
+}
+
+.barcode-modal-close {
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(93, 118, 178, 0.22);
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 28, 49, 0.98);
+  color: rgba(234, 240, 255, 0.76);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.barcode-modal-close:hover {
+  background: rgba(34, 46, 77, 0.98);
+  border-color: rgba(116, 149, 230, 0.38);
+  color: #f6f9ff;
 }
 
 .barcode-modal-scanner {
   display: grid;
   gap: 16px;
+  padding: 22px;
 }
 
 .barcode-modal-preview {
   min-height: 320px;
   border-radius: 24px;
   overflow: hidden;
-  border: 1px solid var(--border-color);
+  border: 1px solid rgba(93, 118, 178, 0.18);
   background: rgba(7, 12, 28, 0.94);
 }
 
-.barcode-modal-video {
-  width: 100%;
-  height: 100%;
-  min-height: 320px;
+.barcode-modal-reader {
+  padding: 10px;
+}
+
+.barcode-modal-reader > div {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.barcode-modal-reader section {
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.barcode-modal-reader video {
+  width: 100% !important;
+  min-height: 298px;
   object-fit: cover;
-  display: block;
+  border-radius: 20px;
 }
 
-.barcode-modal-placeholder {
-  min-height: 320px;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  color: rgba(255, 255, 255, 0.8);
-  text-align: center;
-  font-weight: 600;
+.barcode-modal-reader img {
+  border-radius: 20px;
 }
 
-.barcode-modal-manual {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
+.barcode-modal-reader button {
+  border-radius: 14px !important;
 }
 
-.barcode-modal-manual input {
-  width: 100%;
+.barcode-modal-reader select,
+.barcode-modal-reader input {
+  border-radius: 14px !important;
 }
 
 .barcode-modal-copy {
   margin: 0;
-  color: var(--text-muted);
-  font-size: 0.94rem;
+  color: rgba(222, 231, 250, 0.74);
+  font-size: 0.92rem;
+  text-align: center;
+}
+
+.barcode-modal-footnote {
+  margin: 0;
+  padding: 0 22px 22px;
+  color: rgba(198, 211, 242, 0.56);
+  font-size: 0.78rem;
   text-align: center;
 }
 
 @media (max-width: 720px) {
-  .barcode-modal-manual {
+  .field-inline-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .barcode-list-row {
     grid-template-columns: 1fr;
+  }
+
+  .barcode-modal-header {
+    padding: 16px 18px;
+  }
+
+  .barcode-modal-scanner {
+    padding: 18px;
+  }
+
+  .barcode-modal-preview {
+    min-height: 280px;
+  }
+
+  .barcode-modal-reader video {
+    min-height: 260px;
+  }
+
+  .barcode-modal-footnote {
+    padding: 0 18px 18px;
   }
 }
 
@@ -2641,6 +2823,10 @@ textarea {
 
   .settings-fields-grid,
   .settings-toggle-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .compact-grid {
     grid-template-columns: 1fr;
   }
 

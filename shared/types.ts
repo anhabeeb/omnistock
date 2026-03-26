@@ -88,6 +88,7 @@ export type PriceCategory =
   | "dairy"
   | "dry-goods"
   | "oil";
+export type BarcodeType = "primary" | "secondary" | "packaging";
 export type WasteReason =
   | "spoilage"
   | "expiry"
@@ -142,6 +143,7 @@ export interface DailySummaryNotificationSettings extends NotificationRuleSettin
 
 export interface NotificationSettings {
   telegramEnabled: boolean;
+  telegramBotToken: string;
   telegramChatId: string;
   lowStock: NotificationRuleSettings;
   nearExpiry: NotificationRuleSettings;
@@ -161,6 +163,11 @@ export interface PrintLayoutBlock {
   label: string;
   enabled: boolean;
   content: string;
+  x: number;
+  y: number;
+  z: number;
+  width: number;
+  minHeight: number;
 }
 
 export interface Location {
@@ -172,6 +179,13 @@ export interface Location {
   status: RecordStatus;
 }
 
+export interface BatchBarcode {
+  id: string;
+  batchId: string;
+  barcode: string;
+  createdAt: string;
+}
+
 export interface StockBatch {
   id: string;
   locationId: string;
@@ -179,6 +193,7 @@ export interface StockBatch {
   quantity: number;
   receivedAt: string;
   expiryDate?: string;
+  barcodes: BatchBarcode[];
 }
 
 export interface ItemStock {
@@ -190,13 +205,32 @@ export interface ItemStock {
   batches: StockBatch[];
 }
 
+export interface ItemBarcode {
+  id: string;
+  itemId: string;
+  barcode: string;
+  barcodeType: BarcodeType;
+  unitName: string;
+  createdAt: string;
+}
+
+export interface ItemUnitConversion {
+  id: string;
+  itemId: string;
+  unitName: string;
+  quantityInBase: number;
+  createdAt: string;
+}
+
 export interface Item {
   id: string;
   sku: string;
   barcode: string;
+  barcodes: ItemBarcode[];
   name: string;
   category: string;
   unit: string;
+  uomConversions: ItemUnitConversion[];
   supplierId: string;
   costPrice: number;
   sellingPrice: number;
@@ -260,6 +294,9 @@ export interface InventoryRequest {
   barcode: string;
   quantity: number;
   unit: string;
+  baseQuantity: number;
+  baseUnit: string;
+  unitFactor: number;
   supplierId?: string;
   supplierName?: string;
   fromLocationId?: string;
@@ -267,6 +304,7 @@ export interface InventoryRequest {
   toLocationId?: string;
   toLocationName?: string;
   lotCode?: string;
+  batchBarcode?: string;
   expiryDate?: string;
   receivedDate?: string;
   allocationSummary?: string;
@@ -430,11 +468,13 @@ export interface MutationPayload {
   quantity: number;
   note: string;
   barcode?: string;
+  quantityUnit?: string;
   supplierId?: string;
   fromLocationId?: string;
   toLocationId?: string;
   countedQuantity?: number;
   lotCode?: string;
+  batchBarcode?: string;
   expiryDate?: string;
   receivedDate?: string;
   wasteReason?: WasteReason;
@@ -506,6 +546,15 @@ export interface CreateMarketPriceResponse {
 export interface CreateItemRequest {
   sku: string;
   barcode: string;
+  barcodes?: Array<{
+    barcode: string;
+    barcodeType: BarcodeType;
+    unitName?: string;
+  }>;
+  uomConversions?: Array<{
+    unitName: string;
+    quantityInBase: number;
+  }>;
   name: string;
   category: string;
   unit: string;
@@ -524,6 +573,15 @@ export interface UpdateItemRequest {
   itemId: string;
   sku: string;
   barcode: string;
+  barcodes?: Array<{
+    barcode: string;
+    barcodeType: BarcodeType;
+    unitName?: string;
+  }>;
+  uomConversions?: Array<{
+    unitName: string;
+    quantityInBase: number;
+  }>;
   name: string;
   category: string;
   unit: string;
@@ -791,11 +849,13 @@ export interface EditInventoryRequest {
   quantity: number;
   note: string;
   barcode?: string;
+  quantityUnit?: string;
   supplierId?: string;
   fromLocationId?: string;
   toLocationId?: string;
   countedQuantity?: number;
   lotCode?: string;
+  batchBarcode?: string;
   expiryDate?: string;
   receivedDate?: string;
   wasteReason?: WasteReason;

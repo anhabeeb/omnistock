@@ -1,10 +1,12 @@
 import { canAccessModule } from "./permissions";
 import type {
+  BatchBarcode,
   BootstrapPayload,
   DashboardMetric,
   InventoryAlert,
   InventorySnapshot,
   Item,
+  ItemBarcode,
   MovementLedgerEntry,
   StockBatch,
   User,
@@ -57,6 +59,71 @@ export function getUser(snapshot: InventorySnapshot, userId?: string): User {
 
 export function totalOnHand(item: Item): number {
   return item.stocks.reduce((sum, stock) => sum + stock.onHand, 0);
+}
+
+export function itemBarcodeValues(item: Item): string[] {
+  return [...new Set([item.barcode, ...item.barcodes.map((entry) => entry.barcode)].filter(Boolean))];
+}
+
+export function batchBarcodeValues(batch: StockBatch): string[] {
+  return [...new Set((batch.barcodes ?? []).map((entry) => entry.barcode).filter(Boolean))];
+}
+
+function unitKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+export interface ItemUnitOption {
+  unitName: string;
+  quantityInBase: number;
+  isBase: boolean;
+}
+
+export function itemUnitOptions(item: Item): ItemUnitOption[] {
+  const options: ItemUnitOption[] = [{ unitName: item.unit, quantityInBase: 1, isBase: true }];
+  const seen = new Set([unitKey(item.unit)]);
+
+  for (const entry of item.uomConversions ?? []) {
+    const normalized = unitKey(entry.unitName);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    options.push({
+      unitName: entry.unitName,
+      quantityInBase: entry.quantityInBase,
+      isBase: false,
+    });
+  }
+
+  return options;
+}
+
+export function conversionForUnit(
+  item: Item,
+  unitName?: string,
+): ItemUnitOption {
+  if (!unitName?.trim()) {
+    return itemUnitOptions(item)[0];
+  }
+
+  const normalized = unitKey(unitName);
+  return (
+    itemUnitOptions(item).find((entry) => unitKey(entry.unitName) === normalized) ??
+    itemUnitOptions(item)[0]
+  );
+}
+
+export function barcodeUnitName(item: Item, barcode?: ItemBarcode): string {
+  return conversionForUnit(item, barcode?.unitName).unitName;
+}
+
+export interface BarcodeLookupResult {
+  item: Item;
+  source: "sku" | "item-barcode" | "batch-barcode";
+  itemBarcode?: ItemBarcode;
+  batch?: StockBatch;
+  batchBarcode?: BatchBarcode;
 }
 
 export function totalInventoryValue(snapshot: InventorySnapshot): number {
@@ -283,6 +350,58 @@ export function findItemByBarcode(
   snapshot: InventorySnapshot,
   code: string,
 ): Item | undefined {
+  return findBarcodeMatch(snapshot, code)?.item;
+}
+
+export function findBarcodeMatch(
+  snapshot: InventorySnapshot,
+  code: string,
+): BarcodeLookupResult | undefined {
   const cleaned = code.trim();
-  return snapshot.items.find((item) => item.barcode === cleaned || item.sku === cleaned);
+  if (!cleaned) {
+    return undefined;
+  }
+
+  for (const item of snapshot.items) {
+    if (item.sku === cleaned) {
+      return { item, source: "sku" };
+    }
+
+    const matchedItemBarcode =
+      item.barcodes.find((entry) => entry.barcode === cleaned) ??
+      (item.barcode === cleaned
+        ? {
+            id: `${item.id}-primary`,
+            itemId: item.id,
+            barcode: item.barcode,
+            barcodeType: "primary" as const,
+            unitName: item.unit,
+            createdAt: item.updatedAt,
+          }
+        : undefined);
+
+    if (matchedItemBarcode) {
+      return {
+        item,
+        source: "item-barcode",
+        itemBarcode: matchedItemBarcode,
+      };
+    }
+
+    for (const stock of item.stocks) {
+      for (const batch of stock.batches) {
+        const matchedBatchBarcode = batch.barcodes.find((entry) => entry.barcode === cleaned);
+        if (matchedBatchBarcode) {
+          return {
+            item,
+            source: "batch-barcode",
+            batch,
+            batchBarcode: matchedBatchBarcode,
+          };
+        }
+      }
+    }
+  }
+
+  return undefined;
 }

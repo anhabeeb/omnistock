@@ -37,6 +37,7 @@ interface BatchAllocation {
   quantity: number;
   receivedAt: string;
   expiryDate?: string;
+  batchBarcodes: string[];
 }
 
 export interface MutationResult {
@@ -180,6 +181,48 @@ function normalizedReceived(receivedAt: string | undefined, fallback: string): s
   return trimmed || fallback;
 }
 
+function normalizedCodeValues(values: Array<string | undefined>): string[] {
+  return [...new Set(values.map((value) => value?.trim() ?? "").filter(Boolean))];
+}
+
+function unitKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function itemUnitOptions(item: Item): Array<{ unitName: string; quantityInBase: number }> {
+  const options = [{ unitName: item.unit, quantityInBase: 1 }];
+  const seen = new Set([unitKey(item.unit)]);
+
+  for (const conversion of item.uomConversions ?? []) {
+    const normalized = unitKey(conversion.unitName);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    options.push({
+      unitName: conversion.unitName,
+      quantityInBase: conversion.quantityInBase,
+    });
+  }
+
+  return options;
+}
+
+function resolveRequestedUnit(
+  item: Item,
+  mutation: MutationEnvelope,
+): { unitName: string; quantityInBase: number } {
+  const requestedUnit =
+    mutation.payload.quantityUnit?.trim() ||
+    item.barcodes.find((entry) => entry.barcode === mutation.payload.barcode)?.unitName ||
+    item.unit;
+  const normalized = unitKey(requestedUnit);
+  return (
+    itemUnitOptions(item).find((entry) => unitKey(entry.unitName) === normalized) ??
+    itemUnitOptions(item)[0]
+  );
+}
+
 function batchSortValue(batch: StockBatch): number {
   return timeValue(batch.expiryDate) ?? Number.MAX_SAFE_INTEGER;
 }
@@ -227,7 +270,10 @@ function summarizeAllocations(prefix: string, allocations: BatchAllocation[]): s
 
 function upsertBatch(
   stock: ItemStock,
-  batch: Omit<StockBatch, "id"> & { id?: string },
+  batch: Omit<StockBatch, "id" | "barcodes"> & {
+    id?: string;
+    barcodeValues?: string[];
+  },
   makeId: (prefix: string) => string,
 ) {
   const existing = stock.batches.find(
@@ -239,16 +285,35 @@ function upsertBatch(
 
   if (existing) {
     existing.quantity += batch.quantity;
+    const currentValues = new Set(existing.barcodes.map((entry) => entry.barcode));
+    for (const barcode of normalizedCodeValues(batch.barcodeValues ?? [])) {
+      if (currentValues.has(barcode)) {
+        continue;
+      }
+      existing.barcodes.push({
+        id: makeId("bcb"),
+        batchId: existing.id,
+        barcode,
+        createdAt: batch.receivedAt,
+      });
+    }
     return existing;
   }
 
+  const batchId = batch.id || makeId("bat");
   stock.batches.push({
-    id: batch.id || makeId("bat"),
+    id: batchId,
     locationId: stock.locationId,
     lotCode: batch.lotCode,
     quantity: batch.quantity,
     receivedAt: batch.receivedAt,
     expiryDate: batch.expiryDate,
+    barcodes: normalizedCodeValues(batch.barcodeValues ?? []).map((barcode) => ({
+      id: makeId("bcb"),
+      batchId,
+      barcode,
+      createdAt: batch.receivedAt,
+    })),
   });
 
   return stock.batches[stock.batches.length - 1];
@@ -285,6 +350,7 @@ function consumeFromStock(
       quantity: take,
       receivedAt: batch.receivedAt,
       expiryDate: batch.expiryDate,
+      batchBarcodes: batch.barcodes.map((entry) => entry.barcode),
     });
   }
 
@@ -330,13 +396,14 @@ function createInboundBatch(
   mutation: MutationEnvelope,
   now: string,
   lotCodeFallback: string,
-): Omit<StockBatch, "id"> {
+): Omit<StockBatch, "id" | "barcodes"> & { barcodeValues: string[] } {
   return {
     locationId,
     lotCode: mutation.payload.lotCode?.trim() || lotCodeFallback,
     quantity,
     receivedAt: normalizedReceived(mutation.payload.receivedDate, now),
     expiryDate: normalizedExpiry(mutation.payload.expiryDate),
+    barcodeValues: normalizedCodeValues([mutation.payload.batchBarcode]),
   };
 }
 
@@ -351,9 +418,15 @@ export function applyMutation(
   const makeId = options.idFactory ?? createId;
   const note = mutation.payload.note.trim() || `${OPERATION_LABELS[mutation.kind]} processed.`;
   const now = mutation.createdAt;
-  const quantity = Number(mutation.payload.quantity);
+  const enteredQuantity = Number(mutation.payload.quantity);
+  const resolvedUnit = resolveRequestedUnit(item, mutation);
+  const quantity = enteredQuantity * resolvedUnit.quantityInBase;
 
-  if (!Number.isFinite(quantity)) {
+  if (!Number.isFinite(resolvedUnit.quantityInBase) || resolvedUnit.quantityInBase <= 0) {
+    throw new Error(`The selected unit ${resolvedUnit.unitName} does not have a valid conversion.`);
+  }
+
+  if (!Number.isFinite(enteredQuantity)) {
     throw new Error("Quantity must be a valid number.");
   }
 
@@ -413,6 +486,7 @@ export function applyMutation(
           quantity: Math.abs(quantity),
           receivedAt: storedBatch.receivedAt,
           expiryDate: storedBatch.expiryDate,
+          batchBarcodes: storedBatch.barcodes.map((entry) => entry.barcode),
         },
       ]);
       requestLotCode = storedBatch.lotCode;
@@ -494,6 +568,7 @@ export function applyMutation(
             quantity: allocation.quantity,
             receivedAt: allocation.receivedAt,
             expiryDate: allocation.expiryDate,
+            barcodeValues: allocation.batchBarcodes,
           },
           makeId,
         );
@@ -560,6 +635,7 @@ export function applyMutation(
             quantity,
             receivedAt: storedBatch.receivedAt,
             expiryDate: storedBatch.expiryDate,
+            batchBarcodes: storedBatch.barcodes.map((entry) => entry.barcode),
           },
         ]);
         requestLotCode = storedBatch.lotCode;
@@ -593,12 +669,13 @@ export function applyMutation(
         throw new Error("Stock count requires a counted location.");
       }
 
-      const countedQuantity = Number(
+      const countedQuantityEntered = Number(
         mutation.payload.countedQuantity ?? mutation.payload.quantity,
       );
-      if (!Number.isFinite(countedQuantity) || countedQuantity < 0) {
+      if (!Number.isFinite(countedQuantityEntered) || countedQuantityEntered < 0) {
         throw new Error("Stock count requires a valid counted quantity.");
       }
+      const countedQuantity = countedQuantityEntered * resolvedUnit.quantityInBase;
 
       const stock = getOrCreateStock(item, fromLocation.id);
       const before = stock.onHand;
@@ -620,6 +697,7 @@ export function applyMutation(
             quantity: delta,
             receivedAt: storedBatch.receivedAt,
             expiryDate: storedBatch.expiryDate,
+            batchBarcodes: storedBatch.barcodes.map((entry) => entry.barcode),
           },
         ]);
         requestLotCode = storedBatch.lotCode;
@@ -720,8 +798,15 @@ export function applyMutation(
     quantity:
       mutation.kind === "stock-count"
         ? Number(mutation.payload.countedQuantity ?? mutation.payload.quantity)
+        : enteredQuantity,
+    unit: resolvedUnit.unitName,
+    baseQuantity:
+      mutation.kind === "stock-count"
+        ? Number(mutation.payload.countedQuantity ?? mutation.payload.quantity) *
+          resolvedUnit.quantityInBase
         : quantity,
-    unit: item.unit,
+    baseUnit: item.unit,
+    unitFactor: resolvedUnit.quantityInBase,
     supplierId: supplier?.id,
     supplierName: supplier?.name,
     fromLocationId: fromLocation?.id,
@@ -729,6 +814,9 @@ export function applyMutation(
     toLocationId: toLocation?.id,
     toLocationName: toLocation?.name,
     lotCode: requestLotCode,
+    batchBarcode:
+      mutation.payload.batchBarcode?.trim() ||
+      undefined,
     expiryDate: requestExpiryDate,
     receivedDate: requestReceivedDate,
     allocationSummary,

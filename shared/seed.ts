@@ -44,7 +44,7 @@ function makeStock(
   reserved: number,
   minLevel: number,
   maxLevel: number,
-  batches: Array<Omit<StockBatch, "id" | "locationId">>,
+  batches: Array<Omit<StockBatch, "id" | "locationId" | "barcodes">>,
 ): ItemStock {
   const normalizedBatches = batches.map((batch) => ({
     id: prefixedId("bat", batchSequence++),
@@ -53,6 +53,7 @@ function makeStock(
     quantity: batch.quantity,
     receivedAt: batch.receivedAt,
     expiryDate: batch.expiryDate,
+    barcodes: [],
   }));
 
   return {
@@ -138,7 +139,7 @@ const suppliers: Supplier[] = [
   },
 ];
 
-const items: Item[] = [
+const items = [
   {
     id: "itm-00001",
     sku: "OMN-RICE-25",
@@ -300,7 +301,21 @@ const items: Item[] = [
       ]),
     ],
   },
-];
+].map((item, index): Item => ({
+  ...item,
+  status: item.status as Item["status"],
+  uomConversions: [],
+  barcodes: [
+    {
+      id: prefixedId("ibc", index + 1),
+      itemId: item.id,
+      barcode: item.barcode,
+      barcodeType: "primary",
+      unitName: item.unit,
+      createdAt: item.updatedAt,
+    },
+  ],
+}));
 
 function makeUser(
   id: string,
@@ -460,6 +475,9 @@ const requests: InventoryRequest[] = [
     barcode: "8964000000001",
     quantity: 20,
     unit: "bag",
+    baseQuantity: 20,
+    baseUnit: "bag",
+    unitFactor: 1,
     supplierId: "sup-00001",
     supplierName: "Rice Hub Traders",
     toLocationId: "loc-00001",
@@ -482,6 +500,9 @@ const requests: InventoryRequest[] = [
     barcode: "8964000000002",
     quantity: 18,
     unit: "bottle",
+    baseQuantity: 18,
+    baseUnit: "bottle",
+    unitFactor: 1,
     fromLocationId: "loc-00003",
     fromLocationName: "Islamabad Distribution Hub",
     allocationSummary: "FEFO issued from OIL-ISB-2401 (18 bottles).",
@@ -500,6 +521,9 @@ const requests: InventoryRequest[] = [
     barcode: "8964000000004",
     quantity: 24,
     unit: "pack",
+    baseQuantity: 24,
+    baseUnit: "pack",
+    unitFactor: 1,
     fromLocationId: "loc-00001",
     fromLocationName: "Karachi Central Warehouse",
     toLocationId: "loc-00003",
@@ -519,6 +543,9 @@ const requests: InventoryRequest[] = [
     barcode: "8964000000006",
     quantity: -2,
     unit: "bottle",
+    baseQuantity: -2,
+    baseUnit: "bottle",
+    unitFactor: 1,
     fromLocationId: "loc-00001",
     fromLocationName: "Karachi Central Warehouse",
     note: "Damaged during unloading.",
@@ -536,6 +563,9 @@ const requests: InventoryRequest[] = [
     barcode: "8964000000003",
     quantity: 10,
     unit: "jar",
+    baseQuantity: 10,
+    baseUnit: "jar",
+    unitFactor: 1,
     fromLocationId: "loc-00002",
     fromLocationName: "Lahore North Warehouse",
     allocationSummary: "Cycle count flagged short shelf-life jars in lot SPC-LHE-2401.",
@@ -554,6 +584,9 @@ const requests: InventoryRequest[] = [
     barcode: "8964000000005",
     quantity: 2,
     unit: "case",
+    baseQuantity: 2,
+    baseUnit: "case",
+    unitFactor: 1,
     fromLocationId: "loc-00004",
     fromLocationName: "DHA Outlet",
     allocationSummary: "Wastage removed from SNK-DHA-2399 (2).",

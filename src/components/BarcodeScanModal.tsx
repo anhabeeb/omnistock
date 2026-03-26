@@ -1,4 +1,5 @@
 import { BarcodeScanner } from "./BarcodeScanner";
+import { CloseIcon } from "./AppIcons";
 
 interface Props {
   isOpen: boolean;
@@ -14,16 +15,17 @@ export function BarcodeScanModal({ isOpen, onClose, onScan }: Props) {
   return (
     <div className="page-popup-scrim barcode-modal-scrim" onClick={onClose}>
       <div className="page-popup-card barcode-modal-card" onClick={(event) => event.stopPropagation()}>
-        <div className="panel-heading">
+        <div className="barcode-modal-header">
           <div>
             <p className="eyebrow">Barcode Scan</p>
-            <h2>Scan Item Barcode</h2>
+            <h2>Scan Barcode</h2>
           </div>
-          <button type="button" className="secondary-button" onClick={onClose}>
-            Close
+          <button type="button" className="barcode-modal-close" onClick={onClose} aria-label="Close barcode scanner">
+            <CloseIcon size={18} />
           </button>
         </div>
         <BarcodeScanner onScan={onScan} onClose={onClose} />
+        <p className="barcode-modal-footnote">Position the barcode within the frame to scan it.</p>
       </div>
     </div>
   );

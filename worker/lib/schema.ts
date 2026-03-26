@@ -126,6 +126,29 @@ CREATE TABLE IF NOT EXISTS items (
   FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS item_barcodes (
+  id TEXT PRIMARY KEY,
+  sequence_no INTEGER NOT NULL UNIQUE,
+  item_id TEXT NOT NULL,
+  barcode TEXT NOT NULL UNIQUE,
+  barcode_type TEXT NOT NULL CHECK (barcode_type IN ('primary', 'secondary', 'packaging')),
+  unit_name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS item_unit_conversions (
+  id TEXT PRIMARY KEY,
+  sequence_no INTEGER NOT NULL UNIQUE,
+  item_id TEXT NOT NULL,
+  unit_name TEXT NOT NULL,
+  quantity_in_base REAL NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS item_stocks (
   item_id TEXT NOT NULL,
   location_id TEXT NOT NULL,
@@ -151,6 +174,16 @@ CREATE TABLE IF NOT EXISTS stock_batches (
   updated_at TEXT NOT NULL,
   FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
   FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS batch_barcodes (
+  id TEXT PRIMARY KEY,
+  sequence_no INTEGER NOT NULL UNIQUE,
+  batch_id TEXT NOT NULL,
+  barcode TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (batch_id) REFERENCES stock_batches(id) ON DELETE CASCADE
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS inventory_requests (
@@ -183,8 +216,12 @@ CREATE TABLE IF NOT EXISTS inventory_request_lines (
   item_id TEXT NOT NULL,
   barcode TEXT NOT NULL,
   quantity REAL NOT NULL,
+  base_quantity REAL,
+  base_unit TEXT,
+  unit_factor REAL,
   counted_quantity REAL,
   lot_code TEXT,
+  batch_barcode TEXT,
   expiry_date TEXT,
   received_at TEXT,
   allocation_summary TEXT,
@@ -367,8 +404,12 @@ CREATE INDEX IF NOT EXISTS idx_user_permission_overrides_user_id ON user_permiss
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_items_supplier_id ON items(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_item_barcodes_item_id ON item_barcodes(item_id);
+CREATE INDEX IF NOT EXISTS idx_item_barcodes_barcode_type ON item_barcodes(barcode_type);
+CREATE INDEX IF NOT EXISTS idx_item_unit_conversions_item_id ON item_unit_conversions(item_id);
 CREATE INDEX IF NOT EXISTS idx_item_stocks_location_id ON item_stocks(location_id);
 CREATE INDEX IF NOT EXISTS idx_stock_batches_item_location_expiry ON stock_batches(item_id, location_id, expiry_date);
+CREATE INDEX IF NOT EXISTS idx_batch_barcodes_batch_id ON batch_barcodes(batch_id);
 CREATE INDEX IF NOT EXISTS idx_inventory_requests_requested_at ON inventory_requests(requested_at DESC);
 CREATE INDEX IF NOT EXISTS idx_inventory_requests_kind_status ON inventory_requests(kind, status);
 CREATE INDEX IF NOT EXISTS idx_inventory_request_lines_item_id ON inventory_request_lines(item_id);

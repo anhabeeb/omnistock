@@ -1,111 +1,65 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 interface Props {
   onScan: (value: string) => void;
   onClose: () => void;
 }
 
-type BarcodeDetectionResult = {
-  rawValue?: string;
+type Html5QrcodeScannerInstance = {
+  render: (
+    onSuccess: (decodedText: string) => void,
+    onError: (errorMessage: string) => void,
+  ) => void;
+  clear: () => Promise<void>;
 };
 
-type BarcodeDetectorInstance = {
-  detect: (source: ImageBitmapSource) => Promise<BarcodeDetectionResult[]>;
-};
-
-type BarcodeDetectorConstructor = new (options?: {
-  formats?: string[];
-}) => BarcodeDetectorInstance;
-
-const SCAN_FORMATS = [
-  "code_128",
-  "code_39",
-  "codabar",
-  "ean_13",
-  "ean_8",
-  "itf",
-  "upc_a",
-  "upc_e",
-  "qr_code",
-];
-
-function getBarcodeDetector(): BarcodeDetectorConstructor | null {
-  const detector = (globalThis as { BarcodeDetector?: BarcodeDetectorConstructor }).BarcodeDetector;
-  return detector ?? null;
-}
+type Html5QrcodeScannerConstructor = new (
+  elementId: string,
+  config: { fps: number; qrbox: { width: number; height: number } },
+  verbose?: boolean,
+) => Html5QrcodeScannerInstance;
 
 export function BarcodeScanner({ onScan, onClose }: Props) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const detectorRef = useRef<BarcodeDetectorInstance | null>(null);
-  const [manualValue, setManualValue] = useState("");
-  const [status, setStatus] = useState("Starting camera...");
-  const [cameraReady, setCameraReady] = useState(false);
+  const readerId = useId().replace(/:/g, "");
+  const [status, setStatus] = useState("Starting barcode scanner...");
 
   useEffect(() => {
-    let disposed = false;
+    let scanner: Html5QrcodeScannerInstance | null = null;
+    let cancelled = false;
 
     async function startScanner() {
-      const Detector = getBarcodeDetector();
-      if (!Detector) {
-        setStatus("Camera scanning is not supported in this browser. Enter the barcode manually below.");
-        return;
-      }
-
-      detectorRef.current = new Detector({ formats: SCAN_FORMATS });
-
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: "environment" },
-          },
-          audio: false,
-        });
-
-        if (disposed) {
-          stream.getTracks().forEach((track) => track.stop());
+        const { Html5QrcodeScanner } = (await import("html5-qrcode")) as {
+          Html5QrcodeScanner: Html5QrcodeScannerConstructor;
+        };
+        if (cancelled) {
           return;
         }
 
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-        setCameraReady(true);
-        setStatus("Align the barcode inside the frame to scan it.");
+        setStatus("Align barcode or QR code within the frame to scan.");
+        scanner = new Html5QrcodeScanner(
+          readerId,
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          false,
+        );
 
-        const scanFrame = async () => {
-          if (disposed || !videoRef.current || !detectorRef.current) {
-            return;
-          }
-
-          try {
-            if (videoRef.current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-              const results = await detectorRef.current.detect(videoRef.current);
-              const value = results.find((entry) => entry.rawValue?.trim())?.rawValue?.trim();
-              if (value) {
-                onScan(value);
-                onClose();
-                return;
-              }
+        scanner.render(
+          (decodedText: string) => {
+            onScan(decodedText);
+            if (scanner) {
+              void scanner.clear();
             }
-          } catch {
-            // Ignore transient frame detection errors.
-          }
-
-          rafRef.current = window.setTimeout(() => {
-            void scanFrame();
-          }, 300) as unknown as number;
-        };
-
-        void scanFrame();
+            onClose();
+          },
+          () => {
+            // Ignore transient scanner errors while the camera is live.
+          },
+        );
       } catch (error) {
         const message =
           error instanceof Error
             ? error.message
-            : "Camera access was not available. Enter the barcode manually below.";
+            : "Barcode scanner could not start on this device.";
         setStatus(message);
       }
     }
@@ -113,46 +67,19 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
     void startScanner();
 
     return () => {
-      disposed = true;
-      if (rafRef.current !== null) {
-        window.clearTimeout(rafRef.current);
+      cancelled = true;
+      if (scanner) {
+        void scanner.clear().catch(() => {
+          // Ignore cleanup failures when leaving the modal.
+        });
       }
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
     };
-  }, [onClose, onScan]);
-
-  function handleManualSubmit() {
-    const nextValue = manualValue.trim();
-    if (!nextValue) {
-      setStatus("Enter a barcode, SKU, or item code before continuing.");
-      return;
-    }
-
-    onScan(nextValue);
-    onClose();
-  }
+  }, [onClose, onScan, readerId]);
 
   return (
     <div className="barcode-modal-scanner">
-      <div className="barcode-modal-preview">
-        {cameraReady ? (
-          <video ref={videoRef} className="barcode-modal-video" playsInline muted autoPlay />
-        ) : (
-          <div className="barcode-modal-placeholder">{status}</div>
-        )}
-      </div>
+      <div id={readerId} className="barcode-modal-preview barcode-modal-reader" />
       <p className="barcode-modal-copy">{status}</p>
-      <div className="barcode-modal-manual">
-        <input
-          value={manualValue}
-          onChange={(event) => setManualValue(event.target.value)}
-          placeholder="Enter barcode, SKU, or item code"
-        />
-        <button type="button" className="primary-button" onClick={handleManualSubmit}>
-          Use Code
-        </button>
-      </div>
     </div>
   );
 }

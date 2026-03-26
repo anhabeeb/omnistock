@@ -25,7 +25,7 @@ import {
   matchesDateFilter,
 } from "../lib/dateFilters";
 import { formatDateTime } from "../lib/format";
-import { AdminIcon, DeleteIcon, EditIcon, PlusIcon } from "../components/AppIcons";
+import { AdminIcon, DeleteIcon, EditIcon, PasswordIcon, PlusIcon } from "../components/AppIcons";
 import { PrintDesigner } from "../components/PrintDesigner";
 
 interface Props {
@@ -63,7 +63,7 @@ interface CreateFormState {
 
 type SettingsFormState = UpdateSettingsRequest;
 type SettingsTabKey = "environment" | "notifications" | "print" | "permissions";
-type UserDialogMode = "create" | "edit" | "access" | "remove";
+type UserDialogMode = "create" | "edit" | "access" | "password" | "remove";
 
 const FALLBACK_TIMEZONES = [
   "UTC",
@@ -262,8 +262,7 @@ export function AdminPage({
   const canEditRolePermissions = can(currentUser, "admin.permissions.edit");
   const canManagePermissionOverrides = can(currentUser, "admin.permissions.manage");
   const canDelegatePermissionAccess = currentUser.role === "superadmin";
-  const canOpenAccessControl =
-    canManagePermissionOverrides || canResetUserPasswords || canEditUsers;
+  const canOpenAccessControl = canManagePermissionOverrides || canEditUsers;
   const assignableRoles = (Object.keys(ROLE_PRESETS) as Role[]).filter(
     (role) => currentUser.role === "superadmin" || role !== "superadmin",
   );
@@ -417,7 +416,7 @@ export function AdminPage({
   function patchNotificationRule(
     key: Exclude<
       keyof SettingsFormState["notificationSettings"],
-      "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
+      "telegramEnabled" | "telegramBotToken" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
     >,
     field: "enabled" | "inApp" | "telegram",
     value: boolean,
@@ -1054,6 +1053,16 @@ export function AdminPage({
                                 </button>
                                 <button
                                   type="button"
+                                  className="action-icon-button"
+                                  title="Change password"
+                                  aria-label={`Change password for ${user.name}`}
+                                  disabled={!canResetUserPasswords || isLocked}
+                                  onClick={() => openUserDialog("password", user)}
+                                >
+                                  <PasswordIcon size={16} />
+                                </button>
+                                <button
+                                  type="button"
                                   className="action-icon-button danger"
                                   title="Remove user"
                                   aria-label={`Remove ${user.name}`}
@@ -1102,6 +1111,8 @@ export function AdminPage({
                           ? "Edit User"
                           : userDialogMode === "access"
                             ? "Access Control"
+                            : userDialogMode === "password"
+                              ? "Password Change"
                             : "Remove User"}
                     </p>
                     <h3>
@@ -1379,39 +1390,54 @@ export function AdminPage({
                         </button>
                       </div>
                     </form>
-
-                    {canResetUserPasswords ? (
-                      <form className="page-stack" onSubmit={handleResetPassword}>
-                        <div className="panel-heading compact-heading">
-                          <div>
-                            <p className="eyebrow">Password Reset</p>
-                            <h3>Reset {selectedUser.name}&apos;s password</h3>
-                          </div>
-                        </div>
-                        <div className="form-grid">
-                          <label className="field field-wide">
-                            <span>New password</span>
-                            <input
-                              type="password"
-                              value={newPassword}
-                              onChange={(event) => setNewPassword(event.target.value)}
-                              placeholder="Minimum 8 characters"
-                              autoComplete="new-password"
-                            />
-                          </label>
-                        </div>
-                        <div className="button-row">
-                          <button
-                            type="submit"
-                            className="secondary-button"
-                            disabled={submitting === "password"}
-                          >
-                            {submitting === "password" ? "Resetting..." : "Reset password"}
-                          </button>
-                        </div>
-                      </form>
-                    ) : null}
                   </div>
+                ) : null}
+
+                {userDialogMode === "password" && selectedUser ? (
+                  <form className="page-stack" onSubmit={handleResetPassword}>
+                    <div className="panel-heading compact-heading">
+                      <div>
+                        <p className="eyebrow">Password Reset</p>
+                        <h3>Reset {selectedUser.name}&apos;s password</h3>
+                      </div>
+                    </div>
+                    <div className="form-grid">
+                      <label className="field">
+                        <span>User ID</span>
+                        <input value={selectedUser.id} readOnly />
+                      </label>
+                      <label className="field">
+                        <span>Username</span>
+                        <input value={selectedUser.username} readOnly />
+                      </label>
+                      <label className="field field-wide">
+                        <span>New password</span>
+                        <input
+                          type="password"
+                          value={newPassword}
+                          onChange={(event) => setNewPassword(event.target.value)}
+                          placeholder="Minimum 8 characters"
+                          autoComplete="new-password"
+                        />
+                      </label>
+                    </div>
+                    <div className="button-row">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => closeUserDialog()}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="primary-button"
+                        disabled={submitting === "password"}
+                      >
+                        {submitting === "password" ? "Resetting..." : "Reset password"}
+                      </button>
+                    </div>
+                  </form>
                 ) : null}
 
                 {userDialogMode === "remove" && selectedUser ? (
@@ -1622,17 +1648,6 @@ export function AdminPage({
                     />
                   </label>
                 </div>
-                <PrintDesigner
-                  template={settingsForm.reportPrintTemplate}
-                  companyName={snapshot.settings.companyName}
-                  generatedBy={currentUser.name}
-                  timeSourceLabel={
-                    settingsForm.timeSource === "system" ? "System clock" : "Browser clock"
-                  }
-                  disabled={!canEditEnvironmentSettings || submitting === "settings"}
-                  onChange={replacePrintTemplate}
-                />
-
                 {settingsFeedback ? <p className="feedback-copy">{settingsFeedback}</p> : null}
                 {canEditEnvironmentSettings ? (
                   <div className="button-row">
@@ -1683,175 +1698,197 @@ export function AdminPage({
               </div>
               <div className="page-stack">
                 <p className="helper-text">
-                  Configure in-app and Telegram delivery for operational alerts. The Telegram bot
-                  token stays in Cloudflare Worker secrets, while this page controls the target
-                  chat and alert rules.
+                  Configure in-app and Telegram delivery for operational alerts, message wording,
+                  and the default branch or warehouse summary schedule.
                 </p>
-
-                <div className="stack-list">
-                  <div className="list-row">
-                    <div>
-                      <strong>Telegram setup</strong>
-                      <p>
-                        1. Add your bot to the target group or channel. 2. Enter the numeric
-                        chat ID like <code>-1001234567890</code> or a channel username like{" "}
-                        <code>@omnistock_alerts</code>. 3. Save settings. 4. Send a test
-                        notification.
-                      </p>
+                <div className="settings-dual-pane">
+                  <div className="settings-pane-card">
+                    <div className="panel-heading compact-heading">
+                      <div>
+                        <p className="eyebrow">Telegram Setup</p>
+                        <h3>Bot and chat connection</h3>
+                      </div>
+                      <span className="status-chip neutral">
+                        {settingsForm.notificationSettings.telegramEnabled &&
+                        settingsForm.notificationSettings.telegramChatId.trim() &&
+                        settingsForm.notificationSettings.telegramBotToken.trim()
+                          ? "Ready to test"
+                          : "Needs setup"}
+                      </span>
                     </div>
-                    <span className="status-chip neutral">
-                      {settingsForm.notificationSettings.telegramEnabled &&
-                      settingsForm.notificationSettings.telegramChatId.trim()
-                        ? "Ready to test"
-                        : "Needs setup"}
-                    </span>
+                    <p className="helper-text">
+                      Add your bot token here or keep using the Worker secret. Then connect the
+                      target group or channel with a chat ID like <code>-1001234567890</code> or a
+                      channel username like <code>@omnistock_alerts</code>.
+                    </p>
+                    <div className="settings-fields-grid">
+                      <label className="settings-field-card">
+                        <span className="settings-field-label">Telegram Delivery</span>
+                        <select
+                          value={settingsForm.notificationSettings.telegramEnabled ? "enabled" : "disabled"}
+                          disabled={!canEditNotificationSettings || submitting === "settings"}
+                          onChange={(event) =>
+                            patchNotificationSettings(
+                              "telegramEnabled",
+                              event.target.value === "enabled",
+                            )
+                          }
+                        >
+                          <option value="disabled">Disabled</option>
+                          <option value="enabled">Enabled</option>
+                        </select>
+                      </label>
+                      <label className="settings-field-card">
+                        <span className="settings-field-label">Telegram Bot Token</span>
+                        <input
+                          type="password"
+                          value={settingsForm.notificationSettings.telegramBotToken}
+                          disabled={!canEditNotificationSettings || submitting === "settings"}
+                          onChange={(event) =>
+                            patchNotificationSettings("telegramBotToken", event.target.value)
+                          }
+                          placeholder="123456:ABC..."
+                        />
+                      </label>
+                      <label className="settings-field-card">
+                        <span className="settings-field-label">Telegram Chat ID</span>
+                        <input
+                          value={settingsForm.notificationSettings.telegramChatId}
+                          disabled={!canEditNotificationSettings || submitting === "settings"}
+                          onChange={(event) =>
+                            patchNotificationSettings("telegramChatId", event.target.value)
+                          }
+                          placeholder="-1001234567890"
+                        />
+                      </label>
+                      <label className="settings-field-card">
+                        <span className="settings-field-label">Wastage Threshold</span>
+                        <input
+                          type="number"
+                          min="0"
+                          value={settingsForm.notificationSettings.wastageCostThreshold}
+                          disabled={!canEditNotificationSettings || submitting === "settings"}
+                          onChange={(event) =>
+                            patchNotificationSettings(
+                              "wastageCostThreshold",
+                              Number(event.target.value || 0),
+                            )
+                          }
+                        />
+                      </label>
+                      <label className="settings-field-card">
+                        <span className="settings-field-label">Daily Summary Hour</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="23"
+                          value={settingsForm.notificationSettings.dailySummary.hour}
+                          disabled={!canEditNotificationSettings || submitting === "settings"}
+                          onChange={(event) =>
+                            patchDailySummarySetting("hour", Number(event.target.value || 0))
+                          }
+                        />
+                      </label>
+                      <label className="settings-field-card">
+                        <span className="settings-field-label">Daily Summary Scope</span>
+                        <select
+                          value={settingsForm.notificationSettings.dailySummary.scope}
+                          disabled={!canEditNotificationSettings || submitting === "settings"}
+                          onChange={(event) =>
+                            patchDailySummarySetting(
+                              "scope",
+                              event.target.value as "warehouse" | "branch",
+                            )
+                          }
+                        >
+                          <option value="warehouse">Warehouse</option>
+                          <option value="branch">Branch / outlet</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div className="settings-fields-grid compact-grid">
+                      <label className="settings-field-card">
+                        <span className="settings-field-label">Telegram Header</span>
+                        <input
+                          value={settingsForm.notificationSettings.style.telegramHeader}
+                          disabled={!canEditNotificationSettings || submitting === "settings"}
+                          onChange={(event) =>
+                            patchNotificationSettings("style", {
+                              ...settingsForm.notificationSettings.style,
+                              telegramHeader: event.target.value,
+                            })
+                          }
+                          placeholder="OmniStock Alert"
+                        />
+                      </label>
+                      <label className="settings-field-card">
+                        <span className="settings-field-label">Telegram Footer</span>
+                        <input
+                          value={settingsForm.notificationSettings.style.telegramFooter}
+                          disabled={!canEditNotificationSettings || submitting === "settings"}
+                          onChange={(event) =>
+                            patchNotificationSettings("style", {
+                              ...settingsForm.notificationSettings.style,
+                              telegramFooter: event.target.value,
+                            })
+                          }
+                          placeholder="Powered by OmniStock"
+                        />
+                      </label>
+                    </div>
+                    <label className="settings-toggle-card">
+                      <div>
+                        <strong>Include Timestamp</strong>
+                        <p>Add the send time to Telegram messages.</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={settingsForm.notificationSettings.style.includeTimestamp}
+                        disabled={!canEditNotificationSettings || submitting === "settings"}
+                        onChange={(event) =>
+                          patchNotificationSettings("style", {
+                            ...settingsForm.notificationSettings.style,
+                            includeTimestamp: event.target.checked,
+                          })
+                        }
+                      />
+                    </label>
+                    <div className="button-row" style={{ justifyContent: "flex-start" }}>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={
+                          !canEditNotificationSettings ||
+                          submitting === "telegram-test" ||
+                          !settingsForm.notificationSettings.telegramEnabled ||
+                          !settingsForm.notificationSettings.telegramChatId.trim()
+                        }
+                        onClick={() => void handleSendTelegramTest()}
+                      >
+                        {submitting === "telegram-test" ? "Sending..." : "Send Telegram Test"}
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                <div className="settings-fields-grid">
-                  <label className="settings-field-card">
-                    <span className="settings-field-label">Telegram Delivery</span>
-                    <select
-                      value={settingsForm.notificationSettings.telegramEnabled ? "enabled" : "disabled"}
-                      disabled={!canEditNotificationSettings || submitting === "settings"}
-                      onChange={(event) =>
-                        patchNotificationSettings(
-                          "telegramEnabled",
-                          event.target.value === "enabled",
-                        )
-                      }
-                    >
-                      <option value="disabled">Disabled</option>
-                      <option value="enabled">Enabled</option>
-                    </select>
-                  </label>
-                  <label className="settings-field-card">
-                    <span className="settings-field-label">Telegram Chat ID</span>
-                    <input
-                      value={settingsForm.notificationSettings.telegramChatId}
-                      disabled={!canEditNotificationSettings || submitting === "settings"}
-                      onChange={(event) =>
-                        patchNotificationSettings("telegramChatId", event.target.value)
-                      }
-                      placeholder="-1001234567890"
-                    />
-                  </label>
-                  <label className="settings-field-card">
-                    <span className="settings-field-label">Wastage Threshold</span>
-                    <input
-                      type="number"
-                      min="0"
-                      value={settingsForm.notificationSettings.wastageCostThreshold}
-                      disabled={!canEditNotificationSettings || submitting === "settings"}
-                      onChange={(event) =>
-                        patchNotificationSettings(
-                          "wastageCostThreshold",
-                          Number(event.target.value || 0),
-                        )
-                      }
-                    />
-                  </label>
-                  <label className="settings-field-card">
-                    <span className="settings-field-label">Daily Summary Hour</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="23"
-                      value={settingsForm.notificationSettings.dailySummary.hour}
-                      disabled={!canEditNotificationSettings || submitting === "settings"}
-                      onChange={(event) =>
-                        patchDailySummarySetting("hour", Number(event.target.value || 0))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field-card">
-                    <span className="settings-field-label">Daily Summary Scope</span>
-                    <select
-                      value={settingsForm.notificationSettings.dailySummary.scope}
-                      disabled={!canEditNotificationSettings || submitting === "settings"}
-                      onChange={(event) =>
-                        patchDailySummarySetting(
-                          "scope",
-                          event.target.value as "warehouse" | "branch",
-                        )
-                      }
-                    >
-                      <option value="warehouse">Warehouse</option>
-                      <option value="branch">Branch / outlet</option>
-                    </select>
-                  </label>
-                </div>
-
-                <div className="settings-fields-grid">
-                  <label className="settings-field-card">
-                    <span className="settings-field-label">Telegram Header</span>
-                    <input
-                      value={settingsForm.notificationSettings.style.telegramHeader}
-                      disabled={!canEditNotificationSettings || submitting === "settings"}
-                      onChange={(event) =>
-                        patchNotificationSettings("style", {
-                          ...settingsForm.notificationSettings.style,
-                          telegramHeader: event.target.value,
-                        })
-                      }
-                      placeholder="OmniStock Alert"
-                    />
-                  </label>
-                  <label className="settings-field-card">
-                    <span className="settings-field-label">Telegram Footer</span>
-                    <input
-                      value={settingsForm.notificationSettings.style.telegramFooter}
-                      disabled={!canEditNotificationSettings || submitting === "settings"}
-                      onChange={(event) =>
-                        patchNotificationSettings("style", {
-                          ...settingsForm.notificationSettings.style,
-                          telegramFooter: event.target.value,
-                        })
-                      }
-                      placeholder="Powered by OmniStock"
-                    />
-                  </label>
-                  <label className="settings-toggle-card">
-                    <div>
-                      <strong>Include Timestamp</strong>
-                      <p>Add the send time to Telegram messages.</p>
+                  <div className="settings-pane-card">
+                    <div className="panel-heading compact-heading">
+                      <div>
+                        <p className="eyebrow">Message Templates</p>
+                        <h3>Notification wording</h3>
+                      </div>
                     </div>
-                    <input
-                      type="checkbox"
-                      checked={settingsForm.notificationSettings.style.includeTimestamp}
-                      disabled={!canEditNotificationSettings || submitting === "settings"}
-                      onChange={(event) =>
-                        patchNotificationSettings("style", {
-                          ...settingsForm.notificationSettings.style,
-                          includeTimestamp: event.target.checked,
-                        })
-                      }
-                    />
-                  </label>
-                </div>
-
-                <div className="page-stack">
-                  <div className="panel-heading compact-heading">
-                    <div>
-                      <p className="eyebrow">Message Templates</p>
-                      <h3>Notification wording</h3>
-                    </div>
-                  </div>
-                  <p className="helper-text">
-                    Use placeholders like <code>{"{{itemName}}"}</code>, <code>{"{{locationName}}"}</code>,{" "}
-                    <code>{"{{quantity}}"}</code>, <code>{"{{lotCode}}"}</code>, <code>{"{{daysUntilExpiry}}"}</code>,{" "}
-                    <code>{"{{reference}}"}</code>, <code>{"{{requestKind}}"}</code>, <code>{"{{message}}"}</code>,{" "}
-                    <code>{"{{totalCost}}"}</code>, <code>{"{{movementCount}}"}</code>, and <code>{"{{wasteCost}}"}</code>.
-                  </p>
-                  <div className="stack-list">
-                    {(Object.entries(settingsForm.notificationSettings.templates) as Array<
-                      [keyof typeof settingsForm.notificationSettings.templates, { title: string; body: string }]
-                    >).map(([key, template]) => (
-                      <div key={key} className="page-stack" style={{ gap: "12px" }}>
-                        <div>
-                          <strong style={{ textTransform: "capitalize" }}>{key.replace(/-/g, " ")}</strong>
-                        </div>
-                        <div className="form-grid">
+                    <p className="helper-text">
+                      Use placeholders like <code>{"{{itemName}}"}</code>, <code>{"{{locationName}}"}</code>,{" "}
+                      <code>{"{{quantity}}"}</code>, <code>{"{{lotCode}}"}</code>, <code>{"{{daysUntilExpiry}}"}</code>,{" "}
+                      <code>{"{{reference}}"}</code>, <code>{"{{requestKind}}"}</code>, <code>{"{{message}}"}</code>,{" "}
+                      <code>{"{{totalCost}}"}</code>, <code>{"{{movementCount}}"}</code>, and <code>{"{{wasteCost}}"}</code>.
+                    </p>
+                    <div className="notification-template-grid">
+                      {(Object.entries(settingsForm.notificationSettings.templates) as Array<
+                        [keyof typeof settingsForm.notificationSettings.templates, { title: string; body: string }]
+                      >).map(([key, template]) => (
+                        <div key={key} className="notification-template-card">
+                          <strong>{key.replace(/-/g, " ")}</strong>
                           <label className="field field-wide">
                             <span>Title Template</span>
                             <input
@@ -1882,12 +1919,12 @@ export function AdminPage({
                                   },
                                 })
                               }
-                              rows={3}
+                              rows={4}
                             />
                           </label>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 </div>
 
@@ -1944,7 +1981,7 @@ export function AdminPage({
                                 patchNotificationRule(
                                   key as Exclude<
                                     keyof SettingsFormState["notificationSettings"],
-                                    "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
+                                    "telegramEnabled" | "telegramBotToken" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
                                   >,
                                   "enabled",
                                   event.target.checked,
@@ -1962,7 +1999,7 @@ export function AdminPage({
                                 patchNotificationRule(
                                   key as Exclude<
                                     keyof SettingsFormState["notificationSettings"],
-                                    "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
+                                    "telegramEnabled" | "telegramBotToken" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
                                   >,
                                   "inApp",
                                   event.target.checked,
@@ -1980,7 +2017,7 @@ export function AdminPage({
                                 patchNotificationRule(
                                   key as Exclude<
                                     keyof SettingsFormState["notificationSettings"],
-                                    "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
+                                    "telegramEnabled" | "telegramBotToken" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
                                   >,
                                   "telegram",
                                   event.target.checked,
@@ -2097,6 +2134,47 @@ export function AdminPage({
                   Design the default report template used when OmniStock generates or prints
                   reports. This becomes the workspace-wide template for report output.
                 </p>
+
+                <div className="settings-dual-pane">
+                  <div className="settings-pane-card">
+                    <div className="panel-heading compact-heading">
+                      <div>
+                        <p className="eyebrow">Template Setup</p>
+                        <h3>Canvas editing</h3>
+                      </div>
+                    </div>
+                    <p className="helper-text">
+                      Use the A4 canvas to move fields by X/Y position, change their Z layer, and
+                      resize width and height before saving the default template.
+                    </p>
+                    <div className="settings-fields-grid compact-grid">
+                      <div className="settings-field-card">
+                        <span className="settings-field-label">Preview Mode</span>
+                        <strong>
+                          {settingsForm.reportPrintTemplate.paperSize.toUpperCase()} ·{" "}
+                          {settingsForm.reportPrintTemplate.orientation}
+                        </strong>
+                      </div>
+                      <div className="settings-field-card">
+                        <span className="settings-field-label">Editing Tools</span>
+                        <strong>Drag · X/Y/Z · Width · Height</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="settings-pane-card">
+                    <PrintDesigner
+                      template={settingsForm.reportPrintTemplate}
+                      companyName={snapshot.settings.companyName}
+                      generatedBy={currentUser.name}
+                      timeSourceLabel={
+                        settingsForm.timeSource === "system" ? "System clock" : "Browser clock"
+                      }
+                      disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                      onChange={replacePrintTemplate}
+                    />
+                  </div>
+                </div>
 
                 <div className="settings-fields-grid">
                   <label className="settings-field-card">

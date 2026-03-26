@@ -4,16 +4,57 @@ import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import { Box, Button, Chip, Paper, Stack, TextField, Typography } from "@mui/material";
 import {
   batchDaysUntilExpiry,
+  batchBarcodeValues,
   batchesForLocation,
-  findItemByBarcode,
+  findBarcodeMatch,
+  itemBarcodeValues,
+  itemUnitOptions,
   totalOnHand,
 } from "../../shared/selectors";
-import type { InventorySnapshot } from "../../shared/types";
+import type { InventorySnapshot, Item, ItemBarcode } from "../../shared/types";
 import { BarcodeScanModal } from "../components/BarcodeScanModal";
 import { formatCurrency, formatDateTime } from "../lib/format";
 
 interface Props {
   snapshot: InventorySnapshot;
+}
+
+function itemBatchBarcodeValues(item: Item): string[] {
+  return [...new Set(item.stocks.flatMap((stock) => stock.batches.flatMap((batch) => batchBarcodeValues(batch))))];
+}
+
+function barcodeSummary(item: Item): string {
+  const itemCodes = itemBarcodeValues(item);
+  const batchCodes = itemBatchBarcodeValues(item);
+
+  if (itemCodes.length === 0 && batchCodes.length === 0) {
+    return "No barcode";
+  }
+
+  const primary = itemCodes[0] ?? batchCodes[0];
+  const extraCount = Math.max(itemCodes.length - 1, 0) + batchCodes.length;
+  return extraCount > 0 ? `${primary} (+${extraCount} more)` : primary ?? "No barcode";
+}
+
+function itemBarcodeEntries(item: Item): ItemBarcode[] {
+  if (item.barcodes.length > 0) {
+    return item.barcodes;
+  }
+
+  if (!item.barcode) {
+    return [];
+  }
+
+  return [
+    {
+      id: `${item.id}-primary`,
+      itemId: item.id,
+      barcode: item.barcode,
+      barcodeType: "primary",
+      unitName: item.unit,
+      createdAt: item.updatedAt,
+    },
+  ];
 }
 
 export function MobileSearchPage({ snapshot }: Props) {
@@ -37,7 +78,8 @@ export function MobileSearchPage({ snapshot }: Props) {
       return (
         item.name.toLowerCase().includes(value) ||
         item.sku.toLowerCase().includes(value) ||
-        item.barcode.toLowerCase().includes(value) ||
+        itemBarcodeValues(item).some((barcode) => barcode.toLowerCase().includes(value)) ||
+        itemBatchBarcodeValues(item).some((barcode) => barcode.toLowerCase().includes(value)) ||
         item.category.toLowerCase().includes(value) ||
         supplierName.includes(value)
       );
@@ -61,6 +103,8 @@ export function MobileSearchPage({ snapshot }: Props) {
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
         .slice(0, 6)
     : [];
+  const selectedItemBarcodes = selectedItem ? itemBarcodeEntries(selectedItem) : [];
+  const selectedItemUnits = selectedItem ? itemUnitOptions(selectedItem) : [];
   const itemWaste = selectedItem
     ? [...snapshot.wasteEntries]
         .filter((entry) => entry.itemId === selectedItem.id)
@@ -85,10 +129,16 @@ export function MobileSearchPage({ snapshot }: Props) {
 
     setSearchTerm(normalized);
     setScannerOpen(false);
-    const match = findItemByBarcode(snapshot, normalized);
+    const match = findBarcodeMatch(snapshot, normalized);
     if (match) {
-      setSelectedItemId(match.id);
-      setFeedback(`Matched ${match.name} (${match.sku}).`);
+      setSelectedItemId(match.item.id);
+      if (match.source === "batch-barcode" && match.batch) {
+        setFeedback(`Matched batch ${match.batch.lotCode} for ${match.item.name}.`);
+      } else {
+        setFeedback(
+          `Matched ${match.item.name} (${match.item.sku})${match.itemBarcode ? ` as ${match.itemBarcode.unitName}` : ""}.`,
+        );
+      }
       return;
     }
 
@@ -179,7 +229,7 @@ export function MobileSearchPage({ snapshot }: Props) {
                     />
                   </Stack>
                   <Typography variant="body2" color="text.secondary">
-                    {item.sku} · {item.barcode || "No barcode"}
+                    {item.sku} · {barcodeSummary(item)}
                   </Typography>
                 </Stack>
               </Paper>
@@ -201,7 +251,7 @@ export function MobileSearchPage({ snapshot }: Props) {
               </Typography>
               <Typography variant="h5">{selectedItem.name}</Typography>
               <Typography variant="body2" color="text.secondary">
-                {selectedItem.sku} · {selectedItem.barcode || "No barcode"} · {selectedItem.category}
+                {selectedItem.sku} · {barcodeSummary(selectedItem)} · {selectedItem.category}
               </Typography>
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                 <Chip size="small" variant="outlined" label={`${totalOnHand(selectedItem)} ${selectedItem.unit} on hand`} />
@@ -212,6 +262,41 @@ export function MobileSearchPage({ snapshot }: Props) {
                   variant="outlined"
                   label={latestPrice ? formatCurrency(latestPrice.quotedPrice, snapshot.settings.currency) : "No market rate"}
                 />
+              </Stack>
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                {selectedItemBarcodes.map((entry, index) => (
+                  <Chip
+                    key={`${entry.barcode}-${index}`}
+                    size="small"
+                    color={index === 0 ? "primary" : "default"}
+                    variant={index === 0 ? "filled" : "outlined"}
+                    label={`${entry.barcodeType === "primary" ? "Primary" : entry.barcodeType === "packaging" ? "Packaging" : "Secondary"}: ${entry.barcode} (${entry.unitName})`}
+                  />
+                ))}
+                {itemBatchBarcodeValues(selectedItem).slice(0, 4).map((barcode, index) => (
+                  <Chip
+                    key={`batch-${barcode}-${index}`}
+                    size="small"
+                    variant="outlined"
+                    color="secondary"
+                    label={`Batch: ${barcode}`}
+                  />
+                ))}
+              </Stack>
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                {selectedItemUnits.map((entry) => (
+                  <Chip
+                    key={entry.unitName}
+                    size="small"
+                    color={entry.isBase ? "primary" : "default"}
+                    variant={entry.isBase ? "filled" : "outlined"}
+                    label={
+                      entry.isBase
+                        ? `Base: ${entry.unitName}`
+                        : `1 ${entry.unitName} = ${entry.quantityInBase} ${selectedItem.unit}`
+                    }
+                  />
+                ))}
               </Stack>
             </Stack>
           </Paper>

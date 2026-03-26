@@ -20,6 +20,8 @@ import {
 import type {
   ActivateSuperadminRequest,
   ActivityLog,
+  BarcodeType,
+  BatchBarcode,
   BootstrapPayload,
   ChangeOwnPasswordRequest,
   DailySummaryNotificationSettings,
@@ -45,6 +47,8 @@ import type {
   InitializeSystemRequest,
   InitializeSystemResponse,
   Item,
+  ItemBarcode,
+  ItemUnitConversion,
   ItemStock,
   LoginRequest,
   LoginResponse,
@@ -109,7 +113,10 @@ const textEncoder = new TextEncoder();
 
 const NOTIFICATION_TYPE_TO_SETTINGS_KEY: Record<
   Exclude<NotificationType, "daily-summary">,
-  keyof Omit<NotificationSettings, "telegramEnabled" | "telegramChatId" | "dailySummary" | "wastageCostThreshold">
+  keyof Omit<
+    NotificationSettings,
+    "telegramEnabled" | "telegramBotToken" | "telegramChatId" | "dailySummary" | "wastageCostThreshold"
+  >
 > = {
   "low-stock": "lowStock",
   "near-expiry": "nearExpiry",
@@ -639,6 +646,7 @@ function validateNotificationSettings(
 
   const normalized: NotificationSettings = {
     telegramEnabled: Boolean(safeInput.telegramEnabled),
+    telegramBotToken: String(safeInput.telegramBotToken ?? "").trim(),
     telegramChatId: String(safeInput.telegramChatId ?? "").trim(),
     lowStock: normalizeNotificationRule(safeInput.lowStock, fallback.lowStock),
     nearExpiry: normalizeNotificationRule(safeInput.nearExpiry, fallback.nearExpiry),
@@ -754,6 +762,26 @@ function validateEnvironmentSettings(
               typeof block.enabled === "boolean" ? block.enabled : fallbackBlock.enabled,
             content:
               typeof block.content === "string" ? block.content : fallbackBlock.content,
+            x:
+              Number.isFinite(Number(block.x)) && Number(block.x) >= 0
+                ? Math.min(100, Math.max(0, Number(block.x)))
+                : fallbackBlock.x,
+            y:
+              Number.isFinite(Number(block.y)) && Number(block.y) >= 0
+                ? Math.min(100, Math.max(0, Number(block.y)))
+                : fallbackBlock.y,
+            z:
+              Number.isFinite(Number(block.z)) && Number(block.z) >= 0
+                ? Math.floor(Number(block.z))
+                : fallbackBlock.z,
+            width:
+              Number.isFinite(Number(block.width)) && Number(block.width) >= 10
+                ? Math.min(100, Math.max(10, Number(block.width)))
+                : fallbackBlock.width,
+            minHeight:
+              Number.isFinite(Number(block.minHeight)) && Number(block.minHeight) >= 48
+                ? Math.min(960, Math.max(48, Number(block.minHeight)))
+                : fallbackBlock.minHeight,
           } satisfies PrintLayoutBlock;
         })
         .filter((block): block is PrintLayoutBlock => Boolean(block))
@@ -982,8 +1010,81 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
     );
   }
 
+  if (!(await tableExists(db, "item_barcodes"))) {
+    await executeScript(
+      db,
+      `
+      CREATE TABLE IF NOT EXISTS item_barcodes (
+        id TEXT PRIMARY KEY,
+        sequence_no INTEGER NOT NULL UNIQUE,
+        item_id TEXT NOT NULL,
+        barcode TEXT NOT NULL UNIQUE,
+        barcode_type TEXT NOT NULL CHECK (barcode_type IN ('primary', 'secondary', 'packaging')),
+        unit_name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+      ) STRICT;
+    `,
+    );
+  }
+
+  if (!(await tableExists(db, "item_unit_conversions"))) {
+    await executeScript(
+      db,
+      `
+      CREATE TABLE IF NOT EXISTS item_unit_conversions (
+        id TEXT PRIMARY KEY,
+        sequence_no INTEGER NOT NULL UNIQUE,
+        item_id TEXT NOT NULL,
+        unit_name TEXT NOT NULL,
+        quantity_in_base REAL NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+      ) STRICT;
+    `,
+    );
+  }
+
+  if (!(await tableExists(db, "batch_barcodes"))) {
+    await executeScript(
+      db,
+      `
+      CREATE TABLE IF NOT EXISTS batch_barcodes (
+        id TEXT PRIMARY KEY,
+        sequence_no INTEGER NOT NULL UNIQUE,
+        batch_id TEXT NOT NULL,
+        barcode TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (batch_id) REFERENCES stock_batches(id) ON DELETE CASCADE
+      ) STRICT;
+    `,
+    );
+  }
+
+  if (!(await columnExists(db, "item_barcodes", "unit_name"))) {
+    await execute(
+      db,
+      "ALTER TABLE item_barcodes ADD COLUMN unit_name TEXT NOT NULL DEFAULT 'unit'",
+    );
+  }
+
   if (!(await columnExists(db, "inventory_request_lines", "lot_code"))) {
     await execute(db, "ALTER TABLE inventory_request_lines ADD COLUMN lot_code TEXT");
+  }
+  if (!(await columnExists(db, "inventory_request_lines", "base_quantity"))) {
+    await execute(db, "ALTER TABLE inventory_request_lines ADD COLUMN base_quantity REAL");
+  }
+  if (!(await columnExists(db, "inventory_request_lines", "base_unit"))) {
+    await execute(db, "ALTER TABLE inventory_request_lines ADD COLUMN base_unit TEXT");
+  }
+  if (!(await columnExists(db, "inventory_request_lines", "unit_factor"))) {
+    await execute(db, "ALTER TABLE inventory_request_lines ADD COLUMN unit_factor REAL");
+  }
+  if (!(await columnExists(db, "inventory_request_lines", "batch_barcode"))) {
+    await execute(db, "ALTER TABLE inventory_request_lines ADD COLUMN batch_barcode TEXT");
   }
   if (!(await columnExists(db, "inventory_request_lines", "expiry_date"))) {
     await execute(db, "ALTER TABLE inventory_request_lines ADD COLUMN expiry_date TEXT");
@@ -1184,6 +1285,22 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
     db,
     "CREATE INDEX IF NOT EXISTS idx_stock_batches_item_location_expiry ON stock_batches(item_id, location_id, expiry_date)",
   );
+  await execute(
+    db,
+    "CREATE INDEX IF NOT EXISTS idx_item_barcodes_item_id ON item_barcodes(item_id)",
+  );
+  await execute(
+    db,
+    "CREATE INDEX IF NOT EXISTS idx_item_barcodes_barcode_type ON item_barcodes(barcode_type)",
+  );
+  await execute(
+    db,
+    "CREATE INDEX IF NOT EXISTS idx_item_unit_conversions_item_id ON item_unit_conversions(item_id)",
+  );
+  await execute(
+    db,
+    "CREATE INDEX IF NOT EXISTS idx_batch_barcodes_batch_id ON batch_barcodes(batch_id)",
+  );
   await execute(db, "CREATE INDEX IF NOT EXISTS idx_users_status ON users(status)");
   await execute(
     db,
@@ -1217,6 +1334,66 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
     db,
     "CREATE INDEX IF NOT EXISTS idx_waste_entries_reason_created_at ON waste_entries(reason, created_at DESC)",
   );
+  await execute(
+    db,
+    `UPDATE item_barcodes
+     SET unit_name = (
+       SELECT i.unit
+       FROM items i
+       WHERE i.id = item_barcodes.item_id
+     )
+     WHERE unit_name IS NULL OR trim(unit_name) = '' OR unit_name = 'unit'`,
+  );
+  await execute(
+    db,
+    `UPDATE inventory_request_lines
+     SET base_quantity = quantity
+     WHERE base_quantity IS NULL`,
+  );
+  await execute(
+    db,
+    `UPDATE inventory_request_lines
+     SET base_unit = unit
+     WHERE base_unit IS NULL OR trim(base_unit) = ''`,
+  );
+  await execute(
+    db,
+    `UPDATE inventory_request_lines
+     SET unit_factor = 1
+     WHERE unit_factor IS NULL OR unit_factor <= 0`,
+  );
+
+  const orphanPrimaryBarcodes = await all<{
+    id: string;
+    barcode: string;
+    unit: string;
+    updated_at: string;
+  }>(
+    db,
+    `SELECT i.id, i.barcode, i.unit, i.updated_at
+     FROM items i
+     LEFT JOIN item_barcodes ib
+       ON ib.item_id = i.id
+       AND ib.barcode = i.barcode
+       AND ib.barcode_type = 'primary'
+     WHERE ib.id IS NULL`,
+  );
+  for (const row of orphanPrimaryBarcodes) {
+    const barcodeId = await reserveNextId(db, "item_barcodes", "ibc");
+    await execute(
+      db,
+      "INSERT INTO item_barcodes (id, sequence_no, item_id, barcode, barcode_type, unit_name, created_at, updated_at) VALUES (?, ?, ?, ?, 'primary', ?, ?, ?)",
+      [
+        barcodeId,
+        numberPart(barcodeId),
+        row.id,
+        row.barcode,
+        row.unit,
+        row.updated_at,
+        row.updated_at,
+      ],
+    );
+  }
 
   const usersMissingUsername = await all<{ id: string }>(
     db,
@@ -1301,6 +1478,23 @@ interface ItemRow {
   updated_at: string;
 }
 
+interface ItemBarcodeRow {
+  id: string;
+  item_id: string;
+  barcode: string;
+  barcode_type: BarcodeType;
+  unit_name: string;
+  created_at: string;
+}
+
+interface ItemUnitConversionRow {
+  id: string;
+  item_id: string;
+  unit_name: string;
+  quantity_in_base: number;
+  created_at: string;
+}
+
 interface ItemStockRow {
   item_id: string;
   location_id: string;
@@ -1318,6 +1512,13 @@ interface StockBatchRow {
   quantity: number;
   received_at: string;
   expiry_date: string | null;
+}
+
+interface BatchBarcodeRow {
+  id: string;
+  batch_id: string;
+  barcode: string;
+  created_at: string;
 }
 
 interface SupplierRow {
@@ -1348,8 +1549,12 @@ interface RequestRow {
   item_name: string;
   barcode: string;
   quantity: number;
+  base_quantity: number | null;
+  base_unit: string | null;
+  unit_factor: number | null;
   counted_quantity: number | null;
   lot_code: string | null;
+  batch_barcode: string | null;
   expiry_date: string | null;
   received_at: string | null;
   allocation_summary: string | null;
@@ -1377,8 +1582,12 @@ interface InventoryRequestActionRow {
   item_id: string;
   barcode: string;
   quantity: number;
+  base_quantity: number | null;
+  base_unit: string | null;
+  unit_factor: number | null;
   counted_quantity: number | null;
   lot_code: string | null;
+  batch_barcode: string | null;
   expiry_date: string | null;
   received_at: string | null;
   waste_reason: WasteEntry["reason"] | null;
@@ -1503,7 +1712,25 @@ interface ExistingEventRow {
   payload_json: string;
 }
 
-function mapBatchesByStock(batchRows: StockBatchRow[]): Map<string, StockBatch[]> {
+function mapBatchBarcodesByBatch(batchBarcodeRows: BatchBarcodeRow[]): Map<string, BatchBarcode[]> {
+  const map = new Map<string, BatchBarcode[]>();
+  for (const row of batchBarcodeRows) {
+    const current = map.get(row.batch_id) ?? [];
+    current.push({
+      id: row.id,
+      batchId: row.batch_id,
+      barcode: row.barcode,
+      createdAt: row.created_at,
+    });
+    map.set(row.batch_id, current);
+  }
+  return map;
+}
+
+function mapBatchesByStock(
+  batchRows: StockBatchRow[],
+  batchBarcodeMap: Map<string, BatchBarcode[]>,
+): Map<string, StockBatch[]> {
   const map = new Map<string, StockBatch[]>();
   for (const row of batchRows) {
     const key = `${row.item_id}:${row.location_id}`;
@@ -1515,6 +1742,7 @@ function mapBatchesByStock(batchRows: StockBatchRow[]): Map<string, StockBatch[]
       quantity: Number(row.quantity),
       receivedAt: row.received_at,
       expiryDate: row.expiry_date ?? undefined,
+      barcodes: batchBarcodeMap.get(row.id) ?? [],
     });
     map.set(key, current);
   }
@@ -1538,6 +1766,7 @@ function mapStocksByItem(
               lotCode: "LEGACY-STOCK",
               quantity: Number(row.on_hand),
               receivedAt: "1970-01-01T00:00:00.000Z",
+              barcodes: [],
             } satisfies StockBatch,
           ]
         : [];
@@ -1560,6 +1789,41 @@ function groupValues(rows: Array<{ user_id: string; value: string }>): Map<strin
     const current = map.get(row.user_id) ?? [];
     current.push(row.value);
     map.set(row.user_id, current);
+  }
+  return map;
+}
+
+function mapItemBarcodesByItem(itemBarcodeRows: ItemBarcodeRow[]): Map<string, ItemBarcode[]> {
+  const map = new Map<string, ItemBarcode[]>();
+  for (const row of itemBarcodeRows) {
+    const current = map.get(row.item_id) ?? [];
+    current.push({
+      id: row.id,
+      itemId: row.item_id,
+      barcode: row.barcode,
+      barcodeType: row.barcode_type,
+      unitName: row.unit_name,
+      createdAt: row.created_at,
+    });
+    map.set(row.item_id, current);
+  }
+  return map;
+}
+
+function mapItemUnitConversionsByItem(
+  rows: ItemUnitConversionRow[],
+): Map<string, ItemUnitConversion[]> {
+  const map = new Map<string, ItemUnitConversion[]>();
+  for (const row of rows) {
+    const current = map.get(row.item_id) ?? [];
+    current.push({
+      id: row.id,
+      itemId: row.item_id,
+      unitName: row.unit_name,
+      quantityInBase: Number(row.quantity_in_base),
+      createdAt: row.created_at,
+    });
+    map.set(row.item_id, current);
   }
   return map;
 }
@@ -1673,8 +1937,11 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
     locationRows,
     supplierRows,
     itemRows,
+    itemBarcodeRows,
+    itemUnitConversionRows,
     stockRows,
     batchRows,
+    batchBarcodeRows,
     userRows,
     rolePermissionRows,
     overrideRows,
@@ -1699,6 +1966,14 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
       db,
       "SELECT id, sku, barcode, name, category, unit, supplier_id, cost_price, selling_price, status, updated_at FROM items ORDER BY sequence_no ASC",
     ),
+    all<ItemBarcodeRow>(
+      db,
+      "SELECT id, item_id, barcode, barcode_type, unit_name, created_at FROM item_barcodes ORDER BY sequence_no ASC",
+    ),
+    all<ItemUnitConversionRow>(
+      db,
+      "SELECT id, item_id, unit_name, quantity_in_base, created_at FROM item_unit_conversions ORDER BY sequence_no ASC",
+    ),
     all<ItemStockRow>(
       db,
       "SELECT item_id, location_id, on_hand, reserved, min_level, max_level FROM item_stocks ORDER BY item_id, location_id",
@@ -1706,6 +1981,10 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
     all<StockBatchRow>(
       db,
       "SELECT id, item_id, location_id, lot_code, quantity, received_at, expiry_date FROM stock_batches ORDER BY item_id, location_id, expiry_date, received_at",
+    ),
+    all<BatchBarcodeRow>(
+      db,
+      "SELECT id, batch_id, barcode, created_at FROM batch_barcodes ORDER BY sequence_no ASC",
     ),
     all<UserRow>(
       db,
@@ -1734,8 +2013,12 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
         i.name AS item_name,
         rl.barcode,
         rl.quantity,
+        rl.base_quantity,
+        rl.base_unit,
+        rl.unit_factor,
         rl.counted_quantity,
         rl.lot_code,
+        rl.batch_barcode,
         rl.expiry_date,
         rl.received_at,
         rl.allocation_summary,
@@ -1893,7 +2176,10 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
   ]);
 
   const cursor = await currentCursor(db);
-  const batchMap = mapBatchesByStock(batchRows);
+  const itemBarcodeMap = mapItemBarcodesByItem(itemBarcodeRows);
+  const itemUnitConversionMap = mapItemUnitConversionsByItem(itemUnitConversionRows);
+  const batchBarcodeMap = mapBatchBarcodesByBatch(batchBarcodeRows);
+  const batchMap = mapBatchesByStock(batchRows, batchBarcodeMap);
   const stockMap = mapStocksByItem(stockRows, batchMap);
   const rolePermissionMap = loadRolePermissionMapFromRows(rolePermissionRows);
   const notificationSettings = parseNotificationSettings(settingsRow);
@@ -1971,9 +2257,20 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
       id: row.id,
       sku: row.sku,
       barcode: row.barcode,
+      barcodes: itemBarcodeMap.get(row.id) ?? [
+        {
+          id: `${row.id}-primary`,
+          itemId: row.id,
+          barcode: row.barcode,
+          barcodeType: "primary",
+          unitName: row.unit,
+          createdAt: row.updated_at,
+        },
+      ],
       name: row.name,
       category: row.category,
       unit: row.unit,
+      uomConversions: itemUnitConversionMap.get(row.id) ?? [],
       supplierId: row.supplier_id,
       costPrice: Number(row.cost_price),
       sellingPrice: Number(row.selling_price),
@@ -2013,7 +2310,11 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
       itemName: row.item_name,
       barcode: row.barcode,
       quantity: Number(row.counted_quantity ?? row.quantity),
+      baseQuantity: Number(row.base_quantity ?? row.counted_quantity ?? row.quantity),
+      baseUnit: row.base_unit ?? row.unit,
+      unitFactor: Number(row.unit_factor ?? 1),
       lotCode: row.lot_code ?? undefined,
+      batchBarcode: row.batch_barcode ?? undefined,
       expiryDate: row.expiry_date ?? undefined,
       receivedDate: row.received_at ?? undefined,
       allocationSummary: row.allocation_summary ?? undefined,
@@ -2260,7 +2561,8 @@ async function deliverNotificationToTelegram(
   telegramBotToken?: string,
 ): Promise<void> {
   const chatId = settings.telegramChatId.trim();
-  if (!telegramBotToken || !chatId) {
+  const configuredToken = settings.telegramBotToken.trim() || telegramBotToken?.trim() || "";
+  if (!configuredToken || !chatId) {
     await recordNotificationDelivery(
       db,
       notificationId,
@@ -2274,7 +2576,7 @@ async function deliverNotificationToTelegram(
 
   try {
     const response = await fetch(
-      `https://api.telegram.org/bot${telegramBotToken}/sendMessage`,
+      `https://api.telegram.org/bot${configuredToken}/sendMessage`,
       {
         method: "POST",
         headers: {
@@ -2810,13 +3112,14 @@ export async function sendTestTelegramNotificationInD1(
   if (!settings.telegramChatId.trim()) {
     throw new Error("Enter a valid Telegram chat ID before sending a test message.");
   }
-  if (!telegramBotToken) {
+  const configuredToken = settings.telegramBotToken.trim() || telegramBotToken?.trim() || "";
+  if (!configuredToken) {
     throw new Error(
-      "Telegram bot token is not configured on the Worker yet. Add TELEGRAM_BOT_TOKEN as a Worker secret first.",
+      "Enter a Telegram bot token in Settings or configure TELEGRAM_BOT_TOKEN on the Worker first.",
     );
   }
 
-  const response = await fetch(`https://api.telegram.org/bot${telegramBotToken}/sendMessage`, {
+  const response = await fetch(`https://api.telegram.org/bot${configuredToken}/sendMessage`, {
     method: "POST",
     headers: {
       "content-type": "application/json; charset=utf-8",
@@ -2991,29 +3294,193 @@ async function itemExistsBySkuExcludingId(
   return Boolean(row?.id);
 }
 
-async function itemExistsByBarcode(
-  db: D1Database,
-  barcode: string,
-): Promise<boolean> {
-  const row = await first<{ id: string }>(
-    db,
-    "SELECT id FROM items WHERE barcode = ? LIMIT 1",
-    [barcode],
-  );
-  return Boolean(row?.id);
+function normalizeItemBarcodeEntries(
+  primaryBarcode: string,
+  primaryUnitName: string,
+  requestedBarcodes?: Array<{ barcode: string; barcodeType: BarcodeType; unitName?: string }>,
+): Array<{ barcode: string; barcodeType: BarcodeType; unitName: string }> {
+  const seen = new Set<string>();
+  const normalized: Array<{ barcode: string; barcodeType: BarcodeType; unitName: string }> = [];
+
+  const pushBarcode = (barcode: string, barcodeType: BarcodeType, unitName: string) => {
+    const cleaned = barcode.trim();
+    if (!cleaned || seen.has(cleaned)) {
+      return;
+    }
+    seen.add(cleaned);
+    normalized.push({ barcode: cleaned, barcodeType, unitName: unitName.trim() || primaryUnitName });
+  };
+
+  pushBarcode(primaryBarcode, "primary", primaryUnitName);
+  for (const entry of requestedBarcodes ?? []) {
+    const barcodeType = entry.barcodeType ?? "secondary";
+    if (barcodeType === "primary") {
+      continue;
+    }
+    pushBarcode(entry.barcode, barcodeType, entry.unitName ?? primaryUnitName);
+  }
+
+  return normalized;
 }
 
-async function itemExistsByBarcodeExcludingId(
+function normalizeItemUnitConversions(
+  baseUnit: string,
+  requestedConversions?: Array<{ unitName: string; quantityInBase: number }>,
+): Array<{ unitName: string; quantityInBase: number }> {
+  const seen = new Set([baseUnit.trim().toLowerCase()]);
+  const normalized: Array<{ unitName: string; quantityInBase: number }> = [];
+
+  for (const entry of requestedConversions ?? []) {
+    const unitName = entry.unitName.trim();
+    const quantityInBase = Number(entry.quantityInBase);
+    const key = unitName.toLowerCase();
+
+    if (!unitName || seen.has(key)) {
+      continue;
+    }
+    if (!Number.isFinite(quantityInBase) || quantityInBase <= 0) {
+      throw new Error(`Unit conversion for ${unitName || "this unit"} must be greater than zero.`);
+    }
+
+    seen.add(key);
+    normalized.push({ unitName, quantityInBase });
+  }
+
+  return normalized;
+}
+
+function assertBarcodeUnitsExist(
+  baseUnit: string,
+  conversions: Array<{ unitName: string; quantityInBase: number }>,
+  barcodes: Array<{ barcode: string; barcodeType: BarcodeType; unitName: string }>,
+) {
+  const allowedUnits = new Set([baseUnit.trim().toLowerCase(), ...conversions.map((entry) => entry.unitName.trim().toLowerCase())]);
+
+  for (const barcode of barcodes) {
+    if (!allowedUnits.has(barcode.unitName.trim().toLowerCase())) {
+      throw new Error(`Barcode ${barcode.barcode} is mapped to unknown unit ${barcode.unitName}.`);
+    }
+  }
+}
+
+async function barcodeExistsForOtherRecord(
   db: D1Database,
   barcode: string,
-  itemId: string,
+  options?: {
+    excludeItemId?: string;
+    excludeBatchId?: string;
+  },
 ): Promise<boolean> {
-  const row = await first<{ id: string }>(
-    db,
-    "SELECT id FROM items WHERE barcode = ? AND id <> ? LIMIT 1",
-    [barcode, itemId],
-  );
-  return Boolean(row?.id);
+  const itemBindings: D1Value[] = [barcode];
+  const itemSql = options?.excludeItemId
+    ? "SELECT id FROM item_barcodes WHERE barcode = ? AND item_id <> ? LIMIT 1"
+    : "SELECT id FROM item_barcodes WHERE barcode = ? LIMIT 1";
+  if (options?.excludeItemId) {
+    itemBindings.push(options.excludeItemId);
+  }
+  const itemRow = await first<{ id: string }>(db, itemSql, itemBindings);
+  if (itemRow?.id) {
+    return true;
+  }
+
+  const batchBindings: D1Value[] = [barcode];
+  const batchSql = options?.excludeBatchId
+    ? "SELECT id FROM batch_barcodes WHERE barcode = ? AND batch_id <> ? LIMIT 1"
+    : "SELECT id FROM batch_barcodes WHERE barcode = ? LIMIT 1";
+  if (options?.excludeBatchId) {
+    batchBindings.push(options.excludeBatchId);
+  }
+  const batchRow = await first<{ id: string }>(db, batchSql, batchBindings);
+  return Boolean(batchRow?.id);
+}
+
+async function assertBarcodesAvailable(
+  db: D1Database,
+  barcodes: string[],
+  options?: {
+    excludeItemId?: string;
+    excludeBatchId?: string;
+  },
+): Promise<void> {
+  for (const barcode of barcodes) {
+    if (await barcodeExistsForOtherRecord(db, barcode, options)) {
+      throw new Error(`Barcode ${barcode} is already assigned elsewhere in OmniStock.`);
+    }
+  }
+}
+
+async function replaceItemBarcodes(
+  db: D1Database,
+  itemId: string,
+  barcodes: Array<{ barcode: string; barcodeType: BarcodeType; unitName: string }>,
+  timestamp: string,
+): Promise<ItemBarcode[]> {
+  await execute(db, "DELETE FROM item_barcodes WHERE item_id = ?", [itemId]);
+
+  const created: ItemBarcode[] = [];
+  for (const entry of barcodes) {
+    const barcodeId = await reserveNextId(db, "item_barcodes", "ibc");
+    await execute(
+      db,
+      "INSERT INTO item_barcodes (id, sequence_no, item_id, barcode, barcode_type, unit_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        barcodeId,
+        numberPart(barcodeId),
+        itemId,
+        entry.barcode,
+        entry.barcodeType,
+        entry.unitName,
+        timestamp,
+        timestamp,
+      ],
+    );
+    created.push({
+      id: barcodeId,
+      itemId,
+      barcode: entry.barcode,
+      barcodeType: entry.barcodeType,
+      unitName: entry.unitName,
+      createdAt: timestamp,
+    });
+  }
+
+  return created;
+}
+
+async function replaceItemUnitConversions(
+  db: D1Database,
+  itemId: string,
+  conversions: Array<{ unitName: string; quantityInBase: number }>,
+  timestamp: string,
+): Promise<ItemUnitConversion[]> {
+  await execute(db, "DELETE FROM item_unit_conversions WHERE item_id = ?", [itemId]);
+
+  const created: ItemUnitConversion[] = [];
+  for (const entry of conversions) {
+    const conversionId = await reserveNextId(db, "item_unit_conversions", "uom");
+    await execute(
+      db,
+      "INSERT INTO item_unit_conversions (id, sequence_no, item_id, unit_name, quantity_in_base, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        conversionId,
+        numberPart(conversionId),
+        itemId,
+        entry.unitName,
+        entry.quantityInBase,
+        timestamp,
+        timestamp,
+      ],
+    );
+    created.push({
+      id: conversionId,
+      itemId,
+      unitName: entry.unitName,
+      quantityInBase: entry.quantityInBase,
+      createdAt: timestamp,
+    });
+  }
+
+  return created;
 }
 
 async function supplierExistsByCode(
@@ -3811,6 +4278,11 @@ async function buildMutationContext(
       reserveNextId(db, "stock_batches", "bat"),
     ),
   );
+  const batchBarcodeIds = await Promise.all(
+    Array.from({ length: requestedIds.get("bcb") ?? 0 }, () =>
+      reserveNextId(db, "batch_barcodes", "bcb"),
+    ),
+  );
   const wasteEntryIds = await Promise.all(
     Array.from({ length: requestedIds.get("wte") ?? 0 }, () =>
       reserveNextId(db, "waste_entries", "wte"),
@@ -3824,6 +4296,7 @@ async function buildMutationContext(
     ["evt", [eventId]],
     ["led", ledgerIds],
     ["bat", batchIds],
+    ["bcb", batchBarcodeIds],
     ["wte", wasteEntryIds],
   ]);
 
@@ -3855,8 +4328,48 @@ async function persistMutationResult(
     updatedItem.updatedAt,
     updatedItem.id,
   ]);
+  await execute(db, "DELETE FROM item_barcodes WHERE item_id = ?", [updatedItem.id]);
+  await execute(db, "DELETE FROM item_unit_conversions WHERE item_id = ?", [updatedItem.id]);
   await execute(db, "DELETE FROM item_stocks WHERE item_id = ?", [updatedItem.id]);
+  await execute(
+    db,
+    "DELETE FROM batch_barcodes WHERE batch_id IN (SELECT id FROM stock_batches WHERE item_id = ?)",
+    [updatedItem.id],
+  );
   await execute(db, "DELETE FROM stock_batches WHERE item_id = ?", [updatedItem.id]);
+
+  for (const barcode of updatedItem.barcodes) {
+    await execute(
+      db,
+      "INSERT INTO item_barcodes (id, sequence_no, item_id, barcode, barcode_type, unit_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        barcode.id,
+        numberPart(barcode.id),
+        updatedItem.id,
+        barcode.barcode,
+        barcode.barcodeType,
+        barcode.unitName,
+        barcode.createdAt,
+        updatedItem.updatedAt,
+      ],
+    );
+  }
+
+  for (const conversion of updatedItem.uomConversions) {
+    await execute(
+      db,
+      "INSERT INTO item_unit_conversions (id, sequence_no, item_id, unit_name, quantity_in_base, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        conversion.id,
+        numberPart(conversion.id),
+        updatedItem.id,
+        conversion.unitName,
+        conversion.quantityInBase,
+        conversion.createdAt,
+        updatedItem.updatedAt,
+      ],
+    );
+  }
 
   for (const stock of updatedItem.stocks) {
     await execute(
@@ -3889,6 +4402,21 @@ async function persistMutationResult(
           updatedItem.updatedAt,
         ],
       );
+
+      for (const barcode of batch.barcodes) {
+        await execute(
+          db,
+          "INSERT INTO batch_barcodes (id, sequence_no, batch_id, barcode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+          [
+            barcode.id,
+            numberPart(barcode.id),
+            batch.id,
+            barcode.barcode,
+            barcode.createdAt,
+            updatedItem.updatedAt,
+          ],
+        );
+      }
     }
   }
 
@@ -3916,7 +4444,7 @@ async function persistMutationResult(
 
   await execute(
     db,
-    "INSERT INTO inventory_request_lines (id, sequence_no, request_id, line_no, item_id, barcode, quantity, counted_quantity, lot_code, expiry_date, received_at, allocation_summary, waste_reason, waste_shift, waste_station, unit, note, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO inventory_request_lines (id, sequence_no, request_id, line_no, item_id, barcode, quantity, base_quantity, base_unit, unit_factor, counted_quantity, lot_code, batch_barcode, expiry_date, received_at, allocation_summary, waste_reason, waste_shift, waste_station, unit, note, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       lineId,
       numberPart(lineId),
@@ -3924,8 +4452,12 @@ async function persistMutationResult(
       request.itemId,
       request.barcode,
       request.quantity,
+      request.baseQuantity,
+      request.baseUnit,
+      request.unitFactor,
       request.kind === "stock-count" ? request.quantity : null,
       request.lotCode ?? null,
+      request.batchBarcode ?? null,
       request.expiryDate ?? null,
       request.receivedDate ?? null,
       request.allocationSummary ?? null,
@@ -4078,8 +4610,12 @@ async function loadInventoryRequestActionRow(
       rl.item_id,
       rl.barcode,
       rl.quantity,
+      rl.base_quantity,
+      rl.base_unit,
+      rl.unit_factor,
       rl.counted_quantity,
       rl.lot_code,
+      rl.batch_barcode,
       rl.expiry_date,
       rl.received_at,
       rl.waste_reason,
@@ -4158,6 +4694,8 @@ function buildReversalMutation(
 ): MutationEnvelope {
   const createdAt = new Date().toISOString();
   const note = `Reversal for ${request.reference}: ${reason}`;
+  const baseQuantity = Number(request.base_quantity ?? request.quantity);
+  const baseUnit = request.base_unit ?? request.unit;
 
   switch (request.kind) {
     case "grn":
@@ -4168,9 +4706,10 @@ function buildReversalMutation(
         kind: "adjustment",
         payload: {
           itemId: request.item_id,
-          quantity: -Math.abs(Number(request.quantity)),
+          quantity: -Math.abs(baseQuantity),
           note,
           barcode: request.barcode,
+          quantityUnit: baseUnit,
           fromLocationId: request.to_location_id ?? undefined,
         },
       };
@@ -4182,11 +4721,13 @@ function buildReversalMutation(
         kind: "adjustment",
         payload: {
           itemId: request.item_id,
-          quantity: Math.abs(Number(request.quantity)),
+          quantity: Math.abs(baseQuantity),
           note,
           barcode: request.barcode,
+          quantityUnit: baseUnit,
           fromLocationId: request.from_location_id ?? undefined,
           lotCode: request.lot_code ?? undefined,
+          batchBarcode: request.batch_barcode ?? undefined,
           expiryDate: request.expiry_date ?? undefined,
           receivedDate: request.received_at ?? undefined,
         },
@@ -4199,9 +4740,10 @@ function buildReversalMutation(
         kind: "transfer",
         payload: {
           itemId: request.item_id,
-          quantity: Math.abs(Number(request.quantity)),
+          quantity: Math.abs(baseQuantity),
           note,
           barcode: request.barcode,
+          quantityUnit: baseUnit,
           fromLocationId: request.to_location_id ?? undefined,
           toLocationId: request.from_location_id ?? undefined,
         },
@@ -4214,9 +4756,10 @@ function buildReversalMutation(
         kind: "adjustment",
         payload: {
           itemId: request.item_id,
-          quantity: -Number(request.quantity),
+          quantity: -baseQuantity,
           note,
           barcode: request.barcode,
+          quantityUnit: baseUnit,
           fromLocationId: request.from_location_id ?? undefined,
         },
       };
@@ -4228,10 +4771,14 @@ function buildReversalMutation(
         kind: "stock-count",
         payload: {
           itemId: request.item_id,
-          quantity: Math.max(0, Number(quantityBefore ?? request.quantity)),
-          countedQuantity: Math.max(0, Number(quantityBefore ?? request.quantity)),
+          quantity: Math.max(0, Number(quantityBefore ?? request.base_quantity ?? request.quantity)),
+          countedQuantity: Math.max(
+            0,
+            Number(quantityBefore ?? request.base_quantity ?? request.quantity),
+          ),
           note,
           barcode: request.barcode,
+          quantityUnit: baseUnit,
           fromLocationId: request.from_location_id ?? undefined,
         },
       };
@@ -4243,11 +4790,13 @@ function buildReversalMutation(
         kind: "adjustment",
         payload: {
           itemId: request.item_id,
-          quantity: Math.abs(Number(request.quantity)),
+          quantity: Math.abs(baseQuantity),
           note,
           barcode: request.barcode,
+          quantityUnit: baseUnit,
           fromLocationId: request.from_location_id ?? undefined,
           lotCode: request.lot_code ?? undefined,
+          batchBarcode: request.batch_barcode ?? undefined,
           expiryDate: request.expiry_date ?? undefined,
           receivedDate: request.received_at ?? undefined,
         },
@@ -4510,18 +5059,26 @@ export async function createItemInD1(
   const barcode = input.barcode.trim();
   const category = input.category.trim();
   const unit = input.unit.trim();
+  const uomConversions = normalizeItemUnitConversions(unit, input.uomConversions);
+  const barcodes = normalizeItemBarcodeEntries(barcode, unit, input.barcodes);
   const status = input.status ?? "active";
 
   if (!name || !sku || !barcode || !category || !unit) {
     throw new Error("Name, SKU, barcode, category, and unit are required for items.");
   }
+  assertBarcodeUnitsExist(unit, uomConversions, barcodes);
 
   if (await itemExistsBySku(db, sku)) {
     throw new Error(`An item already exists with SKU ${sku}.`);
   }
 
-  if (await itemExistsByBarcode(db, barcode)) {
-    throw new Error(`An item already exists with barcode ${barcode}.`);
+  await assertBarcodesAvailable(
+    db,
+    barcodes.map((entry) => entry.barcode),
+  );
+
+  if (barcodes.length === 0) {
+    throw new Error("Add at least one barcode before creating the item.");
   }
 
   const supplier = snapshot.suppliers.find((record) => record.id === input.supplierId);
@@ -4559,6 +5116,13 @@ export async function createItemInD1(
       createdAt,
     ],
   );
+  const savedBarcodes = await replaceItemBarcodes(db, id, barcodes, createdAt);
+  const savedUomConversions = await replaceItemUnitConversions(
+    db,
+    id,
+    uomConversions,
+    createdAt,
+  );
 
   await appendActivity(
     db,
@@ -4573,9 +5137,11 @@ export async function createItemInD1(
       id,
       sku,
       barcode,
+      barcodes: savedBarcodes,
       name,
       category,
       unit,
+      uomConversions: savedUomConversions,
       supplierId: supplier.id,
       costPrice,
       sellingPrice,
@@ -4610,15 +5176,23 @@ export async function updateItemInD1(
   const barcode = input.barcode.trim();
   const category = input.category.trim();
   const unit = input.unit.trim();
+  const uomConversions = normalizeItemUnitConversions(unit, input.uomConversions);
+  const barcodes = normalizeItemBarcodeEntries(barcode, unit, input.barcodes);
   const status = input.status ?? existing.status;
   if (!name || !sku || !barcode || !category || !unit) {
     throw new Error("Name, SKU, barcode, category, and unit are required for items.");
   }
+  assertBarcodeUnitsExist(unit, uomConversions, barcodes);
   if (await itemExistsBySkuExcludingId(db, sku, input.itemId)) {
     throw new Error(`An item already exists with SKU ${sku}.`);
   }
-  if (await itemExistsByBarcodeExcludingId(db, barcode, input.itemId)) {
-    throw new Error(`An item already exists with barcode ${barcode}.`);
+  await assertBarcodesAvailable(
+    db,
+    barcodes.map((entry) => entry.barcode),
+    { excludeItemId: input.itemId },
+  );
+  if (barcodes.length === 0) {
+    throw new Error("Add at least one barcode before saving the item.");
   }
 
   const supplier = snapshot.suppliers.find((record) => record.id === input.supplierId);
@@ -4653,6 +5227,13 @@ export async function updateItemInD1(
       input.itemId,
     ],
   );
+  const savedBarcodes = await replaceItemBarcodes(db, input.itemId, barcodes, updatedAt);
+  const savedUomConversions = await replaceItemUnitConversions(
+    db,
+    input.itemId,
+    uomConversions,
+    updatedAt,
+  );
 
   await appendActivity(
     db,
@@ -4667,9 +5248,11 @@ export async function updateItemInD1(
       ...existing,
       sku,
       barcode,
+      barcodes: savedBarcodes,
       name,
       category,
       unit,
+      uomConversions: savedUomConversions,
       supplierId: supplier.id,
       costPrice,
       sellingPrice,
@@ -5348,6 +5931,7 @@ export async function editInventoryRequestInD1(
       quantity: Number(input.quantity),
       note: input.note.trim(),
       barcode: input.barcode?.trim() || undefined,
+      quantityUnit: input.quantityUnit?.trim() || undefined,
       supplierId: input.supplierId?.trim() || undefined,
       fromLocationId: input.fromLocationId?.trim() || undefined,
       toLocationId: input.toLocationId?.trim() || undefined,
@@ -5356,6 +5940,7 @@ export async function editInventoryRequestInD1(
           ? Number(input.countedQuantity ?? input.quantity)
           : undefined,
       lotCode: input.lotCode?.trim() || undefined,
+      batchBarcode: input.batchBarcode?.trim() || undefined,
       expiryDate: input.expiryDate?.trim() || undefined,
       receivedDate: input.receivedDate?.trim() || undefined,
       wasteReason: request.kind === "wastage" ? input.wasteReason : undefined,

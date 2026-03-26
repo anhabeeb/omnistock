@@ -1,8 +1,9 @@
 import { useDeferredValue, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { can } from "../../shared/permissions";
-import { findItemByBarcode, totalOnHand } from "../../shared/selectors";
+import { findBarcodeMatch, itemBarcodeValues, totalOnHand } from "../../shared/selectors";
 import type {
+  BarcodeType,
   CreateItemRequest,
   CreateLocationRequest,
   CreateMarketPriceRequest,
@@ -68,6 +69,8 @@ interface PriceFormState {
 interface ItemFormState {
   sku: string;
   barcode: string;
+  additionalBarcodes: ItemBarcodeDraft[];
+  unitConversions: UomConversionDraft[];
   name: string;
   category: string;
   unit: string;
@@ -92,6 +95,21 @@ interface LocationFormState {
   type: LocationType;
   city: string;
   status: RecordStatus;
+}
+
+type ItemBarcodeDraftType = Exclude<BarcodeType, "primary">;
+
+interface ItemBarcodeDraft {
+  id: string;
+  barcode: string;
+  barcodeType: ItemBarcodeDraftType;
+  unitName: string;
+}
+
+interface UomConversionDraft {
+  id: string;
+  unitName: string;
+  quantityInBase: string;
 }
 
 type MasterDialogMode = "create" | "edit" | "view" | "delete";
@@ -192,6 +210,78 @@ function addButtonLabelForSection(slug: (typeof MASTER_SECTIONS)[number]["slug"]
   return `Add New ${singularLabelForSection(slug)}`;
 }
 
+function createBarcodeDraft(
+  index: number,
+  barcode = "",
+  barcodeType: ItemBarcodeDraftType = "secondary",
+  unitName = "",
+): ItemBarcodeDraft {
+  return {
+    id: `draft-barcode-${index}`,
+    barcode,
+    barcodeType,
+    unitName,
+  };
+}
+
+function normalizeAdditionalBarcodes(itemForm: ItemFormState) {
+  return itemForm.additionalBarcodes
+    .map((entry) => ({
+      barcode: entry.barcode.trim(),
+      barcodeType: entry.barcodeType,
+      unitName: entry.unitName.trim() || itemForm.unit.trim(),
+    }))
+    .filter((entry) => entry.barcode && entry.barcode !== itemForm.barcode.trim());
+}
+
+function createUomConversionDraft(
+  index: number,
+  unitName = "",
+  quantityInBase = "",
+): UomConversionDraft {
+  return {
+    id: `draft-uom-${index}`,
+    unitName,
+    quantityInBase,
+  };
+}
+
+function normalizeUnitConversions(itemForm: ItemFormState) {
+  return itemForm.unitConversions
+    .map((entry) => ({
+      unitName: entry.unitName.trim(),
+      quantityInBase: Number(entry.quantityInBase),
+    }))
+    .filter(
+      (entry) =>
+        entry.unitName &&
+        entry.unitName.toLowerCase() !== itemForm.unit.trim().toLowerCase() &&
+        Number.isFinite(entry.quantityInBase) &&
+        entry.quantityInBase > 0,
+    );
+}
+
+function unitOptionsForForm(itemForm: ItemFormState): string[] {
+  const seen = new Set<string>();
+  const options = [itemForm.unit.trim(), ...itemForm.unitConversions.map((entry) => entry.unitName.trim())];
+  return options.filter((entry) => {
+    const normalized = entry.toLowerCase();
+    if (!entry || seen.has(normalized)) {
+      return false;
+    }
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function barcodeSummary(item: Item): string {
+  const values = itemBarcodeValues(item);
+  if (values.length <= 1) {
+    return values[0] ?? "No barcode";
+  }
+  return `${values[0]} (+${values.length - 1} more)`;
+}
+
 function createPermissionForSection(
   slug: (typeof MASTER_SECTIONS)[number]["slug"],
 ): PermissionKey {
@@ -209,6 +299,8 @@ function defaultItemForm(snapshot: InventorySnapshot): ItemFormState {
   return {
     sku: "",
     barcode: "",
+    additionalBarcodes: [],
+    unitConversions: [],
     name: "",
     category: "",
     unit: "pcs",
@@ -244,6 +336,19 @@ function itemFormFromItem(item: Item): ItemFormState {
   return {
     sku: item.sku,
     barcode: item.barcode,
+    additionalBarcodes: item.barcodes
+      .filter((entry) => entry.barcodeType !== "primary" && entry.barcode !== item.barcode)
+      .map((entry, index) =>
+        createBarcodeDraft(
+          index,
+          entry.barcode,
+          entry.barcodeType === "packaging" ? "packaging" : "secondary",
+          entry.unitName,
+        ),
+      ),
+    unitConversions: item.uomConversions.map((entry, index) =>
+      createUomConversionDraft(index, entry.unitName, String(entry.quantityInBase)),
+    ),
     name: item.name,
     category: item.category,
     unit: item.unit,
@@ -388,7 +493,7 @@ export function MasterDataPage({
     return matchesStatus && (
       item.name.toLowerCase().includes(value) ||
       item.sku.toLowerCase().includes(value) ||
-      item.barcode.includes(value)
+      itemBarcodeValues(item).some((barcode) => barcode.toLowerCase().includes(value))
     );
   });
 
@@ -482,7 +587,101 @@ export function MasterDataPage({
   }
 
   function patchItem<K extends keyof ItemFormState>(key: K, value: ItemFormState[K]) {
-    setItemForm((current) => ({ ...current, [key]: value }));
+    setItemForm((current) => {
+      if (key !== "unit") {
+        return { ...current, [key]: value };
+      }
+
+      const nextUnit = String(value);
+      return {
+        ...current,
+        unit: nextUnit,
+        additionalBarcodes: current.additionalBarcodes.map((entry) =>
+          entry.unitName === current.unit ? { ...entry, unitName: nextUnit } : entry,
+        ),
+        unitConversions: current.unitConversions.filter(
+          (entry) => entry.unitName.trim().toLowerCase() !== nextUnit.trim().toLowerCase(),
+        ),
+      };
+    });
+  }
+
+  const currentUnitOptions = unitOptionsForForm(itemForm);
+
+  function addAdditionalBarcode() {
+    setItemForm((current) => ({
+      ...current,
+      additionalBarcodes: [
+        ...current.additionalBarcodes,
+        createBarcodeDraft(current.additionalBarcodes.length + 1, "", "secondary", current.unit),
+      ],
+    }));
+  }
+
+  function patchAdditionalBarcode(
+    barcodeId: string,
+    field: keyof Omit<ItemBarcodeDraft, "id">,
+    value: string,
+  ) {
+    setItemForm((current) => ({
+      ...current,
+      additionalBarcodes: current.additionalBarcodes.map((entry) =>
+        entry.id === barcodeId
+          ? {
+              ...entry,
+              [field]:
+                field === "barcodeType"
+                  ? (value as ItemBarcodeDraftType)
+                  : value,
+            }
+          : entry,
+      ),
+    }));
+  }
+
+  function removeAdditionalBarcode(barcodeId: string) {
+    setItemForm((current) => ({
+      ...current,
+      additionalBarcodes: current.additionalBarcodes.filter((entry) => entry.id !== barcodeId),
+    }));
+  }
+
+  function addUnitConversion() {
+    setItemForm((current) => ({
+      ...current,
+      unitConversions: [
+        ...current.unitConversions,
+        createUomConversionDraft(current.unitConversions.length + 1),
+      ],
+    }));
+  }
+
+  function patchUnitConversion(
+    conversionId: string,
+    field: keyof Omit<UomConversionDraft, "id">,
+    value: string,
+  ) {
+    setItemForm((current) => ({
+      ...current,
+      unitConversions: current.unitConversions.map((entry) =>
+        entry.id === conversionId ? { ...entry, [field]: value } : entry,
+      ),
+    }));
+  }
+
+  function removeUnitConversion(conversionId: string) {
+    setItemForm((current) => ({
+      ...current,
+      unitConversions: current.unitConversions.filter((entry) => entry.id !== conversionId),
+      additionalBarcodes: current.additionalBarcodes.map((entry) => ({
+        ...entry,
+        unitName:
+          entry.unitName ===
+          current.unitConversions.find((candidate) => candidate.id === conversionId)?.unitName
+            ? current.unit
+            : entry.unitName,
+      })),
+    }));
   }
 
   function patchSupplier<K extends keyof SupplierFormState>(
@@ -591,31 +790,53 @@ export function MasterDataPage({
       return;
     }
 
-    const match = findItemByBarcode(snapshot, normalized);
+    const match = findBarcodeMatch(snapshot, normalized);
     setItemForm((current) => ({
       ...current,
-      barcode: normalized,
-      sku: current.sku || match?.sku || "",
-      name: current.name || match?.name || "",
-      category: current.category || match?.category || "",
-      unit: current.unit === "pcs" && match?.unit ? match.unit : current.unit,
-      supplierId: current.supplierId || match?.supplierId || "",
+      barcode: current.barcode || normalized,
+      additionalBarcodes:
+        current.barcode &&
+        current.barcode !== normalized &&
+        !current.additionalBarcodes.some((entry) => entry.barcode === normalized)
+          ? [
+              ...current.additionalBarcodes,
+              createBarcodeDraft(
+                current.additionalBarcodes.length + 1,
+                normalized,
+                "secondary",
+                match?.itemBarcode?.unitName ?? current.unit,
+              ),
+            ]
+          : current.additionalBarcodes,
+      sku: current.sku || match?.item.sku || "",
+      name: current.name || match?.item.name || "",
+      category: current.category || match?.item.category || "",
+      unit: current.unit === "pcs" && match?.item.unit ? match.item.unit : current.unit,
+      unitConversions:
+        current.unitConversions.length === 0 && match?.item.uomConversions.length
+          ? match.item.uomConversions.map((entry, index) =>
+              createUomConversionDraft(index, entry.unitName, String(entry.quantityInBase)),
+            )
+          : current.unitConversions,
+      supplierId: current.supplierId || match?.item.supplierId || "",
       costPrice:
         match && (current.costPrice === "0" || !current.costPrice)
-          ? String(match.costPrice)
+          ? String(match.item.costPrice)
           : current.costPrice,
       sellingPrice:
         match && (current.sellingPrice === "0" || !current.sellingPrice)
-          ? String(match.sellingPrice)
+          ? String(match.item.sellingPrice)
           : current.sellingPrice,
     }));
 
     if (match) {
       setFeedback(
-        `Matched existing item ${match.name} (${match.sku}). Review the filled details before saving.`,
+        match.source === "batch-barcode"
+          ? `Matched batch barcode for ${match.item.name}. Review the barcode set before saving.`
+          : `Matched existing item ${match.item.name} (${match.item.sku}). Review the filled details before saving.`,
       );
     } else {
-      setFeedback(`Captured barcode ${normalized}. Complete the remaining item details and save.`);
+      setFeedback(`Captured barcode ${normalized}. It has been added to the current item draft.`);
     }
 
     setBarcodeScannerOpen(false);
@@ -697,6 +918,8 @@ export function MasterDataPage({
       const item = await onCreateItem({
         sku: itemForm.sku,
         barcode: itemForm.barcode,
+        barcodes: normalizeAdditionalBarcodes(itemForm),
+        uomConversions: normalizeUnitConversions(itemForm),
         name: itemForm.name,
         category: itemForm.category,
         unit: itemForm.unit,
@@ -779,6 +1002,8 @@ export function MasterDataPage({
         itemId: selectedItemRecord.id,
         sku: itemForm.sku,
         barcode: itemForm.barcode,
+        barcodes: normalizeAdditionalBarcodes(itemForm),
+        uomConversions: normalizeUnitConversions(itemForm),
         name: itemForm.name,
         category: itemForm.category,
         unit: itemForm.unit,
@@ -1050,7 +1275,7 @@ export function MasterDataPage({
                     <td>{item.name}</td>
                     <td>
                       {item.sku}
-                      <small>{item.barcode}</small>
+                      <small>{barcodeSummary(item)}</small>
                     </td>
                     <td>{item.category}</td>
                     <td>
@@ -1490,7 +1715,27 @@ export function MasterDataPage({
                 <div><dt>ID</dt><dd>{selectedItemRecord.id}</dd></div>
                 <div><dt>Name</dt><dd>{selectedItemRecord.name}</dd></div>
                 <div><dt>SKU</dt><dd>{selectedItemRecord.sku}</dd></div>
-                <div><dt>Barcode</dt><dd>{selectedItemRecord.barcode}</dd></div>
+                <div><dt>Primary Barcode</dt><dd>{selectedItemRecord.barcode}</dd></div>
+                <div className="detail-list-wide">
+                  <dt>All Barcodes</dt>
+                  <dd>
+                    {selectedItemRecord.barcodes.length > 0
+                      ? selectedItemRecord.barcodes
+                          .map((entry) => `${entry.barcode} (${entry.unitName})`)
+                          .join(", ")
+                      : itemBarcodeValues(selectedItemRecord).join(", ")}
+                  </dd>
+                </div>
+                <div className="detail-list-wide">
+                  <dt>Pack Units</dt>
+                  <dd>
+                    {selectedItemRecord.uomConversions.length > 0
+                      ? selectedItemRecord.uomConversions
+                          .map((entry) => `${entry.unitName} = ${entry.quantityInBase} ${selectedItemRecord.unit}`)
+                          .join(", ")
+                      : `Base only (${selectedItemRecord.unit})`}
+                  </dd>
+                </div>
                 <div><dt>Category</dt><dd>{selectedItemRecord.category}</dd></div>
                 <div><dt>Unit</dt><dd>{selectedItemRecord.unit}</dd></div>
                 <div>
@@ -1595,7 +1840,7 @@ export function MasterDataPage({
                 </label>
 
                 <div className="field field-wide">
-                  <span>Barcode</span>
+                  <span>Primary barcode</span>
                   <div className="barcode-field-toolbar">
                     <input
                       value={itemForm.barcode}
@@ -1609,6 +1854,64 @@ export function MasterDataPage({
                     >
                       Scan Barcode
                     </button>
+                  </div>
+                </div>
+
+                <div className="field field-wide">
+                  <div className="field-inline-header">
+                    <span>Additional barcodes</span>
+                    <button type="button" className="secondary-button small-button" onClick={addAdditionalBarcode}>
+                      Add Barcode
+                    </button>
+                  </div>
+                  <div className="barcode-list">
+                    {itemForm.additionalBarcodes.length > 0 ? (
+                      itemForm.additionalBarcodes.map((entry) => (
+                        <div key={entry.id} className="barcode-list-row barcode-unit-row">
+                          <select
+                            value={entry.barcodeType}
+                            onChange={(event) =>
+                              patchAdditionalBarcode(entry.id, "barcodeType", event.target.value)
+                            }
+                          >
+                            <option value="secondary">Secondary</option>
+                            <option value="packaging">Packaging</option>
+                          </select>
+                          <input
+                            value={entry.barcode}
+                            onChange={(event) =>
+                              patchAdditionalBarcode(entry.id, "barcode", event.target.value)
+                            }
+                            placeholder="Additional barcode"
+                          />
+                          <select
+                            value={entry.unitName}
+                            onChange={(event) =>
+                              patchAdditionalBarcode(entry.id, "unitName", event.target.value)
+                            }
+                          >
+                            {currentUnitOptions.map((unitName) => (
+                              <option key={`${entry.id}-${unitName}`} value={unitName}>
+                                {unitName}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            className="action-icon-button danger"
+                            onClick={() => removeAdditionalBarcode(entry.id)}
+                            aria-label="Remove barcode"
+                            title="Remove barcode"
+                          >
+                            <DeleteIcon size={16} />
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="form-helper-copy">
+                        Add supplier or packaging barcodes here so scans can still find the same item.
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -1626,9 +1929,56 @@ export function MasterDataPage({
                   <input
                     value={itemForm.unit}
                     onChange={(event) => patchItem("unit", event.target.value)}
-                    placeholder="kg"
+                    placeholder="piece"
                   />
                 </label>
+
+                <div className="field field-wide">
+                  <div className="field-inline-header">
+                    <span>Pack units & conversions</span>
+                    <button type="button" className="secondary-button small-button" onClick={addUnitConversion}>
+                      Add Pack Unit
+                    </button>
+                  </div>
+                  <div className="barcode-list">
+                    {itemForm.unitConversions.length > 0 ? (
+                      itemForm.unitConversions.map((entry) => (
+                        <div key={entry.id} className="barcode-list-row barcode-conversion-row">
+                          <input
+                            value={entry.unitName}
+                            onChange={(event) =>
+                              patchUnitConversion(entry.id, "unitName", event.target.value)
+                            }
+                            placeholder="box / carton / pallet"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={entry.quantityInBase}
+                            onChange={(event) =>
+                              patchUnitConversion(entry.id, "quantityInBase", event.target.value)
+                            }
+                            placeholder={`How many ${itemForm.unit || "base units"}?`}
+                          />
+                          <button
+                            type="button"
+                            className="action-icon-button danger"
+                            onClick={() => removeUnitConversion(entry.id)}
+                            aria-label="Remove pack unit"
+                            title="Remove pack unit"
+                          >
+                            <DeleteIcon size={16} />
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="form-helper-copy">
+                        Define item-specific packs here, like box = 12 pieces, carton = 24 pieces, or pallet = 480 pieces.
+                      </p>
+                    )}
+                  </div>
+                </div>
 
                 <label className="field">
                   <span>Supplier</span>

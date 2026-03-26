@@ -20,8 +20,11 @@ import {
 } from "@mui/material";
 import {
   batchDaysUntilExpiry,
+  batchBarcodeValues,
   batchesForLocation,
-  findItemByBarcode,
+  findBarcodeMatch,
+  itemBarcodeValues,
+  itemUnitOptions,
   isBatchExpired,
   isBatchNearExpiry,
   totalOnHand,
@@ -29,6 +32,8 @@ import {
 import type {
   InventoryRequest,
   InventorySnapshot,
+  Item,
+  ItemBarcode,
   MarketPriceEntry,
   WasteEntry,
 } from "../../shared/types";
@@ -59,6 +64,44 @@ function sourceLabel(request: InventoryRequest): string {
   return request.requestedByName;
 }
 
+function itemBatchBarcodeValues(item: Item): string[] {
+  return [...new Set(item.stocks.flatMap((stock) => stock.batches.flatMap((batch) => batchBarcodeValues(batch))))];
+}
+
+function barcodeSummary(item: Item): string {
+  const itemCodes = itemBarcodeValues(item);
+  const batchCodes = itemBatchBarcodeValues(item);
+
+  if (itemCodes.length === 0 && batchCodes.length === 0) {
+    return "No barcode";
+  }
+
+  const primary = itemCodes[0] ?? batchCodes[0];
+  const extraCount = Math.max(itemCodes.length - 1, 0) + batchCodes.length;
+  return extraCount > 0 ? `${primary} (+${extraCount} more)` : primary ?? "No barcode";
+}
+
+function itemBarcodeEntries(item: Item): ItemBarcode[] {
+  if (item.barcodes.length > 0) {
+    return item.barcodes;
+  }
+
+  if (!item.barcode) {
+    return [];
+  }
+
+  return [
+    {
+      id: `${item.id}-primary`,
+      itemId: item.id,
+      barcode: item.barcode,
+      barcodeType: "primary",
+      unitName: item.unit,
+      createdAt: item.updatedAt,
+    },
+  ];
+}
+
 export function SearchPage({ snapshot }: Props) {
   const theme = useTheme();
   const [searchTerm, setSearchTerm] = useState("");
@@ -85,7 +128,8 @@ export function SearchPage({ snapshot }: Props) {
       return (
         item.name.toLowerCase().includes(value) ||
         item.sku.toLowerCase().includes(value) ||
-        item.barcode.toLowerCase().includes(value) ||
+        itemBarcodeValues(item).some((barcode) => barcode.toLowerCase().includes(value)) ||
+        itemBatchBarcodeValues(item).some((barcode) => barcode.toLowerCase().includes(value)) ||
         item.category.toLowerCase().includes(value) ||
         supplierName.includes(value)
       );
@@ -152,6 +196,9 @@ export function SearchPage({ snapshot }: Props) {
   const totalWasteQuantity = itemWaste.reduce((sum, entry) => sum + entry.quantity, 0);
   const totalWasteCost = itemWaste.reduce((sum, entry) => sum + entry.estimatedCost, 0);
   const latestPrice = itemPrices[0];
+  const selectedItemBarcodes = selectedItem ? itemBarcodeEntries(selectedItem) : [];
+  const selectedBatchBarcodes = selectedItem ? itemBatchBarcodeValues(selectedItem) : [];
+  const selectedItemUnits = selectedItem ? itemUnitOptions(selectedItem) : [];
   const metricCards: Array<{
     label: string;
     value: string;
@@ -207,10 +254,18 @@ export function SearchPage({ snapshot }: Props) {
     setSearchTerm(normalized);
     setScannerOpen(false);
 
-    const match = findItemByBarcode(snapshot, normalized);
+    const match = findBarcodeMatch(snapshot, normalized);
     if (match) {
-      setSelectedItemId(match.id);
-      setFeedback(`Matched ${match.name} (${match.sku}) from barcode ${normalized}.`);
+      setSelectedItemId(match.item.id);
+      if (match.source === "batch-barcode" && match.batch) {
+        setFeedback(
+          `Matched batch ${match.batch.lotCode} for ${match.item.name} from barcode ${normalized}.`,
+        );
+      } else {
+        setFeedback(
+          `Matched ${match.item.name} (${match.item.sku}) from ${match.source.replace("-", " ")} ${normalized}${match.itemBarcode ? ` as ${match.itemBarcode.unitName}` : ""}.`,
+        );
+      }
       return;
     }
 
@@ -376,7 +431,7 @@ export function SearchPage({ snapshot }: Props) {
                           />
                         </Stack>
                         <Typography variant="body2" color="text.secondary" noWrap>
-                          {item.sku} - {item.barcode || "No barcode"}
+                          {item.sku} - {barcodeSummary(item)}
                         </Typography>
                         <Typography variant="caption" color="text.secondary" noWrap>
                           {item.category} - {itemSupplier}
@@ -426,8 +481,7 @@ export function SearchPage({ snapshot }: Props) {
                       {selectedItem.name}
                     </Typography>
                     <Typography variant="body1" color="text.secondary" sx={{ mt: 1 }}>
-                      {selectedItem.sku} - {selectedItem.barcode || "No barcode"} -{" "}
-                      {selectedItem.category}
+                      {selectedItem.sku} - {barcodeSummary(selectedItem)} - {selectedItem.category}
                     </Typography>
                   </Box>
 
@@ -451,6 +505,64 @@ export function SearchPage({ snapshot }: Props) {
                     />
                   </Stack>
                 </Stack>
+
+                <Box>
+                  <Typography variant="subtitle2" fontWeight={800}>
+                    Barcode coverage
+                  </Typography>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
+                    {selectedItemBarcodes.length > 0 ? (
+                      selectedItemBarcodes.map((entry, index) => (
+                        <Chip
+                          key={`${entry.barcode}-${index}`}
+                          size="small"
+                          variant={index === 0 ? "filled" : "outlined"}
+                          color={index === 0 ? "primary" : "default"}
+                          label={`${entry.barcodeType === "primary" ? "Primary" : entry.barcodeType === "packaging" ? "Packaging" : "Secondary"}: ${entry.barcode} (${entry.unitName})`}
+                        />
+                      ))
+                    ) : (
+                      <Chip size="small" variant="outlined" label="No item barcodes" />
+                    )}
+                    {selectedBatchBarcodes.slice(0, 6).map((barcode, index) => (
+                      <Chip
+                        key={`batch-${barcode}-${index}`}
+                        size="small"
+                        variant="outlined"
+                        color="secondary"
+                        label={`Batch: ${barcode}`}
+                      />
+                    ))}
+                    {selectedBatchBarcodes.length > 6 ? (
+                      <Chip
+                        size="small"
+                        variant="outlined"
+                        label={`+${selectedBatchBarcodes.length - 6} more batch barcodes`}
+                      />
+                    ) : null}
+                  </Stack>
+                </Box>
+
+                <Box>
+                  <Typography variant="subtitle2" fontWeight={800}>
+                    Pack sizes & conversions
+                  </Typography>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
+                    {selectedItemUnits.map((entry) => (
+                      <Chip
+                        key={entry.unitName}
+                        size="small"
+                        color={entry.isBase ? "primary" : "default"}
+                        variant={entry.isBase ? "filled" : "outlined"}
+                        label={
+                          entry.isBase
+                            ? `Base unit: ${entry.unitName}`
+                            : `1 ${entry.unitName} = ${entry.quantityInBase} ${selectedItem.unit}`
+                        }
+                      />
+                    ))}
+                  </Stack>
+                </Box>
 
                 <Box
                   sx={{
@@ -536,6 +648,7 @@ export function SearchPage({ snapshot }: Props) {
                           <TableCell align="right">On Hand</TableCell>
                           <TableCell align="right">Reserved</TableCell>
                           <TableCell>Nearest Expiry</TableCell>
+                          <TableCell>Batch Barcode</TableCell>
                           <TableCell align="right">Alerts</TableCell>
                         </TableRow>
                       </TableHead>
@@ -574,6 +687,17 @@ export function SearchPage({ snapshot }: Props) {
                                 ) : (
                                   <Typography variant="body2" color="text.secondary">
                                     No dated batches
+                                  </Typography>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {row.nearestBatch ? (
+                                  <Typography variant="body2" color="text.secondary">
+                                    {batchBarcodeValues(row.nearestBatch)[0] ?? "No batch barcode"}
+                                  </Typography>
+                                ) : (
+                                  <Typography variant="body2" color="text.secondary">
+                                    No batch barcode
                                   </Typography>
                                 )}
                               </TableCell>

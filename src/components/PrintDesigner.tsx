@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createDefaultPrintLayoutBlocks,
   createDefaultReportPrintTemplate,
@@ -26,6 +26,12 @@ interface BlockLibraryEntry {
   unique: boolean;
 }
 
+interface DragState {
+  blockId: string;
+  offsetXPct: number;
+  offsetYPct: number;
+}
+
 const BLOCK_LIBRARY: BlockLibraryEntry[] = [
   { type: "company-name", label: "Company Name", description: "Shows the workspace company.", unique: true },
   { type: "report-title", label: "Report Title", description: "Displays the live report title.", unique: true },
@@ -40,6 +46,10 @@ const BLOCK_LIBRARY: BlockLibraryEntry[] = [
   { type: "signatures", label: "Signatures", description: "Adds signature lines.", unique: true },
   { type: "custom-text", label: "Custom Text", description: "Adds custom freeform text.", unique: false },
 ];
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
 
 function nextBlockId(type: PrintLayoutBlockType): string {
   return `blk-${type}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -66,60 +76,43 @@ function syncTemplateWithBlocks(
 }
 
 function createBlock(type: PrintLayoutBlockType, template: ReportPrintTemplate): PrintLayoutBlock {
-  switch (type) {
-    case "header-note":
-      return {
-        id: nextBlockId(type),
-        type,
-        label: "Header Note",
-        enabled: true,
-        content: template.headerNote,
-      };
-    case "footer-note":
-      return {
-        id: nextBlockId(type),
-        type,
-        label: "Footer Note",
-        enabled: true,
-        content: template.footerNote,
-      };
-    case "custom-text":
-      return {
-        id: nextBlockId(type),
-        type,
-        label: "Custom Text",
-        enabled: true,
-        content: "Add your own text here.",
-      };
-    default: {
-      const defaultBlock = createDefaultPrintLayoutBlocks().find((block) => block.type === type);
-      return {
-        id: nextBlockId(type),
-        type,
-        label: defaultBlock?.label ?? "Print Block",
-        enabled: true,
-        content: defaultBlock?.content ?? "",
-      };
-    }
-  }
-}
+  const defaults = createDefaultPrintLayoutBlocks();
+  const defaultBlock = defaults.find((block) => block.type === type) ?? defaults[0];
+  const duplicateCount = template.layoutBlocks.filter((block) => block.type === type).length;
+  const baseBlock: PrintLayoutBlock =
+    type === "header-note"
+      ? {
+          ...defaultBlock,
+          id: nextBlockId(type),
+          label: "Header Note",
+          content: template.headerNote,
+        }
+      : type === "footer-note"
+        ? {
+            ...defaultBlock,
+            id: nextBlockId(type),
+            label: "Footer Note",
+            content: template.footerNote,
+          }
+        : type === "custom-text"
+          ? {
+              ...defaultBlock,
+              id: nextBlockId(type),
+              type,
+              label: "Custom Text",
+              content: "Add your own text here.",
+            }
+          : {
+              ...defaultBlock,
+              id: nextBlockId(type),
+            };
 
-function reorderBlocks(
-  layoutBlocks: PrintLayoutBlock[],
-  draggedId: string,
-  targetId: string,
-): PrintLayoutBlock[] {
-  const currentIndex = layoutBlocks.findIndex((block) => block.id === draggedId);
-  const targetIndex = layoutBlocks.findIndex((block) => block.id === targetId);
-
-  if (currentIndex < 0 || targetIndex < 0 || currentIndex === targetIndex) {
-    return layoutBlocks;
-  }
-
-  const next = [...layoutBlocks];
-  const [dragged] = next.splice(currentIndex, 1);
-  next.splice(targetIndex, 0, dragged);
-  return next;
+  return {
+    ...baseBlock,
+    x: clamp(baseBlock.x + duplicateCount * 3, 0, 90),
+    y: clamp(baseBlock.y + duplicateCount * 3, 0, 94),
+    z: baseBlock.z + duplicateCount,
+  };
 }
 
 function previewValue(
@@ -167,9 +160,10 @@ export function PrintDesigner({
   disabled = false,
   onChange,
 }: PrintDesignerProps) {
+  const previewRef = useRef<HTMLDivElement | null>(null);
   const [selectedBlockId, setSelectedBlockId] = useState(template.layoutBlocks[0]?.id ?? "");
   const [pendingType, setPendingType] = useState<PrintLayoutBlockType>("custom-text");
-  const [draggedBlockId, setDraggedBlockId] = useState<string | null>(null);
+  const [dragState, setDragState] = useState<DragState | null>(null);
 
   const layoutBlocks = useMemo(
     () =>
@@ -209,6 +203,51 @@ export function PrintDesigner({
     }
   }, [availableBlocks, pendingType]);
 
+  useEffect(() => {
+    if (!dragState || disabled) {
+      return;
+    }
+
+    const activeDrag = dragState;
+
+    function handlePointerMove(event: MouseEvent) {
+      const preview = previewRef.current;
+      if (!preview) {
+        return;
+      }
+      const rect = preview.getBoundingClientRect();
+      const pointerXPct = ((event.clientX - rect.left) / rect.width) * 100;
+      const pointerYPct = ((event.clientY - rect.top) / rect.height) * 100;
+      const targetBlock = layoutBlocks.find((block) => block.id === activeDrag.blockId);
+      if (!targetBlock) {
+        return;
+      }
+      const nextX = clamp(pointerXPct - activeDrag.offsetXPct, 0, 100 - targetBlock.width);
+      const nextY = clamp(pointerYPct - activeDrag.offsetYPct, 0, 100);
+      const nextBlocks = layoutBlocks.map((block) =>
+        block.id === activeDrag.blockId
+          ? {
+              ...block,
+              x: Number(nextX.toFixed(2)),
+              y: Number(nextY.toFixed(2)),
+            }
+          : block,
+      );
+      onChange(syncTemplateWithBlocks(template, nextBlocks));
+    }
+
+    function handlePointerUp() {
+      setDragState(null);
+    }
+
+    window.addEventListener("mousemove", handlePointerMove);
+    window.addEventListener("mouseup", handlePointerUp);
+    return () => {
+      window.removeEventListener("mousemove", handlePointerMove);
+      window.removeEventListener("mouseup", handlePointerUp);
+    };
+  }, [disabled, dragState, layoutBlocks, onChange, template]);
+
   function updateTemplate(next: ReportPrintTemplate) {
     onChange(next);
   }
@@ -238,23 +277,6 @@ export function PrintDesigner({
     setSelectedBlockId(nextBlock.id);
   }
 
-  function moveSelectedBlock(direction: -1 | 1) {
-    if (!selectedBlock || disabled) {
-      return;
-    }
-
-    const currentIndex = layoutBlocks.findIndex((block) => block.id === selectedBlock.id);
-    const nextIndex = currentIndex + direction;
-    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= layoutBlocks.length) {
-      return;
-    }
-
-    const nextBlocks = [...layoutBlocks];
-    const [block] = nextBlocks.splice(currentIndex, 1);
-    nextBlocks.splice(nextIndex, 0, block);
-    updateBlocks(nextBlocks);
-  }
-
   function removeSelectedBlock() {
     if (!selectedBlock || disabled) {
       return;
@@ -262,14 +284,6 @@ export function PrintDesigner({
     const nextBlocks = layoutBlocks.filter((block) => block.id !== selectedBlock.id);
     updateBlocks(nextBlocks);
     setSelectedBlockId(nextBlocks[0]?.id ?? "");
-  }
-
-  function handleDrop(targetId: string) {
-    if (!draggedBlockId || disabled) {
-      return;
-    }
-    updateBlocks(reorderBlocks(layoutBlocks, draggedBlockId, targetId));
-    setDraggedBlockId(null);
   }
 
   function updateSelectedContent(value: string) {
@@ -296,19 +310,76 @@ export function PrintDesigner({
     patchSelectedBlock({ content: value });
   }
 
+  function updateSelectedNumberField(
+    field: keyof Pick<PrintLayoutBlock, "x" | "y" | "z" | "width" | "minHeight">,
+    rawValue: string,
+  ) {
+    if (!selectedBlock) {
+      return;
+    }
+    const numericValue = Number(rawValue || 0);
+    if (!Number.isFinite(numericValue)) {
+      return;
+    }
+
+    switch (field) {
+      case "x":
+        patchSelectedBlock({ x: clamp(numericValue, 0, 100 - selectedBlock.width) });
+        break;
+      case "y":
+        patchSelectedBlock({ y: clamp(numericValue, 0, 100) });
+        break;
+      case "z":
+        patchSelectedBlock({ z: clamp(Math.round(numericValue), 0, 20) });
+        break;
+      case "width":
+        patchSelectedBlock({
+          width: clamp(numericValue, 10, 100),
+          x: clamp(selectedBlock.x, 0, 100 - clamp(numericValue, 10, 100)),
+        });
+        break;
+      case "minHeight":
+        patchSelectedBlock({ minHeight: clamp(numericValue, 48, 960) });
+        break;
+      default:
+        break;
+    }
+  }
+
+  function handlePreviewPointerDown(
+    event: React.MouseEvent<HTMLButtonElement>,
+    block: PrintLayoutBlock,
+  ) {
+    if (disabled || !previewRef.current) {
+      return;
+    }
+    const rect = previewRef.current.getBoundingClientRect();
+    const offsetXPct = ((event.clientX - rect.left) / rect.width) * 100 - block.x;
+    const offsetYPct = ((event.clientY - rect.top) / rect.height) * 100 - block.y;
+    setSelectedBlockId(block.id);
+    setDragState({
+      blockId: block.id,
+      offsetXPct,
+      offsetYPct,
+    });
+  }
+
   function previewBlock(block: PrintLayoutBlock) {
     const selected = selectedBlock?.id === block.id;
     return (
       <button
         key={block.id}
         type="button"
-        draggable={!disabled}
         onClick={() => setSelectedBlockId(block.id)}
-        onDragStart={() => setDraggedBlockId(block.id)}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={() => handleDrop(block.id)}
-        onDragEnd={() => setDraggedBlockId(null)}
+        onMouseDown={(event) => handlePreviewPointerDown(event, block)}
         className={`print-designer-block${selected ? " is-selected" : ""}${block.enabled ? "" : " is-disabled"}`}
+        style={{
+          left: `${block.x}%`,
+          top: `${block.y}%`,
+          width: `${block.width}%`,
+          minHeight: `${block.minHeight}px`,
+          zIndex: block.z,
+        }}
       >
         <span className="print-designer-block-label">{block.label}</span>
         <strong>{previewValue(block, template, companyName, generatedBy, timeSourceLabel)}</strong>
@@ -403,6 +474,7 @@ export function PrintDesigner({
                 <p className="eyebrow">Selected Field</p>
                 <h3>{selectedBlock.label}</h3>
               </div>
+              <span className="status-chip neutral">Layer {selectedBlock.z}</span>
             </div>
 
             <div className="page-stack">
@@ -436,7 +508,7 @@ export function PrintDesigner({
               ) : null}
 
               {selectedBlock.type === "signatures" ? (
-                <div className="settings-fields-grid">
+                <div className="settings-fields-grid compact-grid">
                   <label className="settings-field-card">
                     <span className="settings-field-label">Left label</span>
                     <input
@@ -460,6 +532,64 @@ export function PrintDesigner({
                 </div>
               ) : null}
 
+              <div className="settings-fields-grid compact-grid">
+                <label className="settings-field-card">
+                  <span className="settings-field-label">X Position (%)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max={Math.max(0, 100 - selectedBlock.width)}
+                    value={selectedBlock.x}
+                    disabled={disabled}
+                    onChange={(event) => updateSelectedNumberField("x", event.target.value)}
+                  />
+                </label>
+                <label className="settings-field-card">
+                  <span className="settings-field-label">Y Position (%)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={selectedBlock.y}
+                    disabled={disabled}
+                    onChange={(event) => updateSelectedNumberField("y", event.target.value)}
+                  />
+                </label>
+                <label className="settings-field-card">
+                  <span className="settings-field-label">Z Layer</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="20"
+                    value={selectedBlock.z}
+                    disabled={disabled}
+                    onChange={(event) => updateSelectedNumberField("z", event.target.value)}
+                  />
+                </label>
+                <label className="settings-field-card">
+                  <span className="settings-field-label">Width (%)</span>
+                  <input
+                    type="number"
+                    min="10"
+                    max="100"
+                    value={selectedBlock.width}
+                    disabled={disabled}
+                    onChange={(event) => updateSelectedNumberField("width", event.target.value)}
+                  />
+                </label>
+                <label className="settings-field-card">
+                  <span className="settings-field-label">Height (px)</span>
+                  <input
+                    type="number"
+                    min="48"
+                    max="960"
+                    value={selectedBlock.minHeight}
+                    disabled={disabled}
+                    onChange={(event) => updateSelectedNumberField("minHeight", event.target.value)}
+                  />
+                </label>
+              </div>
+
               <label className="list-row">
                 <div>
                   <strong>Visible in output</strong>
@@ -478,17 +608,17 @@ export function PrintDesigner({
                   type="button"
                   className="secondary-button"
                   disabled={disabled}
-                  onClick={() => moveSelectedBlock(-1)}
+                  onClick={() => patchSelectedBlock({ z: clamp(selectedBlock.z + 1, 0, 20) })}
                 >
-                  Move up
+                  Bring forward
                 </button>
                 <button
                   type="button"
                   className="secondary-button"
                   disabled={disabled}
-                  onClick={() => moveSelectedBlock(1)}
+                  onClick={() => patchSelectedBlock({ z: clamp(selectedBlock.z - 1, 0, 20) })}
                 >
-                  Move down
+                  Send back
                 </button>
                 <button
                   type="button"
@@ -509,7 +639,7 @@ export function PrintDesigner({
         <div className="panel-heading compact-heading">
           <div>
             <p className="eyebrow">A4 Preview</p>
-            <h3>Drag fields to change the saved print order</h3>
+            <h3>Drag fields, set X/Y/Z, and resize width and height</h3>
           </div>
           <span className="status-chip neutral">
             {template.orientation === "landscape" ? "Landscape" : "Portrait"}
@@ -522,7 +652,11 @@ export function PrintDesigner({
           }`}
           style={{ borderColor: `${template.accentColor}40` }}
         >
-          <div className="print-designer-page-inner" style={{ borderColor: template.accentColor }}>
+          <div
+            ref={previewRef}
+            className="print-designer-page-inner"
+            style={{ borderColor: template.accentColor }}
+          >
             {layoutBlocks.map((block) => previewBlock(block))}
           </div>
         </div>
