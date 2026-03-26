@@ -2081,20 +2081,6 @@ textarea {
   border-radius: 20px;
 }
 
-.barcode-modal-fallback {
-  display: grid;
-  place-items: center;
-  padding: 10px;
-}
-
-.barcode-modal-fallback video {
-  width: 100%;
-  min-height: 298px;
-  object-fit: cover;
-  border-radius: 20px;
-  background: rgba(7, 12, 28, 0.94);
-}
-
 .barcode-modal-reader img {
   border-radius: 20px;
 }
@@ -2156,10 +2142,6 @@ textarea {
   }
 
   .barcode-modal-reader video {
-    min-height: 260px;
-  }
-
-  .barcode-modal-fallback video {
     min-height: 260px;
   }
 
