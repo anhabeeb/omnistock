@@ -4,10 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "prepare:scanner": "node scripts/copy-html5-qrcode.mjs",
-    "predev": "npm run prepare:scanner",
     "dev": "vite",
-    "prebuild": "npm run prepare:scanner",
     "build": "tsc --noEmit && vite build",
     "preview": "npm run build && wrangler dev --config dist/omnistock/wrangler.json",
     "check": "tsc --noEmit",
@@ -18,7 +15,6 @@
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^7.3.9",
     "@mui/material": "^7.3.9",
-    "html5-qrcode": "^2.3.8",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.0.0",
