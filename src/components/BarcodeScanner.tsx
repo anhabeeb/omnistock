@@ -43,6 +43,28 @@ declare global {
 
 let scannerScriptPromise: Promise<void> | null = null;
 
+function waitForScannerGlobal(timeoutMs = 4000): Promise<void> {
+  const startedAt = Date.now();
+
+  return new Promise<void>((resolve, reject) => {
+    const poll = () => {
+      if (ensureScannerGlobal()) {
+        resolve();
+        return;
+      }
+
+      if (Date.now() - startedAt >= timeoutMs) {
+        reject(new Error("Scanner engine took too long to start."));
+        return;
+      }
+
+      window.setTimeout(poll, 80);
+    };
+
+    poll();
+  });
+}
+
 function ensureScannerGlobal(): boolean {
   if (window.Html5QrcodeScanner) {
     return true;
@@ -71,13 +93,22 @@ function ensureScannerScript(): Promise<void> {
       'script[data-omnistock-scanner="html5-qrcode"]',
     );
 
+    const completeWhenReady = () => {
+      void waitForScannerGlobal().then(resolve).catch(reject);
+    };
+
     if (existing) {
-      if (existing.dataset.loaded === "true" && ensureScannerGlobal()) {
+      if (ensureScannerGlobal()) {
         resolve();
         return;
       }
 
-      existing.addEventListener("load", () => resolve(), { once: true });
+      if (existing.dataset.loaded === "true") {
+        completeWhenReady();
+        return;
+      }
+
+      existing.addEventListener("load", completeWhenReady, { once: true });
       existing.addEventListener(
         "error",
         () => reject(new Error("Scanner script failed to load.")),
@@ -92,11 +123,7 @@ function ensureScannerScript(): Promise<void> {
     script.dataset.omnistockScanner = "html5-qrcode";
     script.onload = () => {
       script.dataset.loaded = "true";
-      if (ensureScannerGlobal()) {
-        resolve();
-        return;
-      }
-      reject(new Error("Scanner engine is unavailable on this device."));
+      completeWhenReady();
     };
     script.onerror = () => reject(new Error("Scanner script failed to load."));
     document.head.appendChild(script);
@@ -151,6 +178,7 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
     }
 
     async function startNativeFallback(errorMessage?: string) {
+      setStatus("Preparing camera scanner...");
       setUseNativeFallback(true);
 
       if (!window.BarcodeDetector) {
@@ -165,17 +193,41 @@ export function BarcodeScanner({ onScan, onClose }: Props) {
         );
       }
 
-      const video = fallbackVideoRef.current;
+      let video = fallbackVideoRef.current;
+      if (!video) {
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, 50);
+          });
+          video = fallbackVideoRef.current;
+          if (video) {
+            break;
+          }
+        }
+      }
+
       if (!video) {
         throw new Error("Camera preview could not be prepared.");
       }
 
-      fallbackStream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: { ideal: "environment" },
-        },
-      });
+      try {
+        fallbackStream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { ideal: "environment" },
+          },
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "NotAllowedError") {
+          throw new Error("Camera permission was denied for barcode scanning.");
+        }
+
+        if (error instanceof DOMException && error.name === "NotFoundError") {
+          throw new Error("No camera was found on this device.");
+        }
+
+        throw error;
+      }
 
       if (cancelled) {
         stopFallbackStream();
