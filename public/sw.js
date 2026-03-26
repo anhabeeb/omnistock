@@ -1,4 +1,4 @@
-const CACHE_NAME = "omnistock-shell-v2";
+const CACHE_NAME = "omnistock-shell-v3";
 const APP_SHELL = ["/", "/manifest.webmanifest"];
 const STATIC_DESTINATIONS = new Set(["script", "style", "font", "image"]);
 
