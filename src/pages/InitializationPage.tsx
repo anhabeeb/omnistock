@@ -21,6 +21,7 @@ import {
   DEFAULT_WORKSPACE_LOCATION,
 } from "../../shared/defaults";
 import type { InitializeSystemRequest } from "../../shared/types";
+import { SAFE_MUI_SELECT_PROPS } from "../lib/muiFocus";
 import type { SyncState } from "../lib/useOmniStockApp";
 
 interface Props {
@@ -434,6 +435,7 @@ export function InitializationPage({ syncState, onInitialize }: Props) {
                       label="Currency"
                       value={form.currency}
                       onChange={(event) => patch("currency", event.target.value)}
+                      SelectProps={SAFE_MUI_SELECT_PROPS}
                       fullWidth
                     >
                       {CURRENCY_OPTIONS.map((currencyOption) => (

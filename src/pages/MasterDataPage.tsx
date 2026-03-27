@@ -53,6 +53,7 @@ interface Props {
   onCreateMarketPrice: (input: CreateMarketPriceRequest) => Promise<MarketPriceEntry>;
   onUpdateMarketPrice: (input: UpdateMarketPriceRequest) => Promise<MarketPriceEntry>;
   onDeleteMarketPrice: (input: DeleteMarketPriceRequest) => Promise<void>;
+  layoutMode?: "desktop" | "mobile";
 }
 
 interface PriceFormState {
@@ -114,7 +115,7 @@ interface UomConversionDraft {
 
 type MasterDialogMode = "create" | "edit" | "view" | "delete";
 
-const MASTER_SECTIONS = [
+export const MASTER_SECTIONS = [
   {
     slug: "items",
     label: "Items",
@@ -433,6 +434,7 @@ export function MasterDataPage({
   onCreateMarketPrice,
   onUpdateMarketPrice,
   onDeleteMarketPrice,
+  layoutMode = "desktop",
 }: Props) {
   const location = useLocation();
   const activeSlug = location.pathname.split("/")[2] ?? MASTER_SECTIONS[0].slug;
@@ -1227,27 +1229,29 @@ export function MasterDataPage({
   }
 
   return (
-    <div className="page-stack">
-      <section className="page-intro">
-        <div>
-          <p className="eyebrow">Master Data</p>
-          <h1>{activeSection.title}</h1>
-          <p className="hero-copy">
-            {activeSection.description} {currentUser.name} can review records across{" "}
-            {snapshot.locations.length} active facilities and outlets.
-          </p>
-        </div>
+    <div className={`page-stack${layoutMode === "mobile" ? " page-stack-mobile" : ""}`}>
+      {layoutMode === "desktop" ? (
+        <section className="page-intro">
+          <div>
+            <p className="eyebrow">Master Data</p>
+            <h1>{activeSection.title}</h1>
+            <p className="hero-copy">
+              {activeSection.description} {currentUser.name} can review records across{" "}
+              {snapshot.locations.length} active facilities and outlets.
+            </p>
+          </div>
 
-        <div className="hero-meta">
-          {heroStats.map((stat) => (
-            <div key={stat.label} className="meta-card">
-              <span>{stat.label}</span>
-              <strong>{stat.value}</strong>
-              <small>{stat.detail}</small>
-            </div>
-          ))}
-        </div>
-      </section>
+          <div className="hero-meta">
+            {heroStats.map((stat) => (
+              <div key={stat.label} className="meta-card">
+                <span>{stat.label}</span>
+                <strong>{stat.value}</strong>
+                <small>{stat.detail}</small>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {activeSection.slug === "items" ? (
         <section className="panel">

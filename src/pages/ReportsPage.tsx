@@ -41,6 +41,7 @@ import {
   exportWorkbook,
 } from "../lib/export";
 import { formatCurrency, formatDateTime } from "../lib/format";
+import { SAFE_MUI_SELECT_PROPS } from "../lib/muiFocus";
 import { openReportDocument } from "../lib/reportPrint";
 import {
   DATE_FILTER_OPTIONS,
@@ -52,12 +53,13 @@ import { getCurrentTimestampIso, getFileDateStampForWorkspace } from "../lib/tim
 interface Props {
   snapshot: InventorySnapshot;
   currentUser: User;
+  layoutMode?: "desktop" | "mobile";
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MONTH_FORMATTER = new Intl.DateTimeFormat("en-US", { month: "short" });
 
-const REPORT_SECTIONS = [
+export const REPORT_SECTIONS = [
   {
     slug: "analytics",
     label: "Analytics",
@@ -306,7 +308,11 @@ function InsightRow({
   );
 }
 
-export function ReportsPage({ snapshot, currentUser }: Props) {
+export function ReportsPage({
+  snapshot,
+  currentUser,
+  layoutMode = "desktop",
+}: Props) {
   const theme = useTheme();
   const location = useLocation();
   const activeSlug = location.pathname.split("/")[2] ?? REPORT_SECTIONS[0].slug;
@@ -1246,35 +1252,37 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
   }
 
   return (
-    <Stack spacing={2.5}>
-      <Box sx={{ px: { xs: 0.25, md: 0.5 }, py: { xs: 0.5, md: 0.75 } }}>
-        <Stack direction={{ xs: "column", lg: "row" }} justifyContent="space-between" spacing={2}>
-          <Box>
-            <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
-              Reports & Analytics
-            </Typography>
-            <Typography variant="h4" sx={{ mt: 0.5 }}>
-              {activeSection.title}
-            </Typography>
-            <Typography variant="body1" color="text.secondary" sx={{ mt: 1.25, maxWidth: 780 }}>
-              {activeSection.description}
-            </Typography>
-          </Box>
+    <Stack spacing={layoutMode === "mobile" ? 2 : 2.5}>
+      {layoutMode === "desktop" ? (
+        <Box sx={{ px: { xs: 0.25, md: 0.5 }, py: { xs: 0.5, md: 0.75 } }}>
+          <Stack direction={{ xs: "column", lg: "row" }} justifyContent="space-between" spacing={2}>
+            <Box>
+              <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: "0.16em" }}>
+                Reports & Analytics
+              </Typography>
+              <Typography variant="h4" sx={{ mt: 0.5 }}>
+                {activeSection.title}
+              </Typography>
+              <Typography variant="body1" color="text.secondary" sx={{ mt: 1.25, maxWidth: 780 }}>
+                {activeSection.description}
+              </Typography>
+            </Box>
 
-          <Box className="hero-meta" sx={{ width: { xs: "100%", lg: 360 }, maxWidth: "100%" }}>
-            <Box className="meta-card" sx={{ borderRadius: "14px !important" }}>
-              <span>Prepared For</span>
-              <strong>{currentUser.name}</strong>
-              <small>Current report session owner for exports and print actions.</small>
+            <Box className="hero-meta" sx={{ width: { xs: "100%", lg: 360 }, maxWidth: "100%" }}>
+              <Box className="meta-card" sx={{ borderRadius: "14px !important" }}>
+                <span>Prepared For</span>
+                <strong>{currentUser.name}</strong>
+                <small>Current report session owner for exports and print actions.</small>
+              </Box>
+              <Box className="meta-card" sx={{ borderRadius: "14px !important" }}>
+                <span>Visible Inventory Value</span>
+                <strong>{formatCurrency(visibleInventoryValue, snapshot.settings.currency)}</strong>
+                <small>Capital currently visible inside the active filters and reporting scope.</small>
+              </Box>
             </Box>
-            <Box className="meta-card" sx={{ borderRadius: "14px !important" }}>
-              <span>Visible Inventory Value</span>
-              <strong>{formatCurrency(visibleInventoryValue, snapshot.settings.currency)}</strong>
-              <small>Capital currently visible inside the active filters and reporting scope.</small>
-            </Box>
-          </Box>
-        </Stack>
-      </Box>
+          </Stack>
+        </Box>
+      ) : null}
 
       <Paper sx={{ p: { xs: 2.25, md: 3 }, borderRadius: 2.5 }}>
         <Stack spacing={2}>
@@ -1310,6 +1318,7 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
               label="Filter by location"
               value={locationFilter}
               onChange={(event) => setLocationFilter(event.target.value)}
+              SelectProps={SAFE_MUI_SELECT_PROPS}
               fullWidth
             >
               <MenuItem value="all">All locations</MenuItem>
@@ -1325,6 +1334,7 @@ export function ReportsPage({ snapshot, currentUser }: Props) {
               label="Date range"
               value={datePreset}
               onChange={(event) => setDatePreset(event.target.value as DateFilterPreset)}
+              SelectProps={SAFE_MUI_SELECT_PROPS}
               fullWidth
             >
               {DATE_FILTER_OPTIONS.map((option) => (

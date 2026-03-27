@@ -143,7 +143,6 @@ export interface DailySummaryNotificationSettings extends NotificationRuleSettin
 
 export interface NotificationSettings {
   telegramEnabled: boolean;
-  telegramBotToken: string;
   telegramChatId: string;
   lowStock: NotificationRuleSettings;
   nearExpiry: NotificationRuleSettings;
@@ -842,6 +841,16 @@ export interface ReverseInventoryRequest {
   reason: string;
 }
 
+export interface ApproveInventoryRequest {
+  requestId: string;
+  note?: string;
+}
+
+export interface RejectInventoryRequest {
+  requestId: string;
+  reason: string;
+}
+
 export interface DeleteInventoryRequest {
   requestId: string;
 }
@@ -869,6 +878,7 @@ export interface EditInventoryRequest {
 
 export interface InventoryActionResponse {
   snapshot: InventorySnapshot;
+  request?: InventoryRequest;
   replacementRequest?: InventoryRequest;
   reversalRequest?: InventoryRequest;
 }

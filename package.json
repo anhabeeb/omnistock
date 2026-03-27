@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "npm run build && wrangler dev --config dist/omnistock/wrangler.json",
     "check": "tsc --noEmit",
+    "test": "tsc -p tsconfig.test.json && node .test-dist/tests/run.js",
     "deploy": "npm run build && wrangler deploy --config dist/omnistock/wrangler.json"
   },
   "dependencies": {

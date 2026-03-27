@@ -4,12 +4,13 @@ import {
   applyMutationsToD1,
   authenticateUserInD1,
   changeOwnPasswordInD1,
-  createItemInD1,
-  createLocationInD1,
-  createUserInD1,
-  createMarketPriceEntryInD1,
-  createSupplierInD1,
-  deleteInventoryRequestInD1,
+    createItemInD1,
+    createLocationInD1,
+    createUserInD1,
+    createMarketPriceEntryInD1,
+    createSupplierInD1,
+    approveInventoryRequestInD1,
+    deleteInventoryRequestInD1,
   deleteItemInD1,
   deleteLocationInD1,
   deleteMarketPriceEntryInD1,
@@ -22,7 +23,8 @@ import {
   loadCurrentCursor,
   loadUserIdForSessionToken,
   markAllNotificationsReadInD1,
-  markNotificationReadInD1,
+    markNotificationReadInD1,
+    rejectInventoryRequestInD1,
   logoutSessionInD1,
   pullChangesFromD1,
   reportSyncFailureInD1,
@@ -41,7 +43,8 @@ import {
   updateUserInD1,
 } from "./lib/database";
 import type {
-  ActivateSuperadminRequest,
+    ActivateSuperadminRequest,
+    ApproveInventoryRequest,
   ChangeOwnPasswordRequest,
   DeleteInventoryRequest,
   DeleteItemRequest,
@@ -56,7 +59,8 @@ import type {
   EditInventoryRequest,
   InitializeSystemRequest,
   LoginRequest,
-  MarkNotificationReadRequest,
+    MarkNotificationReadRequest,
+    RejectInventoryRequest,
   RemoveUserRequest,
   ReportSyncFailureRequest,
   ResetUserPasswordRequest,
@@ -574,6 +578,60 @@ export class OmniStockHub extends DurableObject<Env> {
     return json(response);
   }
 
+  private async handleApproveInventoryRequest(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<ApproveInventoryRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      approveInventoryRequestInD1(
+        this.env.OMNISTOCK_DB,
+        actorId,
+        body,
+        this.env.TELEGRAM_BOT_TOKEN,
+      ),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "inventory-ops",
+      triggeredAt: new Date().toISOString(),
+    });
+
+    return json(response);
+  }
+
+  private async handleRejectInventoryRequest(request: Request): Promise<Response> {
+    let actorId = "";
+    try {
+      actorId = await this.requireUserId(request);
+    } catch {
+      return new Response("Authentication required.", { status: 401 });
+    }
+
+    const body = await readJson<RejectInventoryRequest>(request);
+    const response = await this.ctx.blockConcurrencyWhile(() =>
+      rejectInventoryRequestInD1(
+        this.env.OMNISTOCK_DB,
+        actorId,
+        body,
+        this.env.TELEGRAM_BOT_TOKEN,
+      ),
+    );
+
+    this.broadcast({
+      type: "snapshot-refresh",
+      scope: "inventory-ops",
+      triggeredAt: new Date().toISOString(),
+    });
+
+    return json(response);
+  }
+
   private async handleEditInventoryRequest(request: Request): Promise<Response> {
     let actorId = "";
     try {
@@ -1001,12 +1059,20 @@ export class OmniStockHub extends DurableObject<Env> {
         return this.handleDeleteLocation(request);
       }
 
-      if (request.method === "POST" && url.pathname === "/inventory/reverse") {
-        return this.handleReverseInventoryRequest(request);
-      }
+        if (request.method === "POST" && url.pathname === "/inventory/reverse") {
+          return this.handleReverseInventoryRequest(request);
+        }
 
-      if (request.method === "POST" && url.pathname === "/inventory/edit") {
-        return this.handleEditInventoryRequest(request);
+        if (request.method === "POST" && url.pathname === "/inventory/approve") {
+          return this.handleApproveInventoryRequest(request);
+        }
+
+        if (request.method === "POST" && url.pathname === "/inventory/reject") {
+          return this.handleRejectInventoryRequest(request);
+        }
+
+        if (request.method === "POST" && url.pathname === "/inventory/edit") {
+          return this.handleEditInventoryRequest(request);
       }
 
       if (request.method === "POST" && url.pathname === "/inventory/delete") {

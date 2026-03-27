@@ -14,6 +14,7 @@ import {
 } from "@mui/material";
 import type { InventorySnapshot, NotificationRecord, NotificationType } from "../../shared/types";
 import { formatDateTime } from "../lib/format";
+import { blurActiveElement } from "../lib/muiFocus";
 import { AlertIcon, BellIcon, ClockIcon } from "./AppIcons";
 
 interface Props {
@@ -76,6 +77,11 @@ export function AppNotificationCenter({
       ? activeNotifications
       : activeNotifications.filter((notification) => notification.type === filter);
 
+  function closePopover() {
+    blurActiveElement();
+    setAnchorEl(null);
+  }
+
   async function handleMarkRead(notificationId: string) {
     setBusyId(notificationId);
     try {
@@ -91,10 +97,15 @@ export function AppNotificationCenter({
         aria-label="Open notifications"
         onClick={(event) => {
           if (pageMode) {
+            blurActiveElement();
             onOpenPage?.();
             return;
           }
-          setAnchorEl(anchorEl ? null : event.currentTarget);
+          if (anchorEl) {
+            closePopover();
+            return;
+          }
+          setAnchorEl(event.currentTarget);
         }}
         sx={{
           position: "relative",
@@ -130,7 +141,7 @@ export function AppNotificationCenter({
       <Popover
         open={Boolean(anchorEl)}
         anchorEl={anchorEl}
-        onClose={() => setAnchorEl(null)}
+        onClose={closePopover}
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
         slotProps={{

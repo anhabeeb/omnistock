@@ -215,7 +215,6 @@ export function createDefaultReportPrintTemplate(companyName = "OmniStock"): Rep
 export function createDefaultNotificationSettings(): NotificationSettings {
   return {
     telegramEnabled: false,
-    telegramBotToken: "",
     telegramChatId: "",
     lowStock: createNotificationRuleSettings(),
     nearExpiry: createNotificationRuleSettings(),

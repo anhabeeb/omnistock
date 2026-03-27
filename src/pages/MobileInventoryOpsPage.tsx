@@ -30,6 +30,7 @@ import type {
 import { DeleteIcon, EditIcon, ReverseIcon, ViewIcon } from "../components/AppIcons";
 import { BarcodeScanModal } from "../components/BarcodeScanModal";
 import { formatDateTime } from "../lib/format";
+import { SAFE_MUI_SELECT_PROPS } from "../lib/muiFocus";
 import { getDateInputValueForWorkspace } from "../lib/time";
 import type { CreateOperationInput, EditOperationInput, SyncState } from "../lib/useOmniStockApp";
 
@@ -37,7 +38,7 @@ interface Props {
   snapshot: InventorySnapshot;
   currentUser: User;
   syncState: SyncState;
-  onCreateOperation: (input: CreateOperationInput) => Promise<{ reference: string }>;
+  onCreateOperation: (input: CreateOperationInput) => Promise<InventoryRequest>;
   onEditOperation: (input: EditOperationInput) => Promise<{ reference: string } | undefined>;
   onDeleteOperation: (input: { requestId: string }) => Promise<{ reference: string } | undefined>;
   onReverseOperation: (input: { requestId: string; reason: string }) => Promise<{ reference: string } | undefined>;
@@ -325,7 +326,11 @@ export function MobileInventoryOpsPage({
         wasteShift: capturesWasteMetadata ? form.wasteShift : undefined,
         wasteStation: capturesWasteMetadata ? form.wasteStation : undefined,
       });
-      setFeedback(`${created.reference} saved locally and queued for sync.`);
+        setFeedback(
+          created.status === "submitted"
+            ? `${created.reference} was submitted for approval and queued for sync.`
+            : `${created.reference} saved locally and queued for sync.`,
+        );
       closeDialog();
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not create the inventory request.");
@@ -623,6 +628,7 @@ export function MobileInventoryOpsPage({
                     quantityUnit: nextItem?.unit ?? "",
                   }));
                 }}
+                SelectProps={SAFE_MUI_SELECT_PROPS}
               >
                 <MenuItem value="">Select an item</MenuItem>
                 {visibleItems.map((item) => (
@@ -645,6 +651,7 @@ export function MobileInventoryOpsPage({
                 value={form.quantityUnit}
                 onChange={(event) => patch("quantityUnit", event.target.value)}
                 disabled={!selectedItem}
+                SelectProps={SAFE_MUI_SELECT_PROPS}
                 helperText={
                   selectedItem && selectedUnitOption
                     ? `1 ${selectedUnitOption.unitName} = ${selectedUnitOption.quantityInBase} ${selectedItem.unit}`
@@ -668,6 +675,7 @@ export function MobileInventoryOpsPage({
                   label={form.kind === "transfer" ? "From warehouse" : "Source location"}
                   value={form.fromLocationId}
                   onChange={(event) => patch("fromLocationId", event.target.value)}
+                  SelectProps={SAFE_MUI_SELECT_PROPS}
                 >
                   {snapshot.locations.map((locationEntry) => (
                     <MenuItem key={locationEntry.id} value={locationEntry.id}>
@@ -683,6 +691,7 @@ export function MobileInventoryOpsPage({
                   label={form.kind === "grn" ? "Receive into" : "Transfer to"}
                   value={form.toLocationId}
                   onChange={(event) => patch("toLocationId", event.target.value)}
+                  SelectProps={SAFE_MUI_SELECT_PROPS}
                 >
                   {snapshot.locations.map((locationEntry) => (
                     <MenuItem key={locationEntry.id} value={locationEntry.id}>
@@ -698,6 +707,7 @@ export function MobileInventoryOpsPage({
                   label="Supplier"
                   value={form.supplierId}
                   onChange={(event) => patch("supplierId", event.target.value)}
+                  SelectProps={SAFE_MUI_SELECT_PROPS}
                 >
                   {snapshot.suppliers.map((supplier) => (
                     <MenuItem key={supplier.id} value={supplier.id}>
@@ -718,14 +728,14 @@ export function MobileInventoryOpsPage({
 
               {capturesWasteMetadata ? (
                 <>
-                  <TextField select label="Waste reason" value={form.wasteReason} onChange={(event) => patch("wasteReason", event.target.value as WasteReason)}>
+                  <TextField select label="Waste reason" value={form.wasteReason} onChange={(event) => patch("wasteReason", event.target.value as WasteReason)} SelectProps={SAFE_MUI_SELECT_PROPS}>
                     {["spoilage", "expiry", "overproduction", "prep-loss", "damage", "staff-meal", "qc-rejection"].map((value) => (
                       <MenuItem key={value} value={value}>
                         {value}
                       </MenuItem>
                     ))}
                   </TextField>
-                  <TextField select label="Shift" value={form.wasteShift} onChange={(event) => patch("wasteShift", event.target.value as ShiftKey)}>
+                  <TextField select label="Shift" value={form.wasteShift} onChange={(event) => patch("wasteShift", event.target.value as ShiftKey)} SelectProps={SAFE_MUI_SELECT_PROPS}>
                     {["morning", "lunch", "dinner", "night"].map((value) => (
                       <MenuItem key={value} value={value}>
                         {value}

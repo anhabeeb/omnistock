@@ -9,9 +9,10 @@ import type {
   CreateMarketPriceRequest,
   CreateMarketPriceResponse,
   CreateSupplierRequest,
-  CreateSupplierResponse,
-  CreateUserRequest,
-  DeleteInventoryRequest,
+    CreateSupplierResponse,
+    CreateUserRequest,
+    ApproveInventoryRequest,
+    DeleteInventoryRequest,
   DeleteItemRequest,
   DeleteLocationRequest,
   DeleteMarketPriceRequest,
@@ -22,8 +23,9 @@ import type {
   InitializeSystemResponse,
   InventoryActionResponse,
   LoginRequest,
-  LoginResponse,
-  MarkNotificationReadRequest,
+    LoginResponse,
+    MarkNotificationReadRequest,
+    RejectInventoryRequest,
   MutationEnvelope,
   NotificationActionResponse,
   PullResponse,
@@ -277,6 +279,34 @@ export async function reverseInventoryRequestEntry(
   input: ReverseInventoryRequest,
 ): Promise<InventoryActionResponse> {
   const response = await fetch("/api/inventory/reverse", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<InventoryActionResponse>(response);
+}
+
+export async function approveInventoryRequestEntry(
+  input: ApproveInventoryRequest,
+): Promise<InventoryActionResponse> {
+  const response = await fetch("/api/inventory/approve", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseJson<InventoryActionResponse>(response);
+}
+
+export async function rejectInventoryRequestEntry(
+  input: RejectInventoryRequest,
+): Promise<InventoryActionResponse> {
+  const response = await fetch("/api/inventory/reject", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

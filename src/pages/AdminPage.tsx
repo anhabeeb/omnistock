@@ -43,6 +43,7 @@ interface Props {
   onResetUserPassword: (input: ResetUserPasswordRequest) => Promise<void>;
   onRemoveUser: (userId: string) => Promise<void>;
   onSendTestTelegramNotification: (message?: string) => Promise<{ ok: boolean; detail: string }>;
+  layoutMode?: "desktop" | "mobile";
 }
 
 interface UserFormState {
@@ -102,7 +103,7 @@ const LOCATION_OPTIONS = [
   { value: "Saudi Arabia", label: "Saudi Arabia" },
 ] as const;
 
-const ADMIN_SECTIONS = [
+export const ADMIN_SECTIONS = [
   {
     slug: "users",
     label: "Users",
@@ -231,6 +232,7 @@ export function AdminPage({
   onResetUserPassword,
   onRemoveUser,
   onSendTestTelegramNotification,
+  layoutMode = "desktop",
 }: Props) {
   const location = useLocation();
   const activeSlug = location.pathname.split("/")[2] ?? ADMIN_SECTIONS[0].slug;
@@ -438,7 +440,7 @@ export function AdminPage({
   function patchNotificationRule(
     key: Exclude<
       keyof SettingsFormState["notificationSettings"],
-      "telegramEnabled" | "telegramBotToken" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
+      "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
     >,
     field: "enabled" | "inApp" | "telegram",
     value: boolean,
@@ -971,30 +973,32 @@ export function AdminPage({
   }
 
   return (
-    <div className="page-stack">
-      <section className="page-intro">
-        <div>
-          <p className="eyebrow">Administration</p>
-          <h1>{activeSection.title}</h1>
-          <p className="hero-copy">
-            {activeSection.description} The current session is running as {currentUser.name}, under
-            the {ROLE_PRESETS[currentUser.role].label} preset.
-          </p>
-        </div>
+    <div className={`page-stack${layoutMode === "mobile" ? " page-stack-mobile" : ""}`}>
+      {layoutMode === "desktop" ? (
+        <section className="page-intro">
+          <div>
+            <p className="eyebrow">Administration</p>
+            <h1>{activeSection.title}</h1>
+            <p className="hero-copy">
+              {activeSection.description} The current session is running as {currentUser.name}, under
+              the {ROLE_PRESETS[currentUser.role].label} preset.
+            </p>
+          </div>
 
-        <div className="hero-meta">
-          <div className="meta-card">
-            <span>Users</span>
-            <strong>{snapshot.users.length}</strong>
-            <small>Profiles participating in shared warehouse operations.</small>
+          <div className="hero-meta">
+            <div className="meta-card">
+              <span>Users</span>
+              <strong>{snapshot.users.length}</strong>
+              <small>Profiles participating in shared warehouse operations.</small>
+            </div>
+            <div className="meta-card">
+              <span>Audit Events</span>
+              <strong>{snapshot.activity.length}</strong>
+              <small>Recent tracked activity visible in the local feed.</small>
+            </div>
           </div>
-          <div className="meta-card">
-            <span>Audit Events</span>
-            <strong>{snapshot.activity.length}</strong>
-            <small>Recent tracked activity visible in the local feed.</small>
-          </div>
-        </div>
-      </section>
+        </section>
+      ) : null}
 
       {activeSection.slug === "users" ? (
         <section className="page-stack">
@@ -1779,16 +1783,15 @@ export function AdminPage({
                       </div>
                       <span className="status-chip neutral">
                         {settingsForm.notificationSettings.telegramEnabled &&
-                        settingsForm.notificationSettings.telegramChatId.trim() &&
-                        settingsForm.notificationSettings.telegramBotToken.trim()
-                          ? "Ready to test"
+                        settingsForm.notificationSettings.telegramChatId.trim()
+                          ? "Channel configured"
                           : "Needs setup"}
                       </span>
                     </div>
                     <p className="helper-text">
-                      Add your bot token here or keep using the Worker secret. Then connect the
-                      target group or channel with a chat ID like <code>-1001234567890</code> or a
-                      channel username like <code>@omnistock_alerts</code>.
+                      Keep the bot token in the Worker secret for production, then connect the
+                      target group or channel here with a chat ID like <code>-1001234567890</code>{" "}
+                      or a channel username like <code>@omnistock_alerts</code>.
                     </p>
                     <div className="settings-fields-grid">
                       <label className="settings-field-card">
@@ -1808,18 +1811,6 @@ export function AdminPage({
                         </select>
                       </label>
                       <label className="settings-field-card">
-                        <span className="settings-field-label">Telegram Bot Token</span>
-                        <input
-                          type="password"
-                          value={settingsForm.notificationSettings.telegramBotToken}
-                          disabled={!canEditNotificationSettings || submitting === "settings"}
-                          onChange={(event) =>
-                            patchNotificationSettings("telegramBotToken", event.target.value)
-                          }
-                          placeholder="123456:ABC..."
-                        />
-                      </label>
-                      <label className="settings-field-card">
                         <span className="settings-field-label">Telegram Chat ID</span>
                         <input
                           value={settingsForm.notificationSettings.telegramChatId}
@@ -1830,6 +1821,14 @@ export function AdminPage({
                           placeholder="-1001234567890"
                         />
                       </label>
+                      <div className="settings-field-card">
+                        <span className="settings-field-label">Bot Token Source</span>
+                        <strong>Worker secret</strong>
+                        <p className="helper-text" style={{ marginTop: "8px" }}>
+                          Configure <code>TELEGRAM_BOT_TOKEN</code> with Wrangler. The bot token
+                          is no longer stored in OmniStock settings or the database.
+                        </p>
+                      </div>
                       <label className="settings-field-card">
                         <span className="settings-field-label">Wastage Threshold</span>
                         <input
@@ -2041,7 +2040,7 @@ export function AdminPage({
                                 patchNotificationRule(
                                   key as Exclude<
                                     keyof SettingsFormState["notificationSettings"],
-                                    "telegramEnabled" | "telegramBotToken" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
+                                    "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
                                   >,
                                   "enabled",
                                   event.target.checked,
@@ -2059,7 +2058,7 @@ export function AdminPage({
                                 patchNotificationRule(
                                   key as Exclude<
                                     keyof SettingsFormState["notificationSettings"],
-                                    "telegramEnabled" | "telegramBotToken" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
+                                    "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
                                   >,
                                   "inApp",
                                   event.target.checked,
@@ -2077,7 +2076,7 @@ export function AdminPage({
                                 patchNotificationRule(
                                   key as Exclude<
                                     keyof SettingsFormState["notificationSettings"],
-                                    "telegramEnabled" | "telegramBotToken" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
+                                    "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
                                   >,
                                   "telegram",
                                   event.target.checked,

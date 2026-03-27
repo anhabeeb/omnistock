@@ -27,7 +27,7 @@ interface Props {
   snapshot: InventorySnapshot;
   currentUser: User;
   syncState: SyncState;
-  onCreateOperation: (input: CreateOperationInput) => Promise<{ reference: string }>;
+  onCreateOperation: (input: CreateOperationInput) => Promise<InventoryRequest>;
   onEditOperation: (input: EditOperationInput) => Promise<{ reference: string } | undefined>;
   onDeleteOperation: (input: { requestId: string }) => Promise<{ reference: string } | undefined>;
   onReverseOperation: (input: { requestId: string; reason: string }) => Promise<{ reference: string } | undefined>;
@@ -436,7 +436,11 @@ export function InventoryOpsPage({
         wasteStation: capturesWasteMetadata ? form.wasteStation : undefined,
       });
 
-      setFeedback(`${request.reference} saved locally and queued for sync.`);
+      setFeedback(
+        request.status === "submitted"
+          ? `${request.reference} was submitted for approval and queued for sync.`
+          : `${request.reference} saved locally and queued for sync.`,
+      );
       setForm((current) => ({
         ...current,
         quantity: "1",

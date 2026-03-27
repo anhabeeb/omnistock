@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { applyMutation, applySyncEvents } from "../../shared/operations";
+import { can } from "../../shared/permissions";
 import { createEmptySnapshot } from "../../shared/seed";
 import { buildBootstrapPayload } from "../../shared/selectors";
 import type {
+  ApproveInventoryRequest,
   BootstrapPayload,
   ChangeOwnPasswordRequest,
   CreateItemRequest,
@@ -21,6 +23,7 @@ import type {
   MutationPayload,
   OutboxRecord,
   RealtimeMessage,
+  RejectInventoryRequest,
   ReverseInventoryRequest,
   RequestKind,
   ResetUserPasswordRequest,
@@ -41,6 +44,7 @@ import {
   createMarketPriceEntry,
   createSupplierRecord,
   createUser,
+  approveInventoryRequestEntry,
   deleteInventoryRequestEntry,
   deleteItemRecord,
   deleteLocationRecord,
@@ -60,6 +64,7 @@ import {
   resetUserPassword,
   markAllNotificationsRead,
   markNotificationRead,
+  rejectInventoryRequestEntry,
   sendTestTelegramNotification,
   updateItemRecord,
   updateLocationRecord,
@@ -646,7 +651,10 @@ export function useOmniStockApp() {
     pendingMutationIdsRef.current.add(mutation.clientMutationId);
 
     try {
-      const optimistic = applyMutation(currentPayload.snapshot, mutation);
+      const requestStatus = can(currentPayload.currentUser, "inventory.approve") ? "posted" : "submitted";
+      const optimistic = applyMutation(currentPayload.snapshot, mutation, {
+        requestStatus,
+      });
       rememberPayload(
         buildBootstrapPayload(optimistic.snapshot, currentPayload.currentUser.id),
         "local",
@@ -772,6 +780,18 @@ export function useOmniStockApp() {
     return response.reversalRequest;
   }
 
+  async function approveInventoryRequest(input: ApproveInventoryRequest) {
+    const response = await approveInventoryRequestEntry(input);
+    await applyAdminSnapshot(response.snapshot);
+    return response.request;
+  }
+
+  async function rejectInventoryRequest(input: RejectInventoryRequest) {
+    const response = await rejectInventoryRequestEntry(input);
+    await applyAdminSnapshot(response.snapshot);
+    return response.request;
+  }
+
   async function initializeApp(input: InitializeSystemRequest) {
     if (!navigator.onLine) {
       throw new Error("Initial setup needs an online connection to create the first workspace.");
@@ -889,6 +909,8 @@ export function useOmniStockApp() {
     reverseInventoryRequest,
     editInventoryRequest,
     removeInventoryRequest,
+    approveInventoryRequest,
+    rejectInventoryRequest,
     initializeApp,
     updateProfile,
     changeProfilePassword,

@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import {
+  Suspense,
+  lazy,
+  useEffect,
+  useMemo,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
   alpha,
@@ -46,23 +54,64 @@ import {
   SunIcon,
 } from "./components/AppIcons";
 import { formatDateTime } from "./lib/format";
+import { blurActiveElement, SAFE_MUI_MENU_PROPS } from "./lib/muiFocus";
 import { buildMuiTheme } from "./lib/muiTheme";
 import { formatWithWorkspaceClock } from "./lib/time";
 import { useOmniStockApp } from "./lib/useOmniStockApp";
 import { useThemePreference } from "./lib/useThemePreference";
-import { AdminPage } from "./pages/AdminPage";
-import { DashboardPage } from "./pages/DashboardPage";
 import { InitializationPage } from "./pages/InitializationPage";
-import { InventoryOpsPage } from "./pages/InventoryOpsPage";
 import { LoginPage } from "./pages/LoginPage";
-import { MasterDataPage } from "./pages/MasterDataPage";
-import { MobileAlertsPage } from "./pages/MobileAlertsPage";
-import { MobileDashboardPage } from "./pages/MobileDashboardPage";
-import { MobileInventoryOpsPage } from "./pages/MobileInventoryOpsPage";
-import { MobileSearchPage } from "./pages/MobileSearchPage";
-import { ProfilePage } from "./pages/ProfilePage";
-import { ReportsPage } from "./pages/ReportsPage";
-import { SearchPage } from "./pages/SearchPage";
+
+const AdminPage = lazy(() =>
+  import("./pages/AdminPage").then((module) => ({ default: module.AdminPage })),
+);
+const DashboardPage = lazy(() =>
+  import("./pages/DashboardPage").then((module) => ({ default: module.DashboardPage })),
+);
+const InventoryOpsPage = lazy(() =>
+  import("./pages/InventoryOpsPage").then((module) => ({ default: module.InventoryOpsPage })),
+);
+const MasterDataPage = lazy(() =>
+  import("./pages/MasterDataPage").then((module) => ({ default: module.MasterDataPage })),
+);
+const MobileAdministrationPage = lazy(() =>
+  import("./pages/MobileAdministrationPage").then((module) => ({
+    default: module.MobileAdministrationPage,
+  })),
+);
+const MobileAlertsPage = lazy(() =>
+  import("./pages/MobileAlertsPage").then((module) => ({ default: module.MobileAlertsPage })),
+);
+const MobileDashboardPage = lazy(() =>
+  import("./pages/MobileDashboardPage").then((module) => ({
+    default: module.MobileDashboardPage,
+  })),
+);
+const MobileInventoryOpsPage = lazy(() =>
+  import("./pages/MobileInventoryOpsPage").then((module) => ({
+    default: module.MobileInventoryOpsPage,
+  })),
+);
+const MobileMasterDataPage = lazy(() =>
+  import("./pages/MobileMasterDataPage").then((module) => ({
+    default: module.MobileMasterDataPage,
+  })),
+);
+const MobileReportsPage = lazy(() =>
+  import("./pages/MobileReportsPage").then((module) => ({ default: module.MobileReportsPage })),
+);
+const MobileSearchPage = lazy(() =>
+  import("./pages/MobileSearchPage").then((module) => ({ default: module.MobileSearchPage })),
+);
+const ProfilePage = lazy(() =>
+  import("./pages/ProfilePage").then((module) => ({ default: module.ProfilePage })),
+);
+const ReportsPage = lazy(() =>
+  import("./pages/ReportsPage").then((module) => ({ default: module.ReportsPage })),
+);
+const SearchPage = lazy(() =>
+  import("./pages/SearchPage").then((module) => ({ default: module.SearchPage })),
+);
 
 const SIDEBAR_WIDTH = 236;
 
@@ -175,6 +224,8 @@ export default function App() {
     editInventoryRequest,
     removeInventoryRequest,
     reverseInventoryRequest,
+    approveInventoryRequest,
+    rejectInventoryRequest,
     createItem,
     updateItem,
     removeItem,
@@ -205,9 +256,14 @@ export default function App() {
   const isTabletOrMobile = useMediaQuery(muiTheme.breakpoints.down("lg"));
   const profileMenuOpen = Boolean(profileMenuAnchor);
 
+  function closeProfileMenu() {
+    blurActiveElement();
+    setProfileMenuAnchor(null);
+  }
+
   useEffect(() => {
     setMobileMenuOpen(false);
-    setProfileMenuAnchor(null);
+    closeProfileMenu();
   }, [location.pathname, location.search]);
 
   useEffect(() => {
@@ -792,7 +848,9 @@ export default function App() {
             <Menu
               anchorEl={profileMenuAnchor}
               open={profileMenuOpen}
-              onClose={() => setProfileMenuAnchor(null)}
+              onClose={closeProfileMenu}
+              autoFocus={SAFE_MUI_MENU_PROPS.autoFocus}
+              disableAutoFocusItem={SAFE_MUI_MENU_PROPS.disableAutoFocusItem}
               anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
               transformOrigin={{ vertical: "top", horizontal: "right" }}
               slotProps={{
@@ -841,7 +899,7 @@ export default function App() {
 
               <MenuItem
                 onClick={() => {
-                  setProfileMenuAnchor(null);
+                  closeProfileMenu();
                   navigate("/profile");
                 }}
               >
@@ -852,7 +910,7 @@ export default function App() {
               </MenuItem>
               <MenuItem
                 onClick={() => {
-                  setProfileMenuAnchor(null);
+                  closeProfileMenu();
                   void refresh();
                 }}
               >
@@ -863,7 +921,7 @@ export default function App() {
               </MenuItem>
               <MenuItem
                 onClick={() => {
-                  setProfileMenuAnchor(null);
+                  closeProfileMenu();
                   setThemeMode(resolvedTheme === "dark" ? "light" : "dark");
                 }}
               >
@@ -874,7 +932,7 @@ export default function App() {
               </MenuItem>
               <MenuItem
                 onClick={() => {
-                  setProfileMenuAnchor(null);
+                  closeProfileMenu();
                   void logoutUser();
                 }}
                 sx={{ color: "error.main" }}
@@ -887,7 +945,8 @@ export default function App() {
             </Menu>
 
             <Box sx={{ mt: 0.5 }}>
-              <Routes>
+              <Suspense fallback={<LoadingScreen />}>
+                <Routes>
                 {canAccessModule(currentUser, "dashboard") ? (
                   <Route
                     path="/"
@@ -945,22 +1004,41 @@ export default function App() {
                     <Route
                       path="/master-data/*"
                       element={
-                        <MasterDataPage
-                          snapshot={snapshot}
-                          currentUser={currentUser}
-                          onCreateItem={createItem}
-                          onUpdateItem={updateItem}
-                          onDeleteItem={removeItem}
-                          onCreateSupplier={createSupplier}
-                          onUpdateSupplier={updateSupplier}
-                          onDeleteSupplier={removeSupplier}
-                          onCreateLocation={createLocation}
-                          onUpdateLocation={updateLocation}
-                          onDeleteLocation={removeLocation}
-                          onCreateMarketPrice={createMarketPrice}
-                          onUpdateMarketPrice={updateMarketPrice}
-                          onDeleteMarketPrice={removeMarketPrice}
-                        />
+                        isTabletOrMobile ? (
+                          <MobileMasterDataPage
+                            snapshot={snapshot}
+                            currentUser={currentUser}
+                            onCreateItem={createItem}
+                            onUpdateItem={updateItem}
+                            onDeleteItem={removeItem}
+                            onCreateSupplier={createSupplier}
+                            onUpdateSupplier={updateSupplier}
+                            onDeleteSupplier={removeSupplier}
+                            onCreateLocation={createLocation}
+                            onUpdateLocation={updateLocation}
+                            onDeleteLocation={removeLocation}
+                            onCreateMarketPrice={createMarketPrice}
+                            onUpdateMarketPrice={updateMarketPrice}
+                            onDeleteMarketPrice={removeMarketPrice}
+                          />
+                        ) : (
+                          <MasterDataPage
+                            snapshot={snapshot}
+                            currentUser={currentUser}
+                            onCreateItem={createItem}
+                            onUpdateItem={updateItem}
+                            onDeleteItem={removeItem}
+                            onCreateSupplier={createSupplier}
+                            onUpdateSupplier={updateSupplier}
+                            onDeleteSupplier={removeSupplier}
+                            onCreateLocation={createLocation}
+                            onUpdateLocation={updateLocation}
+                            onDeleteLocation={removeLocation}
+                            onCreateMarketPrice={createMarketPrice}
+                            onUpdateMarketPrice={updateMarketPrice}
+                            onDeleteMarketPrice={removeMarketPrice}
+                          />
+                        )
                       }
                     />
                   </>
@@ -970,7 +1048,13 @@ export default function App() {
                     <Route path="/reports" element={<Navigate to="/reports/analytics" replace />} />
                     <Route
                       path="/reports/*"
-                      element={<ReportsPage snapshot={snapshot} currentUser={currentUser} />}
+                      element={
+                        isTabletOrMobile ? (
+                          <MobileReportsPage snapshot={snapshot} currentUser={currentUser} />
+                        ) : (
+                          <ReportsPage snapshot={snapshot} currentUser={currentUser} />
+                        )
+                      }
                     />
                   </>
                 ) : null}
@@ -983,17 +1067,31 @@ export default function App() {
                     <Route
                       path="/administration/*"
                       element={
-                        <AdminPage
-                          snapshot={snapshot}
-                          currentUser={currentUser}
-                          onCreateUser={createUserAccount}
-                          onUpdateUser={updateUserAccount}
-                          onUpdateSettings={updateEnvironmentSettings}
-                          onUpdateRolePermissions={updateRolePermissionMatrix}
-                          onResetUserPassword={resetAccountPassword}
-                          onRemoveUser={removeUserAccount}
-                          onSendTestTelegramNotification={sendTelegramTest}
-                        />
+                        isTabletOrMobile ? (
+                          <MobileAdministrationPage
+                            snapshot={snapshot}
+                            currentUser={currentUser}
+                            onCreateUser={createUserAccount}
+                            onUpdateUser={updateUserAccount}
+                            onUpdateSettings={updateEnvironmentSettings}
+                            onUpdateRolePermissions={updateRolePermissionMatrix}
+                            onResetUserPassword={resetAccountPassword}
+                            onRemoveUser={removeUserAccount}
+                            onSendTestTelegramNotification={sendTelegramTest}
+                          />
+                        ) : (
+                          <AdminPage
+                            snapshot={snapshot}
+                            currentUser={currentUser}
+                            onCreateUser={createUserAccount}
+                            onUpdateUser={updateUserAccount}
+                            onUpdateSettings={updateEnvironmentSettings}
+                            onUpdateRolePermissions={updateRolePermissionMatrix}
+                            onResetUserPassword={resetAccountPassword}
+                            onRemoveUser={removeUserAccount}
+                            onSendTestTelegramNotification={sendTelegramTest}
+                          />
+                        )
                       }
                     />
                   </>
@@ -1013,8 +1111,11 @@ export default function App() {
                   element={
                     <MobileAlertsPage
                       snapshot={snapshot}
+                      currentUser={currentUser}
                       onMarkRead={markNotificationAsRead}
                       onMarkAllRead={markEveryNotificationAsRead}
+                      onApproveRequest={approveInventoryRequest}
+                      onRejectRequest={rejectInventoryRequest}
                     />
                   }
                 />
@@ -1029,8 +1130,9 @@ export default function App() {
                     />
                   }
                 />
-                <Route path="*" element={<Navigate to={defaultPath} replace />} />
-              </Routes>
+                  <Route path="*" element={<Navigate to={defaultPath} replace />} />
+                </Routes>
+              </Suspense>
             </Box>
           </Box>
 

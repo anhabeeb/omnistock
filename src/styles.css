@@ -840,6 +840,10 @@ a {
   min-width: 0;
 }
 
+.page-stack-mobile {
+  gap: 16px;
+}
+
 .content {
   margin-top: 18px;
 }

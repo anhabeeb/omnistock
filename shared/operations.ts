@@ -49,6 +49,7 @@ export interface ApplyMutationOptions {
   idFactory?: (prefix: string) => string;
   referenceFactory?: (kind: RequestKind, fallbackSequence: number) => string;
   nextSeq?: number;
+  requestStatus?: Extract<InventoryRequest["status"], "posted" | "submitted">;
 }
 
 function createId(prefix: string): string {
@@ -418,6 +419,8 @@ export function applyMutation(
   const makeId = options.idFactory ?? createId;
   const note = mutation.payload.note.trim() || `${OPERATION_LABELS[mutation.kind]} processed.`;
   const now = mutation.createdAt;
+  const requestStatus = options.requestStatus ?? "posted";
+  const shouldPost = requestStatus === "posted";
   const enteredQuantity = Number(mutation.payload.quantity);
   const resolvedUnit = resolveRequestedUnit(item, mutation);
   const quantity = enteredQuantity * resolvedUnit.quantityInBase;
@@ -468,45 +471,47 @@ export function applyMutation(
         throw new Error("GRN requires a destination warehouse or outlet.");
       }
 
-      const stock = getOrCreateStock(item, toLocation.id);
-      const before = stock.onHand;
-      const inboundBatch = createInboundBatch(
-        toLocation.id,
-        Math.abs(quantity),
-        mutation,
-        now,
-        `${reference}-LOT`,
-      );
-      const storedBatch = upsertBatch(stock, inboundBatch, makeId);
-      refreshStock(stock);
       touchedLocations.add(toLocation.id);
-      allocationSummary = summarizeAllocations("Received into lot", [
-        {
-          lotCode: storedBatch.lotCode,
-          quantity: Math.abs(quantity),
-          receivedAt: storedBatch.receivedAt,
-          expiryDate: storedBatch.expiryDate,
-          batchBarcodes: storedBatch.barcodes.map((entry) => entry.barcode),
-        },
-      ]);
-      requestLotCode = storedBatch.lotCode;
-      requestExpiryDate = storedBatch.expiryDate;
-      requestReceivedDate = storedBatch.receivedAt;
-      ledgerEntries.push(
-        buildLedgerEntry({
-          id: makeId("led"),
+      if (shouldPost) {
+        const stock = getOrCreateStock(item, toLocation.id);
+        const before = stock.onHand;
+        const inboundBatch = createInboundBatch(
+          toLocation.id,
+          Math.abs(quantity),
           mutation,
-          actor,
-          item,
-          location: toLocation,
-          reference,
-          before,
-          delta: Math.abs(quantity),
           now,
-          note,
-          allocationSummary,
-        }),
-      );
+          `${reference}-LOT`,
+        );
+        const storedBatch = upsertBatch(stock, inboundBatch, makeId);
+        refreshStock(stock);
+        allocationSummary = summarizeAllocations("Received into lot", [
+          {
+            lotCode: storedBatch.lotCode,
+            quantity: Math.abs(quantity),
+            receivedAt: storedBatch.receivedAt,
+            expiryDate: storedBatch.expiryDate,
+            batchBarcodes: storedBatch.barcodes.map((entry) => entry.barcode),
+          },
+        ]);
+        requestLotCode = storedBatch.lotCode;
+        requestExpiryDate = storedBatch.expiryDate;
+        requestReceivedDate = storedBatch.receivedAt;
+        ledgerEntries.push(
+          buildLedgerEntry({
+            id: makeId("led"),
+            mutation,
+            actor,
+            item,
+            location: toLocation,
+            reference,
+            before,
+            delta: Math.abs(quantity),
+            now,
+            note,
+            allocationSummary,
+          }),
+        );
+      }
       break;
     }
     case "gin": {
@@ -521,25 +526,27 @@ export function applyMutation(
         now,
         nextSnapshot.settings.strictFefo,
       );
-      const before = stock.onHand;
-      const allocations = consumeFromStock(stock, Math.abs(quantity), now, "fefo");
       touchedLocations.add(fromLocation.id);
-      allocationSummary = summarizeAllocations("FEFO issued from", allocations);
-      ledgerEntries.push(
-        buildLedgerEntry({
-          id: makeId("led"),
-          mutation,
-          actor,
-          item,
-          location: fromLocation,
-          reference,
-          before,
-          delta: -Math.abs(quantity),
-          now,
-          note,
-          allocationSummary,
-        }),
-      );
+      if (shouldPost) {
+        const before = stock.onHand;
+        const allocations = consumeFromStock(stock, Math.abs(quantity), now, "fefo");
+        allocationSummary = summarizeAllocations("FEFO issued from", allocations);
+        ledgerEntries.push(
+          buildLedgerEntry({
+            id: makeId("led"),
+            mutation,
+            actor,
+            item,
+            location: fromLocation,
+            reference,
+            before,
+            delta: -Math.abs(quantity),
+            now,
+            note,
+            allocationSummary,
+          }),
+        );
+      }
       break;
     }
     case "transfer": {
@@ -554,61 +561,63 @@ export function applyMutation(
         now,
         nextSnapshot.settings.strictFefo,
       );
-      const outBefore = outStock.onHand;
-      const allocations = consumeFromStock(outStock, Math.abs(quantity), now, "fefo");
-
-      const inStock = getOrCreateStock(item, toLocation.id);
-      const inBefore = inStock.onHand;
-      for (const allocation of allocations) {
-        upsertBatch(
-          inStock,
-          {
-            locationId: toLocation.id,
-            lotCode: allocation.lotCode,
-            quantity: allocation.quantity,
-            receivedAt: allocation.receivedAt,
-            expiryDate: allocation.expiryDate,
-            barcodeValues: allocation.batchBarcodes,
-          },
-          makeId,
-        );
-      }
-      refreshStock(inStock);
-
       touchedLocations.add(fromLocation.id);
       touchedLocations.add(toLocation.id);
-      allocationSummary = summarizeAllocations("FEFO transferred from", allocations);
+      if (shouldPost) {
+        const outBefore = outStock.onHand;
+        const allocations = consumeFromStock(outStock, Math.abs(quantity), now, "fefo");
 
-      ledgerEntries.push(
-        buildLedgerEntry({
-          id: makeId("led"),
-          mutation,
-          actor,
-          item,
-          location: fromLocation,
-          reference,
-          before: outBefore,
-          delta: -Math.abs(quantity),
-          now,
-          note,
-          allocationSummary,
-        }),
-      );
-      ledgerEntries.push(
-        buildLedgerEntry({
-          id: makeId("led"),
-          mutation,
-          actor,
-          item,
-          location: toLocation,
-          reference,
-          before: inBefore,
-          delta: Math.abs(quantity),
-          now,
-          note,
-          allocationSummary,
-        }),
-      );
+        const inStock = getOrCreateStock(item, toLocation.id);
+        const inBefore = inStock.onHand;
+        for (const allocation of allocations) {
+          upsertBatch(
+            inStock,
+            {
+              locationId: toLocation.id,
+              lotCode: allocation.lotCode,
+              quantity: allocation.quantity,
+              receivedAt: allocation.receivedAt,
+              expiryDate: allocation.expiryDate,
+              barcodeValues: allocation.batchBarcodes,
+            },
+            makeId,
+          );
+        }
+        refreshStock(inStock);
+
+        allocationSummary = summarizeAllocations("FEFO transferred from", allocations);
+
+        ledgerEntries.push(
+          buildLedgerEntry({
+            id: makeId("led"),
+            mutation,
+            actor,
+            item,
+            location: fromLocation,
+            reference,
+            before: outBefore,
+            delta: -Math.abs(quantity),
+            now,
+            note,
+            allocationSummary,
+          }),
+        );
+        ledgerEntries.push(
+          buildLedgerEntry({
+            id: makeId("led"),
+            mutation,
+            actor,
+            item,
+            location: toLocation,
+            reference,
+            before: inBefore,
+            delta: Math.abs(quantity),
+            now,
+            note,
+            allocationSummary,
+          }),
+        );
+      }
       break;
     }
     case "adjustment": {
@@ -617,51 +626,56 @@ export function applyMutation(
       }
 
       const stock = getOrCreateStock(item, fromLocation.id);
-      const before = stock.onHand;
-
-      if (quantity > 0) {
-        const inboundBatch = createInboundBatch(
-          fromLocation.id,
-          quantity,
-          mutation,
-          now,
-          `${reference}-ADJ`,
-        );
-        const storedBatch = upsertBatch(stock, inboundBatch, makeId);
-        refreshStock(stock);
-        allocationSummary = summarizeAllocations("Adjustment added to", [
-          {
-            lotCode: storedBatch.lotCode,
-            quantity,
-            receivedAt: storedBatch.receivedAt,
-            expiryDate: storedBatch.expiryDate,
-            batchBarcodes: storedBatch.barcodes.map((entry) => entry.barcode),
-          },
-        ]);
-        requestLotCode = storedBatch.lotCode;
-        requestExpiryDate = storedBatch.expiryDate;
-        requestReceivedDate = storedBatch.receivedAt;
-      } else {
-        const allocations = consumeFromStock(stock, Math.abs(quantity), now, "remove-first");
-        allocationSummary = summarizeAllocations("Adjustment removed from", allocations);
-      }
-
       touchedLocations.add(fromLocation.id);
-      ledgerEntries.push(
-        buildLedgerEntry({
-          id: makeId("led"),
-          mutation,
-          actor,
-          item,
-          location: fromLocation,
-          reference,
-          before,
-          delta: quantity,
-          now,
-          note,
-          allocationSummary,
-        }),
-      );
+      if (!shouldPost && quantity < 0) {
+        assertOutboundAvailability(stock, Math.abs(quantity), now, false);
+      }
+      if (shouldPost) {
+        const before = stock.onHand;
+
+        if (quantity > 0) {
+          const inboundBatch = createInboundBatch(
+            fromLocation.id,
+            quantity,
+            mutation,
+            now,
+            `${reference}-ADJ`,
+          );
+          const storedBatch = upsertBatch(stock, inboundBatch, makeId);
+          refreshStock(stock);
+          allocationSummary = summarizeAllocations("Adjustment added to", [
+            {
+              lotCode: storedBatch.lotCode,
+              quantity,
+              receivedAt: storedBatch.receivedAt,
+              expiryDate: storedBatch.expiryDate,
+              batchBarcodes: storedBatch.barcodes.map((entry) => entry.barcode),
+            },
+          ]);
+          requestLotCode = storedBatch.lotCode;
+          requestExpiryDate = storedBatch.expiryDate;
+          requestReceivedDate = storedBatch.receivedAt;
+        } else {
+          const allocations = consumeFromStock(stock, Math.abs(quantity), now, "remove-first");
+          allocationSummary = summarizeAllocations("Adjustment removed from", allocations);
+        }
+
+        ledgerEntries.push(
+          buildLedgerEntry({
+            id: makeId("led"),
+            mutation,
+            actor,
+            item,
+            location: fromLocation,
+            reference,
+            before,
+            delta: quantity,
+            now,
+            note,
+            allocationSummary,
+          }),
+        );
+      }
       break;
     }
     case "stock-count": {
@@ -677,55 +691,57 @@ export function applyMutation(
       }
       const countedQuantity = countedQuantityEntered * resolvedUnit.quantityInBase;
 
-      const stock = getOrCreateStock(item, fromLocation.id);
-      const before = stock.onHand;
-      const delta = countedQuantity - before;
-
-      if (delta > 0) {
-        const inboundBatch = createInboundBatch(
-          fromLocation.id,
-          delta,
-          mutation,
-          now,
-          `${reference}-COUNT`,
-        );
-        const storedBatch = upsertBatch(stock, inboundBatch, makeId);
-        refreshStock(stock);
-        allocationSummary = summarizeAllocations("Count variance added to", [
-          {
-            lotCode: storedBatch.lotCode,
-            quantity: delta,
-            receivedAt: storedBatch.receivedAt,
-            expiryDate: storedBatch.expiryDate,
-            batchBarcodes: storedBatch.barcodes.map((entry) => entry.barcode),
-          },
-        ]);
-        requestLotCode = storedBatch.lotCode;
-        requestExpiryDate = storedBatch.expiryDate;
-        requestReceivedDate = storedBatch.receivedAt;
-      } else if (delta < 0) {
-        const allocations = consumeFromStock(stock, Math.abs(delta), now, "remove-first");
-        allocationSummary = summarizeAllocations("Count variance removed from", allocations);
-      } else {
-        allocationSummary = "No batch variance was found during the count.";
-      }
-
       touchedLocations.add(fromLocation.id);
-      ledgerEntries.push(
-        buildLedgerEntry({
-          id: makeId("led"),
-          mutation,
-          actor,
-          item,
-          location: fromLocation,
-          reference,
-          before,
-          delta,
-          now,
-          note,
-          allocationSummary,
-        }),
-      );
+      if (shouldPost) {
+        const stock = getOrCreateStock(item, fromLocation.id);
+        const before = stock.onHand;
+        const delta = countedQuantity - before;
+
+        if (delta > 0) {
+          const inboundBatch = createInboundBatch(
+            fromLocation.id,
+            delta,
+            mutation,
+            now,
+            `${reference}-COUNT`,
+          );
+          const storedBatch = upsertBatch(stock, inboundBatch, makeId);
+          refreshStock(stock);
+          allocationSummary = summarizeAllocations("Count variance added to", [
+            {
+              lotCode: storedBatch.lotCode,
+              quantity: delta,
+              receivedAt: storedBatch.receivedAt,
+              expiryDate: storedBatch.expiryDate,
+              batchBarcodes: storedBatch.barcodes.map((entry) => entry.barcode),
+            },
+          ]);
+          requestLotCode = storedBatch.lotCode;
+          requestExpiryDate = storedBatch.expiryDate;
+          requestReceivedDate = storedBatch.receivedAt;
+        } else if (delta < 0) {
+          const allocations = consumeFromStock(stock, Math.abs(delta), now, "remove-first");
+          allocationSummary = summarizeAllocations("Count variance removed from", allocations);
+        } else {
+          allocationSummary = "No batch variance was found during the count.";
+        }
+
+        ledgerEntries.push(
+          buildLedgerEntry({
+            id: makeId("led"),
+            mutation,
+            actor,
+            item,
+            location: fromLocation,
+            reference,
+            before,
+            delta,
+            now,
+            note,
+            allocationSummary,
+          }),
+        );
+      }
       break;
     }
     case "wastage": {
@@ -734,64 +750,69 @@ export function applyMutation(
       }
 
       const stock = getOrCreateStock(item, fromLocation.id);
-      const before = stock.onHand;
-      const allocations = consumeFromStock(stock, Math.abs(quantity), now, "remove-first");
       const wasteReason = mutation.payload.wasteReason ?? "spoilage";
       const wasteShift = mutation.payload.wasteShift ?? "morning";
       const wasteStation = mutation.payload.wasteStation?.trim() || fromLocation.name;
+      assertOutboundAvailability(stock, Math.abs(quantity), now, false);
       touchedLocations.add(fromLocation.id);
-      allocationSummary = summarizeAllocations("Wastage removed from", allocations);
-      wasteEntry = {
-        id: makeId("wte"),
-        requestId: "",
-        itemId: item.id,
-        itemName: item.name,
-        locationId: fromLocation.id,
-        locationName: fromLocation.name,
-        quantity: Math.abs(quantity),
-        unit: item.unit,
-        reason: wasteReason,
-        shift: wasteShift,
-        station: wasteStation,
-        batchLotCode: allocations.map((allocation) => allocation.lotCode).join(", "),
-        expiryDate: allocations
-          .map((allocation) => allocation.expiryDate)
-          .filter((value): value is string => Boolean(value))
-          .sort()[0],
-        estimatedCost: Math.abs(quantity) * item.costPrice,
-        reportedBy: actor.id,
-        reportedByName: actor.name,
-        createdAt: now,
-        note,
-      };
-      ledgerEntries.push(
-        buildLedgerEntry({
-          id: makeId("led"),
-          mutation,
-          actor,
-          item,
-          location: fromLocation,
-          reference,
-          before,
-          delta: -Math.abs(quantity),
-          now,
+      if (shouldPost) {
+        const before = stock.onHand;
+        const allocations = consumeFromStock(stock, Math.abs(quantity), now, "remove-first");
+        allocationSummary = summarizeAllocations("Wastage removed from", allocations);
+        wasteEntry = {
+          id: makeId("wte"),
+          requestId: "",
+          itemId: item.id,
+          itemName: item.name,
+          locationId: fromLocation.id,
+          locationName: fromLocation.name,
+          quantity: Math.abs(quantity),
+          unit: item.unit,
+          reason: wasteReason,
+          shift: wasteShift,
+          station: wasteStation,
+          batchLotCode: allocations.map((allocation) => allocation.lotCode).join(", "),
+          expiryDate: allocations
+            .map((allocation) => allocation.expiryDate)
+            .filter((value): value is string => Boolean(value))
+            .sort()[0],
+          estimatedCost: Math.abs(quantity) * item.costPrice,
+          reportedBy: actor.id,
+          reportedByName: actor.name,
+          createdAt: now,
           note,
-          allocationSummary,
-        }),
-      );
+        };
+        ledgerEntries.push(
+          buildLedgerEntry({
+            id: makeId("led"),
+            mutation,
+            actor,
+            item,
+            location: fromLocation,
+            reference,
+            before,
+            delta: -Math.abs(quantity),
+            now,
+            note,
+            allocationSummary,
+          }),
+        );
+      }
       break;
     }
   }
 
-  refreshItemStocks(item);
-  item.updatedAt = now;
+  if (shouldPost) {
+    refreshItemStocks(item);
+    item.updatedAt = now;
+  }
   upsertItem(nextSnapshot, item);
 
   const request: InventoryRequest = {
     id: makeId("req"),
     reference,
     kind: mutation.kind,
-    status: "posted",
+    status: requestStatus,
     itemId: item.id,
     itemName: item.name,
     barcode: mutation.payload.barcode ?? item.barcode,
@@ -837,13 +858,16 @@ export function applyMutation(
   }
 
   const nextSeq = options.nextSeq ?? nextSnapshot.syncCursor + 1;
-  const activityDetail = `${request.reference} updated ${item.name} across ${touchedLocations.size} location(s).${
-    allocationSummary ? ` ${allocationSummary}` : ""
-  }`;
+  const locationDetail =
+    touchedLocations.size > 0 ? ` across ${touchedLocations.size} location(s).` : ".";
+  const activityDetail =
+    requestStatus === "posted"
+      ? `${request.reference} updated ${item.name}${locationDetail}${allocationSummary ? ` ${allocationSummary}` : ""}`
+      : `${request.reference} submitted ${item.name} for approval${locationDetail}`;
   const activity: ActivityLog = {
     id: makeId("act"),
     seq: nextSeq,
-    title: `${OPERATION_LABELS[mutation.kind]} posted`,
+    title: `${OPERATION_LABELS[mutation.kind]} ${requestStatus === "posted" ? "posted" : "submitted"}`,
     detail: activityDetail,
     actorId: actor.id,
     actorName: actor.name,

@@ -12,7 +12,7 @@ import {
   ROLE_PRESETS,
   permissionsForRole,
 } from "../../shared/permissions";
-import { applyMutation } from "../../shared/operations";
+import { OPERATION_LABELS, applyMutation } from "../../shared/operations";
 import type { MutationResult } from "../../shared/operations";
 import {
   buildBootstrapPayload,
@@ -37,6 +37,7 @@ import type {
   CreateMarketPriceResponse,
   CreateSupplierRequest,
   CreateSupplierResponse,
+  ApproveInventoryRequest,
   DeleteInventoryRequest,
   DeleteItemRequest,
   DeleteLocationRequest,
@@ -73,6 +74,7 @@ import type {
   RequestKind,
   ReportSyncFailureRequest,
   ReportPrintTemplate,
+  RejectInventoryRequest,
   ReverseInventoryRequest,
   ResetUserPasswordRequest,
   RemoveUserRequest,
@@ -105,6 +107,9 @@ import type {
 import { OMNISTOCK_D1_SCHEMA_SQL } from "./schema";
 
 type D1Value = string | number | null;
+type LegacyNotificationSettingsInput = NotificationSettings & {
+  telegramBotToken?: string;
+};
 
 const SETTINGS_ID = "stg-00001";
 const SEQUENCE_DEFAULT_WIDTH = 5;
@@ -118,7 +123,7 @@ const NOTIFICATION_TYPE_TO_SETTINGS_KEY: Record<
   Exclude<NotificationType, "daily-summary">,
   keyof Omit<
     NotificationSettings,
-    "telegramEnabled" | "telegramBotToken" | "telegramChatId" | "dailySummary" | "wastageCostThreshold"
+    "telegramEnabled" | "telegramChatId" | "dailySummary" | "wastageCostThreshold"
   >
 > = {
   "low-stock": "lowStock",
@@ -605,10 +610,12 @@ function ensurePrivilegedUserManagementAllowed(
 }
 
 function validateNotificationSettings(
-  input: NotificationSettings | undefined,
+  input: NotificationSettings | LegacyNotificationSettingsInput | undefined,
 ): NotificationSettings {
   const fallback = createDefaultNotificationSettings();
-  const safeInput = input ?? fallback;
+  const safeInput = (input ?? fallback) as NotificationSettings & {
+    telegramBotToken?: string;
+  };
   const dailySummaryInput = safeInput.dailySummary ?? fallback.dailySummary;
   const dailySummaryHour = Number(dailySummaryInput.hour);
   const wastageCostThreshold = Number(safeInput.wastageCostThreshold);
@@ -649,7 +656,6 @@ function validateNotificationSettings(
 
   const normalized: NotificationSettings = {
     telegramEnabled: Boolean(safeInput.telegramEnabled),
-    telegramBotToken: String(safeInput.telegramBotToken ?? "").trim(),
     telegramChatId: String(safeInput.telegramChatId ?? "").trim(),
     lowStock: normalizeNotificationRule(safeInput.lowStock, fallback.lowStock),
     nearExpiry: normalizeNotificationRule(safeInput.nearExpiry, fallback.nearExpiry),
@@ -941,6 +947,37 @@ async function seedReferenceData(db: D1Database): Promise<void> {
     "INSERT OR IGNORE INTO system_state (key, value_integer, value_text, updated_at) VALUES ('latest_cursor', 0, NULL, ?)",
     [now],
   );
+}
+
+async function scrubLegacyTelegramBotToken(db: D1Database): Promise<void> {
+  if (!(await tableExists(db, "app_settings"))) {
+    return;
+  }
+
+  const row = await first<{ id: string; notification_settings_json: string | null }>(
+    db,
+    "SELECT id, notification_settings_json FROM app_settings WHERE id = ? LIMIT 1",
+    [SETTINGS_ID],
+  );
+  if (!row?.notification_settings_json) {
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(row.notification_settings_json) as LegacyNotificationSettingsInput;
+    if (!Object.prototype.hasOwnProperty.call(parsed, "telegramBotToken")) {
+      return;
+    }
+
+    delete parsed.telegramBotToken;
+    await execute(
+      db,
+      "UPDATE app_settings SET notification_settings_json = ?, updated_at = ? WHERE id = ?",
+      [JSON.stringify(validateNotificationSettings(parsed)), new Date().toISOString(), row.id],
+    );
+  } catch {
+    // Ignore malformed legacy settings rows; the runtime validation path already falls back safely.
+  }
 }
 
 async function ensureLatestSchema(db: D1Database): Promise<void> {
@@ -1430,6 +1467,7 @@ async function initializeDatabase(db: D1Database): Promise<void> {
 
   await ensureLatestSchema(db);
   await seedReferenceData(db);
+  await scrubLegacyTelegramBotToken(db);
 }
 
 export async function ensureDatabaseReady(db: D1Database): Promise<void> {
@@ -1589,6 +1627,7 @@ interface RequestRow {
 
 interface InventoryRequestActionRow {
   id: string;
+  line_id: string;
   reference: string;
   kind: RequestKind;
   status: InventoryRequest["status"];
@@ -2579,7 +2618,7 @@ async function deliverNotificationToTelegram(
   telegramBotToken?: string,
 ): Promise<void> {
   const chatId = settings.telegramChatId.trim();
-  const configuredToken = settings.telegramBotToken.trim() || telegramBotToken?.trim() || "";
+  const configuredToken = telegramBotToken?.trim() || "";
   if (!configuredToken || !chatId) {
     await recordNotificationDelivery(
       db,
@@ -2587,7 +2626,9 @@ async function deliverNotificationToTelegram(
       "telegram",
       chatId || "unconfigured",
       "skipped",
-      "Telegram delivery is not configured yet.",
+      !configuredToken
+        ? "Worker secret TELEGRAM_BOT_TOKEN is not configured."
+        : "Telegram chat ID is not configured yet.",
     );
     return;
   }
@@ -3130,10 +3171,10 @@ export async function sendTestTelegramNotificationInD1(
   if (!settings.telegramChatId.trim()) {
     throw new Error("Enter a valid Telegram chat ID before sending a test message.");
   }
-  const configuredToken = settings.telegramBotToken.trim() || telegramBotToken?.trim() || "";
+  const configuredToken = telegramBotToken?.trim() || "";
   if (!configuredToken) {
     throw new Error(
-      "Enter a Telegram bot token in Settings or configure TELEGRAM_BOT_TOKEN on the Worker first.",
+      "Configure the TELEGRAM_BOT_TOKEN Worker secret before sending a Telegram test message.",
     );
   }
 
@@ -3568,6 +3609,12 @@ function inventoryPermissionForKind(kind: RequestKind): PermissionKey {
   }
 }
 
+function inventoryRequestStatusForActor(
+  actor: User,
+): Extract<InventoryRequest["status"], "posted" | "submitted"> {
+  return userHasPermission(actor, "inventory.approve") ? "posted" : "submitted";
+}
+
 async function countSuperadmins(db: D1Database, excludeUserId?: string): Promise<number> {
   const row = await first<CountRow>(
     db,
@@ -3595,9 +3642,11 @@ async function hasUserHistory(db: D1Database, userId: string): Promise<boolean> 
 async function appendActivity(
   db: D1Database,
   actorId: string,
-  moduleKey: "administration" | "masterData",
+  moduleKey: ActivityLog["module"],
   title: string,
   detail: string,
+  severity: ActivityLog["severity"] = "success",
+  relatedRequestId?: string,
 ): Promise<void> {
   const cursor = await currentCursor(db);
   const activityId = await reserveNextId(db, "activity_logs", "act");
@@ -3605,8 +3654,19 @@ async function appendActivity(
   const createdAt = new Date().toISOString();
   await execute(
     db,
-    "INSERT INTO activity_logs (id, sequence_no, seq, title, detail, actor_id, module_key, severity, related_request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'success', NULL, ?)",
-    [activityId, numberPart(activityId), nextSeq, title, detail, actorId, moduleKey, createdAt],
+    "INSERT INTO activity_logs (id, sequence_no, seq, title, detail, actor_id, module_key, severity, related_request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [
+      activityId,
+      numberPart(activityId),
+      nextSeq,
+      title,
+      detail,
+      actorId,
+      moduleKey,
+      severity,
+      relatedRequestId ?? null,
+      createdAt,
+    ],
   );
   await execute(
     db,
@@ -4283,13 +4343,21 @@ interface GeneratedMutationContext {
   idFactory: (prefix: string) => string;
 }
 
+interface BuildMutationContextOptions {
+  requestId?: string;
+  requestLineId?: string;
+  reference?: string;
+}
+
 async function buildMutationContext(
   db: D1Database,
   mutation: MutationEnvelope,
   requestedIds: Map<string, number>,
+  options: BuildMutationContextOptions = {},
 ): Promise<GeneratedMutationContext> {
-  const requestId = await reserveNextId(db, "inventory_requests", "req");
-  const requestLineId = await reserveNextId(db, "inventory_request_lines", "rql");
+  const requestId = options.requestId ?? (await reserveNextId(db, "inventory_requests", "req"));
+  const requestLineId =
+    options.requestLineId ?? (await reserveNextId(db, "inventory_request_lines", "rql"));
   const activityId = await reserveNextId(db, "activity_logs", "act");
   const eventId = await reserveNextId(db, "sync_events", "evt");
   const ledgerIds = await Promise.all(
@@ -4312,7 +4380,7 @@ async function buildMutationContext(
       reserveNextId(db, "waste_entries", "wte"),
     ),
   );
-  const reference = await reserveNextDocumentReference(db, mutation.kind);
+  const reference = options.reference ?? (await reserveNextDocumentReference(db, mutation.kind));
 
   const idBuckets = new Map<string, string[]>([
     ["req", [requestId]],
@@ -4338,16 +4406,7 @@ async function buildMutationContext(
   };
 }
 
-async function persistMutationResult(
-  db: D1Database,
-  mutation: MutationEnvelope,
-  event: SyncEvent,
-  context: GeneratedMutationContext,
-) {
-  const updatedItem = event.updatedItem;
-  const request = event.request;
-  const lineId = context.requestLineId;
-
+async function persistUpdatedItemState(db: D1Database, updatedItem: Item): Promise<void> {
   await execute(db, "UPDATE items SET updated_at = ? WHERE id = ?", [
     updatedItem.updatedAt,
     updatedItem.id,
@@ -4443,58 +4502,14 @@ async function persistMutationResult(
       }
     }
   }
+}
 
-  await execute(
-    db,
-    "INSERT INTO inventory_requests (id, sequence_no, reference, kind, status, supplier_id, from_location_id, to_location_id, requested_by, requested_at, posted_at, note, client_mutation_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    [
-      request.id,
-      numberPart(request.id),
-      request.reference,
-      request.kind,
-      request.status,
-      request.supplierId ?? null,
-      request.fromLocationId ?? null,
-      request.toLocationId ?? null,
-      request.requestedBy,
-      request.requestedAt,
-      request.status === "posted" ? request.requestedAt : null,
-      request.note,
-      mutation.clientMutationId,
-      request.requestedAt,
-      request.requestedAt,
-    ],
-  );
-
-  await execute(
-    db,
-    "INSERT INTO inventory_request_lines (id, sequence_no, request_id, line_no, item_id, barcode, quantity, base_quantity, base_unit, unit_factor, counted_quantity, lot_code, batch_barcode, expiry_date, received_at, allocation_summary, waste_reason, waste_shift, waste_station, unit, note, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    [
-      lineId,
-      numberPart(lineId),
-      request.id,
-      request.itemId,
-      request.barcode,
-      request.quantity,
-      request.baseQuantity,
-      request.baseUnit,
-      request.unitFactor,
-      request.kind === "stock-count" ? request.quantity : null,
-      request.lotCode ?? null,
-      request.batchBarcode ?? null,
-      request.expiryDate ?? null,
-      request.receivedDate ?? null,
-      request.allocationSummary ?? null,
-      request.wasteReason ?? null,
-      request.wasteShift ?? null,
-      request.wasteStation ?? null,
-      request.unit,
-      request.note,
-      request.requestedAt,
-      request.requestedAt,
-    ],
-  );
-
+async function persistInventoryArtifacts(
+  db: D1Database,
+  event: SyncEvent,
+  lineId: string,
+): Promise<void> {
+  const request = event.request;
   for (const ledgerEntry of event.ledgerEntries) {
     await execute(
       db,
@@ -4586,11 +4601,167 @@ async function persistMutationResult(
   );
 }
 
+async function persistMutationResult(
+  db: D1Database,
+  mutation: MutationEnvelope,
+  event: SyncEvent,
+  context: GeneratedMutationContext,
+) {
+  const request = event.request;
+  const lineId = context.requestLineId;
+
+  await persistUpdatedItemState(db, event.updatedItem);
+
+  await execute(
+    db,
+    "INSERT INTO inventory_requests (id, sequence_no, reference, kind, status, supplier_id, from_location_id, to_location_id, requested_by, requested_at, posted_at, note, client_mutation_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [
+      request.id,
+      numberPart(request.id),
+      request.reference,
+      request.kind,
+      request.status,
+      request.supplierId ?? null,
+      request.fromLocationId ?? null,
+      request.toLocationId ?? null,
+      request.requestedBy,
+      request.requestedAt,
+      request.status === "posted" ? event.timestamp : null,
+      request.note,
+      mutation.clientMutationId,
+      request.requestedAt,
+      event.timestamp,
+    ],
+  );
+
+  await execute(
+    db,
+    "INSERT INTO inventory_request_lines (id, sequence_no, request_id, line_no, item_id, barcode, quantity, base_quantity, base_unit, unit_factor, counted_quantity, lot_code, batch_barcode, expiry_date, received_at, allocation_summary, waste_reason, waste_shift, waste_station, unit, note, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [
+      lineId,
+      numberPart(lineId),
+      request.id,
+      request.itemId,
+      request.barcode,
+      request.quantity,
+      request.baseQuantity,
+      request.baseUnit,
+      request.unitFactor,
+      request.kind === "stock-count" ? request.quantity : null,
+      request.lotCode ?? null,
+      request.batchBarcode ?? null,
+      request.expiryDate ?? null,
+      request.receivedDate ?? null,
+      request.allocationSummary ?? null,
+      request.wasteReason ?? null,
+      request.wasteShift ?? null,
+      request.wasteStation ?? null,
+      request.unit,
+      request.note,
+      request.requestedAt,
+      event.timestamp,
+    ],
+  );
+
+  await persistInventoryArtifacts(db, event, lineId);
+}
+
+async function persistApprovedMutationResult(
+  db: D1Database,
+  mutation: MutationEnvelope,
+  event: SyncEvent,
+  context: GeneratedMutationContext,
+) {
+  const request = event.request;
+  const lineId = context.requestLineId;
+
+  await persistUpdatedItemState(db, event.updatedItem);
+
+  await execute(
+    db,
+    `UPDATE inventory_requests
+       SET kind = ?,
+           status = ?,
+           supplier_id = ?,
+           from_location_id = ?,
+           to_location_id = ?,
+           requested_by = ?,
+           requested_at = ?,
+           posted_at = ?,
+           note = ?,
+           client_mutation_id = ?,
+           updated_at = ?
+     WHERE id = ?`,
+    [
+      request.kind,
+      request.status,
+      request.supplierId ?? null,
+      request.fromLocationId ?? null,
+      request.toLocationId ?? null,
+      request.requestedBy,
+      request.requestedAt,
+      request.status === "posted" ? event.timestamp : null,
+      request.note,
+      mutation.clientMutationId,
+      event.timestamp,
+      request.id,
+    ],
+  );
+
+  await execute(
+    db,
+    `UPDATE inventory_request_lines
+       SET item_id = ?,
+           barcode = ?,
+           quantity = ?,
+           base_quantity = ?,
+           base_unit = ?,
+           unit_factor = ?,
+           counted_quantity = ?,
+           lot_code = ?,
+           batch_barcode = ?,
+           expiry_date = ?,
+           received_at = ?,
+           allocation_summary = ?,
+           waste_reason = ?,
+           waste_shift = ?,
+           waste_station = ?,
+           unit = ?,
+           note = ?,
+           updated_at = ?
+     WHERE id = ?`,
+    [
+      request.itemId,
+      request.barcode,
+      request.quantity,
+      request.baseQuantity,
+      request.baseUnit,
+      request.unitFactor,
+      request.kind === "stock-count" ? request.quantity : null,
+      request.lotCode ?? null,
+      request.batchBarcode ?? null,
+      request.expiryDate ?? null,
+      request.receivedDate ?? null,
+      request.allocationSummary ?? null,
+      request.wasteReason ?? null,
+      request.wasteShift ?? null,
+      request.wasteStation ?? null,
+      request.unit,
+      request.note,
+      event.timestamp,
+      lineId,
+    ],
+  );
+
+  await persistInventoryArtifacts(db, event, lineId);
+}
+
 async function recordInventoryMutation(
   db: D1Database,
   snapshot: InventorySnapshot,
   mutation: MutationEnvelope,
   telegramBotToken?: string,
+  requestStatus: Extract<InventoryRequest["status"], "posted" | "submitted"> = "posted",
 ): Promise<MutationResult> {
   const nextSeq = snapshot.syncCursor + 1;
   const previewCounters = new Map<string, number>();
@@ -4602,6 +4773,7 @@ async function recordInventoryMutation(
     },
     referenceFactory: () => `PREVIEW-${nextSeq}`,
     nextSeq,
+    requestStatus,
   });
 
   const context = await buildMutationContext(db, mutation, previewCounters);
@@ -4609,6 +4781,7 @@ async function recordInventoryMutation(
     idFactory: context.idFactory,
     referenceFactory: () => context.reference,
     nextSeq,
+    requestStatus,
   });
 
   await persistMutationResult(db, mutation, result.event, context);
@@ -4624,12 +4797,13 @@ async function loadInventoryRequestActionRow(
   db: D1Database,
   requestId: string,
 ): Promise<InventoryRequestActionRow | null> {
-  return first<InventoryRequestActionRow>(
-    db,
-    `SELECT
-      r.id,
-      r.reference,
-      r.kind,
+    return first<InventoryRequestActionRow>(
+      db,
+      `SELECT
+        r.id,
+        rl.id AS line_id,
+        r.reference,
+        r.kind,
       r.status,
       rl.item_id,
       rl.barcode,
@@ -4826,6 +5000,39 @@ function buildReversalMutation(
         },
       };
   }
+}
+
+function buildApprovalMutation(
+  actorId: string,
+  request: InventoryRequestActionRow,
+): MutationEnvelope {
+  return {
+    clientMutationId: crypto.randomUUID(),
+    actorId,
+    createdAt: new Date().toISOString(),
+    kind: request.kind,
+    payload: {
+      itemId: request.item_id,
+      quantity: Number(request.quantity),
+      note: request.note,
+      barcode: request.barcode,
+      quantityUnit: request.unit,
+      supplierId: request.supplier_id ?? undefined,
+      fromLocationId: request.from_location_id ?? undefined,
+      toLocationId: request.to_location_id ?? undefined,
+      countedQuantity:
+        request.kind === "stock-count"
+          ? Number(request.counted_quantity ?? request.quantity)
+          : undefined,
+      lotCode: request.lot_code ?? undefined,
+      batchBarcode: request.batch_barcode ?? undefined,
+      expiryDate: request.expiry_date ?? undefined,
+      receivedDate: request.received_at ?? undefined,
+      wasteReason: request.kind === "wastage" ? request.waste_reason ?? undefined : undefined,
+      wasteShift: request.kind === "wastage" ? request.waste_shift ?? undefined : undefined,
+      wasteStation: request.kind === "wastage" ? request.waste_station ?? undefined : undefined,
+    },
+  };
 }
 
 export async function createMarketPriceEntryInD1(
@@ -5854,6 +6061,134 @@ export async function initializeSystemInD1(
   };
 }
 
+export async function approveInventoryRequestInD1(
+  db: D1Database,
+  actorId: string,
+  input: ApproveInventoryRequest,
+  telegramBotToken?: string,
+): Promise<InventoryActionResponse> {
+  await ensureDatabaseReady(db);
+
+  const snapshot = await loadSnapshot(db);
+  const request = await loadInventoryRequestActionRow(db, input.requestId);
+  if (!request) {
+    throw new Error("The selected approval request could not be found.");
+  }
+  if (request.status !== "submitted") {
+    throw new Error("Only submitted inventory requests can be approved.");
+  }
+
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "inventory.approve",
+    "You do not have permission to approve inventory requests.",
+  );
+  const requesterName =
+    snapshot.users.find((user) => user.id === request.requested_by)?.name ?? "Unknown user";
+  const approvalNote = input.note?.trim() || "Approved for posting.";
+  const mutation = buildApprovalMutation(actor.id, request);
+  const nextSeq = snapshot.syncCursor + 1;
+  const previewCounters = new Map<string, number>();
+  applyMutation(snapshot, mutation, {
+    idFactory: (prefix: string) => {
+      const nextValue = (previewCounters.get(prefix) ?? 0) + 1;
+      previewCounters.set(prefix, nextValue);
+      return `${prefix}-preview-${nextValue}`;
+    },
+    referenceFactory: () => request.reference,
+    nextSeq,
+    requestStatus: "posted",
+  });
+
+  const context = await buildMutationContext(db, mutation, previewCounters, {
+    requestId: request.id,
+    requestLineId: request.line_id,
+    reference: request.reference,
+  });
+  const result = applyMutation(snapshot, mutation, {
+    idFactory: context.idFactory,
+    referenceFactory: () => context.reference,
+    nextSeq,
+    requestStatus: "posted",
+  });
+
+  const mergedRequest: InventoryRequest = {
+    ...result.event.request,
+    id: request.id,
+    reference: request.reference,
+    requestedBy: request.requested_by,
+    requestedByName: requesterName,
+    requestedAt: request.requested_at,
+    note: buildInventoryActionNote(request.note, "Approved", actor.name, approvalNote),
+    status: "posted",
+  };
+  result.event.request = mergedRequest;
+  result.event.activity = {
+    ...result.event.activity,
+    title: `${OPERATION_LABELS[request.kind]} approved`,
+    detail: `${request.reference} was approved by ${actor.name} and posted.${mergedRequest.allocationSummary ? ` ${mergedRequest.allocationSummary}` : ""}`,
+  };
+  result.snapshot.requests = [mergedRequest, ...result.snapshot.requests.filter((entry) => entry.id !== request.id)];
+
+  await persistApprovedMutationResult(db, mutation, result.event, context);
+  const latestSnapshot = await loadSnapshot(db);
+  await synchronizeStateNotifications(db, latestSnapshot, telegramBotToken);
+
+  return {
+    snapshot: latestSnapshot,
+    request: mergedRequest,
+  };
+}
+
+export async function rejectInventoryRequestInD1(
+  db: D1Database,
+  actorId: string,
+  input: RejectInventoryRequest,
+  telegramBotToken?: string,
+): Promise<InventoryActionResponse> {
+  await ensureDatabaseReady(db);
+
+  const snapshot = await loadSnapshot(db);
+  const request = await loadInventoryRequestActionRow(db, input.requestId);
+  if (!request) {
+    throw new Error("The selected approval request could not be found.");
+  }
+  if (request.status !== "submitted") {
+    throw new Error("Only submitted inventory requests can be rejected.");
+  }
+
+  const actor = requirePermission(
+    snapshot.users.find((user) => user.id === actorId),
+    "inventory.approve",
+    "You do not have permission to reject inventory requests.",
+  );
+  const reason = input.reason.trim();
+  if (!reason) {
+    throw new Error("Provide a reason before rejecting an inventory request.");
+  }
+
+  const updatedNote = buildInventoryActionNote(request.note, "Rejected", actor.name, reason);
+  await markInventoryRequestRejected(db, request.id, updatedNote);
+  await appendActivity(
+    db,
+    actor.id,
+    "inventoryOps",
+    `${OPERATION_LABELS[request.kind]} rejected`,
+    `${request.reference} was rejected by ${actor.name}. Reason: ${reason}`,
+    "warning",
+    request.id,
+  );
+
+  const latestSnapshot = await loadSnapshot(db);
+  await synchronizeStateNotifications(db, latestSnapshot, telegramBotToken);
+  const rejectedRequest = latestSnapshot.requests.find((entry) => entry.id === request.id);
+
+  return {
+    snapshot: latestSnapshot,
+    request: rejectedRequest,
+  };
+}
+
 export async function reverseInventoryRequestInD1(
   db: D1Database,
   actorId: string,
@@ -6086,19 +6421,21 @@ export async function applyMutationsToD1(
       continue;
     }
 
-    try {
-      requirePermission(
-        snapshot.users.find((user) => user.id === mutation.actorId),
-        inventoryPermissionForKind(mutation.kind),
-        "You do not have permission to create this inventory entry.",
-      );
-      const result = await recordInventoryMutation(
-        db,
-        snapshot,
-        mutation,
-        telegramBotToken,
-      );
-      snapshot = result.snapshot;
+      try {
+        const actor = requirePermission(
+          snapshot.users.find((user) => user.id === mutation.actorId),
+          inventoryPermissionForKind(mutation.kind),
+          "You do not have permission to create this inventory entry.",
+        );
+        const requestStatus = inventoryRequestStatusForActor(actor);
+        const result = await recordInventoryMutation(
+          db,
+          snapshot,
+          mutation,
+          telegramBotToken,
+          requestStatus,
+        );
+        snapshot = result.snapshot;
       appliedMutationIds.push(mutation.clientMutationId);
       events.push(result.event);
     } catch (error) {
