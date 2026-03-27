@@ -516,6 +516,7 @@ export async function removeUser(input: RemoveUserRequest): Promise<UserAdminRes
 }
 
 export function openRealtimeSocket(): WebSocket {
-  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  return new WebSocket(`${protocol}//${window.location.host}/ws`);
+  const socketUrl = new URL("/ws", window.location.origin);
+  socketUrl.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return new WebSocket(socketUrl.toString());
 }

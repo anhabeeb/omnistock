@@ -184,6 +184,27 @@ const PRICE_CATEGORIES: PriceCategory[] = [
   "oil",
 ];
 
+const COMMON_ITEM_UNIT_OPTIONS = [
+  { value: "pcs", label: "Pieces (pcs)" },
+  { value: "box", label: "Box" },
+  { value: "carton", label: "Carton" },
+  { value: "case", label: "Case" },
+  { value: "tray", label: "Tray" },
+  { value: "pack", label: "Pack" },
+  { value: "bag", label: "Bag" },
+  { value: "bottle", label: "Bottle" },
+  { value: "can", label: "Can" },
+  { value: "dozen", label: "Dozen" },
+  { value: "pallet", label: "Pallet" },
+  { value: "kg", label: "Kilogram (kg)" },
+  { value: "g", label: "Gram (g)" },
+  { value: "liter", label: "Liter" },
+  { value: "ml", label: "Milliliter (ml)" },
+  { value: "portion", label: "Portion" },
+] as const;
+
+const CUSTOM_ITEM_UNIT_VALUE = "__custom__";
+
 const CREATE_STATUSES: Array<Exclude<RecordStatus, "archived">> = ["active", "inactive"];
 
 function labelForCategory(category: PriceCategory): string {
@@ -272,6 +293,10 @@ function unitOptionsForForm(itemForm: ItemFormState): string[] {
     seen.add(normalized);
     return true;
   });
+}
+
+function isCommonItemUnit(unit: string): boolean {
+  return COMMON_ITEM_UNIT_OPTIONS.some((option) => option.value === unit.trim().toLowerCase());
 }
 
 function barcodeSummary(item: Item): string {
@@ -607,6 +632,8 @@ export function MasterDataPage({
   }
 
   const currentUnitOptions = unitOptionsForForm(itemForm);
+  const usesCustomBaseUnit = !itemForm.unit.trim() || !isCommonItemUnit(itemForm.unit);
+  const baseUnitSelectValue = usesCustomBaseUnit ? CUSTOM_ITEM_UNIT_VALUE : itemForm.unit;
 
   function addAdditionalBarcode() {
     setItemForm((current) => ({
@@ -1926,11 +1953,34 @@ export function MasterDataPage({
 
                 <label className="field">
                   <span>Unit</span>
-                  <input
-                    value={itemForm.unit}
-                    onChange={(event) => patchItem("unit", event.target.value)}
-                    placeholder="piece"
-                  />
+                  <select
+                    value={baseUnitSelectValue}
+                    onChange={(event) => {
+                      const nextUnit = event.target.value;
+                      patchItem(
+                        "unit",
+                        nextUnit === CUSTOM_ITEM_UNIT_VALUE
+                          ? usesCustomBaseUnit
+                            ? itemForm.unit
+                            : ""
+                          : nextUnit,
+                      );
+                    }}
+                  >
+                    {COMMON_ITEM_UNIT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                    <option value={CUSTOM_ITEM_UNIT_VALUE}>Custom unit</option>
+                  </select>
+                  {baseUnitSelectValue === CUSTOM_ITEM_UNIT_VALUE ? (
+                    <input
+                      value={itemForm.unit}
+                      onChange={(event) => patchItem("unit", event.target.value)}
+                      placeholder="Enter a custom base unit"
+                    />
+                  ) : null}
                 </label>
 
                 <div className="field field-wide">
