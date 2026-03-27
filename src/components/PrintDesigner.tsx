@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   createDefaultPrintLayoutBlocks,
   createDefaultReportPrintTemplate,
@@ -8,7 +9,7 @@ import type {
   PrintLayoutBlockType,
   ReportPrintTemplate,
 } from "../../shared/types";
-import { DeleteIcon, PlusIcon } from "./AppIcons";
+import { CloseIcon, DeleteIcon, PlusIcon } from "./AppIcons";
 
 interface PrintDesignerProps {
   template: ReportPrintTemplate;
@@ -152,6 +153,19 @@ function previewValue(
   }
 }
 
+function paperSizeLabel(template: ReportPrintTemplate): string {
+  const size = template.paperSize.toUpperCase();
+  const orientation = template.orientation === "landscape" ? "Landscape" : "Portrait";
+  return `${size} · ${orientation}`;
+}
+
+function actualPaperDimensions(template: ReportPrintTemplate): string {
+  if (template.orientation === "landscape") {
+    return template.paperSize === "letter" ? "279.4mm × 215.9mm" : "297mm × 210mm";
+  }
+  return template.paperSize === "letter" ? "215.9mm × 279.4mm" : "210mm × 297mm";
+}
+
 export function PrintDesigner({
   template,
   companyName,
@@ -164,6 +178,7 @@ export function PrintDesigner({
   const [selectedBlockId, setSelectedBlockId] = useState(template.layoutBlocks[0]?.id ?? "");
   const [pendingType, setPendingType] = useState<PrintLayoutBlockType>("custom-text");
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
 
   const layoutBlocks = useMemo(
     () =>
@@ -204,17 +219,18 @@ export function PrintDesigner({
   }, [availableBlocks, pendingType]);
 
   useEffect(() => {
-    if (!dragState || disabled) {
+    if (!editorOpen || !dragState || disabled) {
       return;
     }
 
     const activeDrag = dragState;
 
-    function handlePointerMove(event: MouseEvent) {
+    function handlePointerMove(event: PointerEvent) {
       const preview = previewRef.current;
       if (!preview) {
         return;
       }
+
       const rect = preview.getBoundingClientRect();
       const pointerXPct = ((event.clientX - rect.left) / rect.width) * 100;
       const pointerYPct = ((event.clientY - rect.top) / rect.height) * 100;
@@ -222,6 +238,7 @@ export function PrintDesigner({
       if (!targetBlock) {
         return;
       }
+
       const nextX = clamp(pointerXPct - activeDrag.offsetXPct, 0, 100 - targetBlock.width);
       const nextY = clamp(pointerYPct - activeDrag.offsetYPct, 0, 100);
       const nextBlocks = layoutBlocks.map((block) =>
@@ -233,6 +250,7 @@ export function PrintDesigner({
             }
           : block,
       );
+
       onChange(syncTemplateWithBlocks(template, nextBlocks));
     }
 
@@ -240,13 +258,36 @@ export function PrintDesigner({
       setDragState(null);
     }
 
-    window.addEventListener("mousemove", handlePointerMove);
-    window.addEventListener("mouseup", handlePointerUp);
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+
     return () => {
-      window.removeEventListener("mousemove", handlePointerMove);
-      window.removeEventListener("mouseup", handlePointerUp);
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [disabled, dragState, layoutBlocks, onChange, template]);
+  }, [disabled, dragState, editorOpen, layoutBlocks, onChange, template]);
+
+  useEffect(() => {
+    if (!editorOpen || typeof document === "undefined") {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setEditorOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [editorOpen]);
 
   function updateTemplate(next: ReportPrintTemplate) {
     onChange(next);
@@ -281,6 +322,7 @@ export function PrintDesigner({
     if (!selectedBlock || disabled) {
       return;
     }
+
     const nextBlocks = layoutBlocks.filter((block) => block.id !== selectedBlock.id);
     updateBlocks(nextBlocks);
     setSelectedBlockId(nextBlocks[0]?.id ?? "");
@@ -317,6 +359,7 @@ export function PrintDesigner({
     if (!selectedBlock) {
       return;
     }
+
     const numericValue = Number(rawValue || 0);
     if (!Number.isFinite(numericValue)) {
       return;
@@ -332,12 +375,14 @@ export function PrintDesigner({
       case "z":
         patchSelectedBlock({ z: clamp(Math.round(numericValue), 0, 20) });
         break;
-      case "width":
+      case "width": {
+        const nextWidth = clamp(numericValue, 10, 100);
         patchSelectedBlock({
-          width: clamp(numericValue, 10, 100),
-          x: clamp(selectedBlock.x, 0, 100 - clamp(numericValue, 10, 100)),
+          width: nextWidth,
+          x: clamp(selectedBlock.x, 0, 100 - nextWidth),
         });
         break;
+      }
       case "minHeight":
         patchSelectedBlock({ minHeight: clamp(numericValue, 48, 960) });
         break;
@@ -347,12 +392,14 @@ export function PrintDesigner({
   }
 
   function handlePreviewPointerDown(
-    event: React.MouseEvent<HTMLButtonElement>,
+    event: React.PointerEvent<HTMLButtonElement>,
     block: PrintLayoutBlock,
   ) {
     if (disabled || !previewRef.current) {
       return;
     }
+
+    event.preventDefault();
     const rect = previewRef.current.getBoundingClientRect();
     const offsetXPct = ((event.clientX - rect.left) / rect.width) * 100 - block.x;
     const offsetYPct = ((event.clientY - rect.top) / rect.height) * 100 - block.y;
@@ -371,7 +418,7 @@ export function PrintDesigner({
         key={block.id}
         type="button"
         onClick={() => setSelectedBlockId(block.id)}
-        onMouseDown={(event) => handlePreviewPointerDown(event, block)}
+        onPointerDown={(event) => handlePreviewPointerDown(event, block)}
         className={`print-designer-block${selected ? " is-selected" : ""}${block.enabled ? "" : " is-disabled"}`}
         style={{
           left: `${block.x}%`,
@@ -413,9 +460,9 @@ export function PrintDesigner({
     );
   }
 
-  return (
-    <div className="print-designer-shell">
-      <div className="print-designer-sidebar">
+  const editorSidebar = (
+    <div className="print-designer-modal-sidebar">
+      <div className="print-designer-add">
         <div className="panel-heading compact-heading">
           <div>
             <p className="eyebrow">Field Palette</p>
@@ -423,244 +470,337 @@ export function PrintDesigner({
           </div>
         </div>
 
-        <div className="print-designer-add">
-          <label className="field field-wide">
-            <span>Add field</span>
-            <select
-              value={pendingType}
-              disabled={disabled || !availableBlocks.length}
-              onChange={(event) => setPendingType(event.target.value as PrintLayoutBlockType)}
-            >
-              {availableBlocks.map((entry) => (
-                <option key={entry.type} value={entry.type}>
-                  {entry.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            className="primary-button"
+        <label className="field field-wide">
+          <span>Add field</span>
+          <select
+            value={pendingType}
             disabled={disabled || !availableBlocks.length}
-            onClick={addBlock}
+            onChange={(event) => setPendingType(event.target.value as PrintLayoutBlockType)}
           >
-            <PlusIcon size={16} />
-            <span>Add field</span>
-          </button>
-        </div>
-
-        <div className="stack-list">
-          {BLOCK_LIBRARY.map((entry) => (
-            <div key={entry.type} className="list-row">
-              <div>
-                <strong>{entry.label}</strong>
-                <p>{entry.description}</p>
-              </div>
-              <span className="status-chip neutral">
-                {layoutBlocks.some((block) => block.type === entry.type) && entry.unique
-                  ? "Added"
-                  : entry.unique
-                    ? "Available"
-                    : "Repeatable"}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {selectedBlock ? (
-          <div className="print-designer-inspector">
-            <div className="panel-heading compact-heading">
-              <div>
-                <p className="eyebrow">Selected Field</p>
-                <h3>{selectedBlock.label}</h3>
-              </div>
-              <span className="status-chip neutral">Layer {selectedBlock.z}</span>
-            </div>
-
-            <div className="page-stack">
-              <label className="field field-wide">
-                <span>Field label</span>
-                <input
-                  value={selectedBlock.label}
-                  disabled={disabled}
-                  onChange={(event) => patchSelectedBlock({ label: event.target.value })}
-                />
-              </label>
-
-              {selectedBlock.type === "custom-text" ||
-              selectedBlock.type === "header-note" ||
-              selectedBlock.type === "footer-note" ? (
-                <label className="field field-wide">
-                  <span>Field content</span>
-                  <textarea
-                    value={
-                      selectedBlock.type === "header-note"
-                        ? template.headerNote
-                        : selectedBlock.type === "footer-note"
-                          ? template.footerNote
-                          : selectedBlock.content
-                    }
-                    disabled={disabled}
-                    rows={4}
-                    onChange={(event) => updateSelectedContent(event.target.value)}
-                  />
-                </label>
-              ) : null}
-
-              {selectedBlock.type === "signatures" ? (
-                <div className="settings-fields-grid compact-grid">
-                  <label className="settings-field-card">
-                    <span className="settings-field-label">Left label</span>
-                    <input
-                      value={template.signatureLabelLeft}
-                      disabled={disabled}
-                      onChange={(event) =>
-                        updateTemplate({ ...template, signatureLabelLeft: event.target.value })
-                      }
-                    />
-                  </label>
-                  <label className="settings-field-card">
-                    <span className="settings-field-label">Right label</span>
-                    <input
-                      value={template.signatureLabelRight}
-                      disabled={disabled}
-                      onChange={(event) =>
-                        updateTemplate({ ...template, signatureLabelRight: event.target.value })
-                      }
-                    />
-                  </label>
-                </div>
-              ) : null}
-
-              <div className="settings-fields-grid compact-grid">
-                <label className="settings-field-card">
-                  <span className="settings-field-label">X Position (%)</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max={Math.max(0, 100 - selectedBlock.width)}
-                    value={selectedBlock.x}
-                    disabled={disabled}
-                    onChange={(event) => updateSelectedNumberField("x", event.target.value)}
-                  />
-                </label>
-                <label className="settings-field-card">
-                  <span className="settings-field-label">Y Position (%)</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={selectedBlock.y}
-                    disabled={disabled}
-                    onChange={(event) => updateSelectedNumberField("y", event.target.value)}
-                  />
-                </label>
-                <label className="settings-field-card">
-                  <span className="settings-field-label">Z Layer</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="20"
-                    value={selectedBlock.z}
-                    disabled={disabled}
-                    onChange={(event) => updateSelectedNumberField("z", event.target.value)}
-                  />
-                </label>
-                <label className="settings-field-card">
-                  <span className="settings-field-label">Width (%)</span>
-                  <input
-                    type="number"
-                    min="10"
-                    max="100"
-                    value={selectedBlock.width}
-                    disabled={disabled}
-                    onChange={(event) => updateSelectedNumberField("width", event.target.value)}
-                  />
-                </label>
-                <label className="settings-field-card">
-                  <span className="settings-field-label">Height (px)</span>
-                  <input
-                    type="number"
-                    min="48"
-                    max="960"
-                    value={selectedBlock.minHeight}
-                    disabled={disabled}
-                    onChange={(event) => updateSelectedNumberField("minHeight", event.target.value)}
-                  />
-                </label>
-              </div>
-
-              <label className="list-row">
-                <div>
-                  <strong>Visible in output</strong>
-                  <p>Hide or show this field in the saved print layout.</p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={selectedBlock.enabled}
-                  disabled={disabled}
-                  onChange={(event) => patchSelectedBlock({ enabled: event.target.checked })}
-                />
-              </label>
-
-              <div className="button-row">
-                <button
-                  type="button"
-                  className="secondary-button"
-                  disabled={disabled}
-                  onClick={() => patchSelectedBlock({ z: clamp(selectedBlock.z + 1, 0, 20) })}
-                >
-                  Bring forward
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  disabled={disabled}
-                  onClick={() => patchSelectedBlock({ z: clamp(selectedBlock.z - 1, 0, 20) })}
-                >
-                  Send back
-                </button>
-                <button
-                  type="button"
-                  className="danger-button"
-                  disabled={disabled}
-                  onClick={removeSelectedBlock}
-                >
-                  <DeleteIcon size={16} />
-                  <span>Remove</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
+            {availableBlocks.map((entry) => (
+              <option key={entry.type} value={entry.type}>
+                {entry.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          className="primary-button"
+          disabled={disabled || !availableBlocks.length}
+          onClick={addBlock}
+        >
+          <PlusIcon size={16} />
+          <span>Add field</span>
+        </button>
       </div>
 
-      <div className="print-designer-preview">
-        <div className="panel-heading compact-heading">
-          <div>
-            <p className="eyebrow">A4 Preview</p>
-            <h3>Drag fields, set X/Y/Z, and resize width and height</h3>
+      <div className="stack-list">
+        {BLOCK_LIBRARY.map((entry) => (
+          <div key={entry.type} className="list-row">
+            <div>
+              <strong>{entry.label}</strong>
+              <p>{entry.description}</p>
+            </div>
+            <span className="status-chip neutral">
+              {layoutBlocks.some((block) => block.type === entry.type) && entry.unique
+                ? "Added"
+                : entry.unique
+                  ? "Available"
+                  : "Repeatable"}
+            </span>
           </div>
-          <span className="status-chip neutral">
-            {template.orientation === "landscape" ? "Landscape" : "Portrait"}
-          </span>
-        </div>
+        ))}
+      </div>
 
+      {selectedBlock ? (
+        <div className="print-designer-inspector">
+          <div className="panel-heading compact-heading">
+            <div>
+              <p className="eyebrow">Selected Field</p>
+              <h3>{selectedBlock.label}</h3>
+            </div>
+            <span className="status-chip neutral">Layer {selectedBlock.z}</span>
+          </div>
+
+          <div className="page-stack">
+            <label className="field field-wide">
+              <span>Field label</span>
+              <input
+                value={selectedBlock.label}
+                disabled={disabled}
+                onChange={(event) => patchSelectedBlock({ label: event.target.value })}
+              />
+            </label>
+
+            {selectedBlock.type === "custom-text" ||
+            selectedBlock.type === "header-note" ||
+            selectedBlock.type === "footer-note" ? (
+              <label className="field field-wide">
+                <span>Field content</span>
+                <textarea
+                  value={
+                    selectedBlock.type === "header-note"
+                      ? template.headerNote
+                      : selectedBlock.type === "footer-note"
+                        ? template.footerNote
+                        : selectedBlock.content
+                  }
+                  disabled={disabled}
+                  rows={4}
+                  onChange={(event) => updateSelectedContent(event.target.value)}
+                />
+              </label>
+            ) : null}
+
+            {selectedBlock.type === "signatures" ? (
+              <div className="settings-fields-grid compact-grid">
+                <label className="settings-field-card">
+                  <span className="settings-field-label">Left label</span>
+                  <input
+                    value={template.signatureLabelLeft}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      updateTemplate({ ...template, signatureLabelLeft: event.target.value })
+                    }
+                  />
+                </label>
+                <label className="settings-field-card">
+                  <span className="settings-field-label">Right label</span>
+                  <input
+                    value={template.signatureLabelRight}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      updateTemplate({ ...template, signatureLabelRight: event.target.value })
+                    }
+                  />
+                </label>
+              </div>
+            ) : null}
+
+            <div className="settings-fields-grid compact-grid">
+              <label className="settings-field-card">
+                <span className="settings-field-label">X Position (%)</span>
+                <input
+                  type="number"
+                  min="0"
+                  max={Math.max(0, 100 - selectedBlock.width)}
+                  value={selectedBlock.x}
+                  disabled={disabled}
+                  onChange={(event) => updateSelectedNumberField("x", event.target.value)}
+                />
+              </label>
+              <label className="settings-field-card">
+                <span className="settings-field-label">Y Position (%)</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={selectedBlock.y}
+                  disabled={disabled}
+                  onChange={(event) => updateSelectedNumberField("y", event.target.value)}
+                />
+              </label>
+              <label className="settings-field-card">
+                <span className="settings-field-label">Z Layer</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="20"
+                  value={selectedBlock.z}
+                  disabled={disabled}
+                  onChange={(event) => updateSelectedNumberField("z", event.target.value)}
+                />
+              </label>
+              <label className="settings-field-card">
+                <span className="settings-field-label">Width (%)</span>
+                <input
+                  type="number"
+                  min="10"
+                  max="100"
+                  value={selectedBlock.width}
+                  disabled={disabled}
+                  onChange={(event) => updateSelectedNumberField("width", event.target.value)}
+                />
+              </label>
+              <label className="settings-field-card">
+                <span className="settings-field-label">Height (px)</span>
+                <input
+                  type="number"
+                  min="48"
+                  max="960"
+                  value={selectedBlock.minHeight}
+                  disabled={disabled}
+                  onChange={(event) => updateSelectedNumberField("minHeight", event.target.value)}
+                />
+              </label>
+            </div>
+
+            <label className="list-row">
+              <div>
+                <strong>Visible in output</strong>
+                <p>Hide or show this field in the saved print layout.</p>
+              </div>
+              <input
+                type="checkbox"
+                checked={selectedBlock.enabled}
+                disabled={disabled}
+                onChange={(event) => patchSelectedBlock({ enabled: event.target.checked })}
+              />
+            </label>
+
+            <div className="button-row">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={disabled}
+                onClick={() => patchSelectedBlock({ z: clamp(selectedBlock.z + 1, 0, 20) })}
+              >
+                Bring forward
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={disabled}
+                onClick={() => patchSelectedBlock({ z: clamp(selectedBlock.z - 1, 0, 20) })}
+              >
+                Send back
+              </button>
+              <button
+                type="button"
+                className="danger-button"
+                disabled={disabled}
+                onClick={removeSelectedBlock}
+              >
+                <DeleteIcon size={16} />
+                <span>Remove</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+
+  const editorCanvas = (
+    <div className="print-designer-modal-canvas">
+      <div className="print-designer-canvas-meta">
+        <div>
+          <p className="eyebrow">A4 Preview</p>
+          <h3>Full-size popup canvas</h3>
+          <p className="helper-text">
+            Browser-calibrated paper size using millimetres for easier positioning and resizing.
+          </p>
+        </div>
+        <div className="chip-row">
+          <span className="status-chip neutral">{paperSizeLabel(template)}</span>
+          <span className="status-chip neutral">{actualPaperDimensions(template)}</span>
+        </div>
+      </div>
+
+      <div className="print-designer-canvas-scroll">
         <div
-          className={`print-designer-page${
+          ref={previewRef}
+          className={`print-designer-sheet${
             template.orientation === "landscape" ? " is-landscape" : ""
           }`}
-          style={{ borderColor: `${template.accentColor}40` }}
+          style={{ borderTopColor: template.accentColor }}
         >
-          <div
-            ref={previewRef}
-            className="print-designer-page-inner"
-            style={{ borderColor: template.accentColor }}
-          >
-            {layoutBlocks.map((block) => previewBlock(block))}
-          </div>
+          {layoutBlocks.map((block) => previewBlock(block))}
         </div>
       </div>
     </div>
+  );
+
+  const modal =
+    editorOpen && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            className="print-designer-modal-scrim"
+            role="presentation"
+            onClick={() => setEditorOpen(false)}
+          >
+            <section
+              className="print-designer-modal-card"
+              role="dialog"
+              aria-modal="true"
+              aria-label="A4 print designer"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <header className="print-designer-modal-header">
+                <div>
+                  <p className="eyebrow">Print Designer</p>
+                  <h2>Actual-size A4 popup editor</h2>
+                  <p className="helper-text">
+                    Move fields visually on the sheet, then save the layout as the default print
+                    template.
+                  </p>
+                </div>
+                <div className="button-row">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => setEditorOpen(false)}
+                  >
+                    <CloseIcon size={16} />
+                    <span>Close</span>
+                  </button>
+                </div>
+              </header>
+
+              <div className="print-designer-modal-body">
+                {editorSidebar}
+                {editorCanvas}
+              </div>
+            </section>
+          </div>,
+          document.body,
+        )
+      : null;
+
+  return (
+    <>
+      <div className="print-designer-launcher">
+        <div className="panel-heading compact-heading">
+          <div>
+            <p className="eyebrow">A4 Editor</p>
+            <h3>Open the popup canvas</h3>
+          </div>
+          <span className="status-chip neutral">{paperSizeLabel(template)}</span>
+        </div>
+
+        <p className="helper-text">
+          Launch the full-size popup editor to position, layer, and resize report blocks on an
+          A4 paper canvas before saving the default template.
+        </p>
+
+        <div className="settings-fields-grid compact-grid">
+          <div className="settings-field-card">
+            <span className="settings-field-label">Paper</span>
+            <strong>{actualPaperDimensions(template)}</strong>
+          </div>
+          <div className="settings-field-card">
+            <span className="settings-field-label">Blocks</span>
+            <strong>{layoutBlocks.length} active fields</strong>
+          </div>
+          <div className="settings-field-card">
+            <span className="settings-field-label">Editing</span>
+            <strong>Drag · X/Y/Z · Width · Height</strong>
+          </div>
+        </div>
+
+        <div className="button-row">
+          <button
+            type="button"
+            className="primary-button"
+            disabled={disabled}
+            onClick={() => setEditorOpen(true)}
+          >
+            Open A4 popup editor
+          </button>
+        </div>
+      </div>
+      {modal}
+    </>
   );
 }

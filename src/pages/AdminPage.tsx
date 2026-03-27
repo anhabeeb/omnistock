@@ -2202,12 +2202,13 @@ export function AdminPage({
                     <div className="panel-heading compact-heading">
                       <div>
                         <p className="eyebrow">Template Setup</p>
-                        <h3>Canvas editing</h3>
+                        <h3>Popup canvas editing</h3>
                       </div>
                     </div>
                     <p className="helper-text">
-                      Use the A4 canvas to move fields by X/Y position, change their Z layer, and
-                      resize width and height before saving the default template.
+                      Open the full-size A4 popup canvas to move fields by X/Y position, change
+                      their Z layer, and resize width and height before saving the default
+                      template.
                     </p>
                     <div className="settings-fields-grid compact-grid">
                       <div className="settings-field-card">
