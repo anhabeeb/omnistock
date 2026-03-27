@@ -1770,6 +1770,7 @@ export function AdminPage({
                   and the default branch or warehouse summary schedule.
                 </p>
                 <div className="settings-dual-pane">
+                  <div className="settings-pane-stack">
                   <div className="settings-pane-card">
                     <div className="panel-heading compact-heading">
                       <div>
@@ -1957,46 +1958,48 @@ export function AdminPage({
                       >).map(([key, template]) => (
                         <div key={key} className="notification-template-card">
                           <strong>{key.replace(/-/g, " ")}</strong>
-                          <label className="field field-wide">
-                            <span>Title Template</span>
-                            <input
-                              value={template.title}
-                              disabled={!canEditNotificationSettings || submitting === "settings"}
-                              onChange={(event) =>
-                                patchNotificationSettings("templates", {
-                                  ...settingsForm.notificationSettings.templates,
-                                  [key]: {
-                                    ...template,
-                                    title: event.target.value,
-                                  },
-                                })
-                              }
-                            />
-                          </label>
-                          <label className="field field-wide">
-                            <span>Body Template</span>
-                            <textarea
-                              value={template.body}
-                              disabled={!canEditNotificationSettings || submitting === "settings"}
-                              onChange={(event) =>
-                                patchNotificationSettings("templates", {
-                                  ...settingsForm.notificationSettings.templates,
-                                  [key]: {
-                                    ...template,
-                                    body: event.target.value,
-                                  },
-                                })
-                              }
-                              rows={4}
-                            />
-                          </label>
+                          <div className="notification-template-fields">
+                            <label className="field field-wide">
+                              <span>Title Template</span>
+                              <input
+                                value={template.title}
+                                disabled={!canEditNotificationSettings || submitting === "settings"}
+                                onChange={(event) =>
+                                  patchNotificationSettings("templates", {
+                                    ...settingsForm.notificationSettings.templates,
+                                    [key]: {
+                                      ...template,
+                                      title: event.target.value,
+                                    },
+                                  })
+                                }
+                              />
+                            </label>
+                            <label className="field field-wide">
+                              <span>Body Template</span>
+                              <textarea
+                                value={template.body}
+                                disabled={!canEditNotificationSettings || submitting === "settings"}
+                                onChange={(event) =>
+                                  patchNotificationSettings("templates", {
+                                    ...settingsForm.notificationSettings.templates,
+                                    [key]: {
+                                      ...template,
+                                      body: event.target.value,
+                                    },
+                                  })
+                                }
+                                rows={4}
+                              />
+                            </label>
+                          </div>
                         </div>
                       ))}
                     </div>
                   </div>
-                </div>
+                  </div>
 
-                <div className="settings-pane-card notification-rules-card">
+                  <div className="settings-pane-card notification-rules-card">
                   <div className="panel-heading compact-heading">
                     <div>
                       <p className="eyebrow">Delivery Rules</p>
@@ -2136,6 +2139,7 @@ export function AdminPage({
                       </label>
                     </div>
                   </div>
+                </div>
                 </div>
                 </div>
 
