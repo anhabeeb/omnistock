@@ -1842,15 +1842,28 @@ textarea {
 
 .settings-dual-pane {
   display: grid;
-  grid-template-columns: minmax(0, 1.18fr) minmax(300px, 0.82fr);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.86fr);
+  grid-template-areas:
+    "telegram rules"
+    "wording wording";
   gap: 18px;
   align-items: start;
 }
 
 .settings-pane-stack {
-  display: grid;
-  gap: 18px;
-  min-width: 0;
+  display: contents;
+}
+
+.settings-pane-stack > .settings-pane-card:first-child {
+  grid-area: telegram;
+}
+
+.settings-pane-stack > .settings-pane-card:last-child {
+  grid-area: wording;
+}
+
+.notification-rules-card {
+  grid-area: rules;
 }
 
 .settings-pane-card {
@@ -1871,7 +1884,7 @@ textarea {
 
 .notification-template-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -1896,7 +1909,7 @@ textarea {
 
 .notification-template-fields {
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  grid-template-columns: 1fr;
   gap: 12px;
   align-items: start;
 }
@@ -2063,6 +2076,13 @@ textarea {
   .settings-dual-pane,
   .notification-template-grid {
     grid-template-columns: 1fr;
+  }
+
+  .settings-dual-pane {
+    grid-template-areas:
+      "telegram"
+      "rules"
+      "wording";
   }
 
   .notification-template-fields {
