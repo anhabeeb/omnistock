@@ -15,6 +15,11 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import {
+  DEFAULT_CURRENCY,
+  DEFAULT_TIMEZONE,
+  DEFAULT_WORKSPACE_LOCATION,
+} from "../../shared/defaults";
 import type { InitializeSystemRequest } from "../../shared/types";
 import type { SyncState } from "../lib/useOmniStockApp";
 
@@ -25,6 +30,7 @@ interface Props {
 
 interface FormState {
   companyName: string;
+  workspaceLocation: string;
   currency: string;
   timezone: string;
   lowStockThreshold: string;
@@ -58,12 +64,20 @@ interface FormState {
 }
 
 const STEPS = ["Company", "Locations", "Users", "Go Live"] as const;
+const CURRENCY_OPTIONS = [
+  { code: DEFAULT_CURRENCY, label: "MVR - Rufiyaa" },
+  { code: "USD", label: "USD - US Dollar" },
+  { code: "AED", label: "AED - UAE Dirham" },
+  { code: "SAR", label: "SAR - Saudi Riyal" },
+  { code: "PKR", label: "PKR - Pakistani Rupee" },
+] as const;
 
 function defaultForm(): FormState {
   return {
     companyName: "",
-    currency: "PKR",
-    timezone: "Asia/Karachi",
+    workspaceLocation: DEFAULT_WORKSPACE_LOCATION,
+    currency: DEFAULT_CURRENCY,
+    timezone: DEFAULT_TIMEZONE,
     lowStockThreshold: "5",
     expiryAlertDays: "14",
     enableOffline: true,
@@ -123,8 +137,8 @@ export function InitializationPage({ syncState, onInitialize }: Props) {
   }
 
   function validateStep(nextStep: number): boolean {
-    if (nextStep === 1 && !form.companyName.trim()) {
-      setFeedback("Enter the company name before moving to location setup.");
+    if (nextStep === 1 && (!form.companyName.trim() || !form.workspaceLocation.trim())) {
+      setFeedback("Enter the company name and workspace location before moving to location setup.");
       return false;
     }
 
@@ -215,6 +229,7 @@ export function InitializationPage({ syncState, onInitialize }: Props) {
     try {
       await onInitialize({
         companyName: form.companyName.trim(),
+        workspaceLocation: form.workspaceLocation.trim(),
         currency: form.currency,
         timezone: form.timezone,
         lowStockThreshold: Number(form.lowStockThreshold),
@@ -408,15 +423,22 @@ export function InitializationPage({ syncState, onInitialize }: Props) {
                       fullWidth
                     />
                     <TextField
+                      label="Workspace location"
+                      value={form.workspaceLocation}
+                      onChange={(event) => patch("workspaceLocation", event.target.value)}
+                      placeholder="Maldives"
+                      fullWidth
+                    />
+                    <TextField
                       select
                       label="Currency"
                       value={form.currency}
                       onChange={(event) => patch("currency", event.target.value)}
                       fullWidth
                     >
-                      {["PKR", "USD", "AED", "SAR"].map((currency) => (
-                        <MenuItem key={currency} value={currency}>
-                          {currency}
+                      {CURRENCY_OPTIONS.map((currencyOption) => (
+                        <MenuItem key={currencyOption.code} value={currencyOption.code}>
+                          {currencyOption.label}
                         </MenuItem>
                       ))}
                     </TextField>
@@ -424,7 +446,7 @@ export function InitializationPage({ syncState, onInitialize }: Props) {
                       label="Timezone"
                       value={form.timezone}
                       onChange={(event) => patch("timezone", event.target.value)}
-                      placeholder="Asia/Karachi"
+                      placeholder="Indian/Maldives"
                       fullWidth
                     />
                     <TextField
@@ -461,10 +483,10 @@ export function InitializationPage({ syncState, onInitialize }: Props) {
                   <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" } }}>
                     <TextField label="Primary warehouse name" value={form.warehouseName} onChange={(event) => patch("warehouseName", event.target.value)} placeholder="Central Warehouse" fullWidth />
                     <TextField label="Warehouse code" value={form.warehouseCode} onChange={(event) => patch("warehouseCode", event.target.value)} placeholder="WH-CENTRAL" fullWidth />
-                    <TextField label="Warehouse city" value={form.warehouseCity} onChange={(event) => patch("warehouseCity", event.target.value)} placeholder="Karachi" fullWidth />
+                    <TextField label="Warehouse city" value={form.warehouseCity} onChange={(event) => patch("warehouseCity", event.target.value)} placeholder="Male" fullWidth />
                     <TextField label="First outlet name" value={form.outletName} onChange={(event) => patch("outletName", event.target.value)} placeholder="DHA Branch" fullWidth />
                     <TextField label="Outlet code" value={form.outletCode} onChange={(event) => patch("outletCode", event.target.value)} placeholder="OUT-DHA" fullWidth />
-                    <TextField label="Outlet city" value={form.outletCity} onChange={(event) => patch("outletCity", event.target.value)} placeholder="Karachi" fullWidth />
+                    <TextField label="Outlet city" value={form.outletCity} onChange={(event) => patch("outletCity", event.target.value)} placeholder="Male" fullWidth />
                   </Box>
                 ) : null}
 
@@ -485,7 +507,7 @@ export function InitializationPage({ syncState, onInitialize }: Props) {
                           Launch Summary
                         </Typography>
                         <Typography variant="h6">Workspace Overview</Typography>
-                        <Chip variant="outlined" label={`${form.companyName || "Company pending"} - ${form.currency} - ${form.timezone}`} />
+                        <Chip variant="outlined" label={`${form.companyName || "Company pending"} - ${form.workspaceLocation || "Location pending"} - ${form.currency} - ${form.timezone}`} />
                         <Chip variant="outlined" label={`${form.warehouseName || "Warehouse pending"} - ${form.warehouseCode || "Code"} - ${form.warehouseCity || "City"}`} />
                         <Chip variant="outlined" label={`${form.outletName || "Outlet pending"} - ${form.outletCode || "Code"} - ${form.outletCity || "City"}`} />
                         <Chip variant="outlined" label={`${form.superadminName || "Superadmin pending"} - ${form.superadminUsername || "Username required"} - ${form.superadminEmail || "Email required"}`} />

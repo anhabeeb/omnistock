@@ -324,6 +324,7 @@ CREATE TABLE IF NOT EXISTS waste_entries (
     id TEXT PRIMARY KEY,
     sequence_no INTEGER NOT NULL UNIQUE,
     company_name TEXT NOT NULL,
+    workspace_location TEXT NOT NULL DEFAULT 'Maldives',
     currency TEXT NOT NULL,
     timezone TEXT NOT NULL,
     time_source TEXT NOT NULL DEFAULT 'system',

@@ -1561,6 +1561,110 @@ textarea {
   border-top: 1px solid var(--border);
 }
 
+.permission-role-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.permission-group-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: rgba(15, 23, 42, 0.44);
+  box-shadow: var(--shadow-sm);
+  padding: 16px;
+}
+
+:root[data-theme="light"] .permission-group-card {
+  background: rgba(248, 250, 252, 0.96);
+}
+
+.permission-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.permission-group-header strong {
+  font-size: 1rem;
+}
+
+.permission-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.permission-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: rgba(15, 23, 42, 0.58);
+  padding: 14px 16px;
+  transition: border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease,
+    background-color 180ms ease;
+}
+
+:root[data-theme="light"] .permission-card {
+  background: rgba(255, 255, 255, 0.98);
+}
+
+.permission-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(59, 130, 246, 0.32);
+}
+
+.permission-card.is-selected {
+  border-color: rgba(59, 130, 246, 0.45);
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.12);
+}
+
+.permission-card.is-locked {
+  opacity: 0.82;
+}
+
+.permission-card-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.permission-card-copy strong,
+.permission-card-copy p,
+.permission-card-copy small {
+  margin: 0;
+}
+
+.permission-card-copy p {
+  color: var(--text-soft);
+  line-height: 1.5;
+}
+
+.permission-card-copy small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.permission-card-control {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.permission-card-control input {
+  inline-size: 18px;
+  block-size: 18px;
+  accent-color: var(--accent-strong);
+}
+
 .chip-button {
   border-color: var(--border);
   background: rgba(15, 23, 42, 0.62);
@@ -2848,6 +2952,10 @@ textarea {
 
   .settings-fields-grid,
   .settings-toggle-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .permission-card-grid {
     grid-template-columns: 1fr;
   }
 

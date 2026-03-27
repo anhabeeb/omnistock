@@ -389,6 +389,7 @@ export interface NotificationRecord {
 
 export interface AppSettings {
   companyName: string;
+  workspaceLocation: string;
   currency: string;
   timezone: string;
   timeSource: TimeSource;
@@ -706,6 +707,7 @@ export interface InitializationUserInput {
 
 export interface InitializeSystemRequest {
   companyName: string;
+  workspaceLocation: string;
   currency: string;
   timezone: string;
   timeSource?: TimeSource;
@@ -783,6 +785,8 @@ export interface UserAdminResponse {
 }
 
 export interface UpdateSettingsRequest {
+  workspaceLocation: string;
+  currency: string;
   timezone: string;
   timeSource: TimeSource;
   lowStockThreshold: number;

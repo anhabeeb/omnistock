@@ -136,7 +136,7 @@ export function getActiveTimeZone(): string | undefined {
 export function formatWithWorkspaceClock(
   value: Date | number | string,
   options: Intl.DateTimeFormatOptions,
-  locale = "en-PK",
+  locale = "en-MV",
 ): string {
   const date = value instanceof Date ? value : new Date(value);
   if (!Number.isFinite(date.getTime())) {

@@ -1,5 +1,8 @@
 import {
+  DEFAULT_CURRENCY,
   DEFAULT_TIME_SOURCE,
+  DEFAULT_TIMEZONE,
+  DEFAULT_WORKSPACE_LOCATION,
   createDefaultNotificationSettings,
   createDefaultReportPrintTemplate,
 } from "../../shared/defaults";
@@ -709,6 +712,8 @@ function validateEnvironmentSettings(
   input: UpdateSettingsRequest,
   companyName = "OmniStock",
 ): UpdateSettingsRequest {
+  const workspaceLocation = input.workspaceLocation.trim() || DEFAULT_WORKSPACE_LOCATION;
+  const currency = input.currency.trim().toUpperCase() || DEFAULT_CURRENCY;
   const timezone = input.timezone.trim();
   if (!timezone) {
     throw new Error("Timezone is required.");
@@ -852,6 +857,8 @@ function validateEnvironmentSettings(
   };
 
   return {
+    workspaceLocation,
+    currency,
     timezone,
     timeSource,
     lowStockThreshold,
@@ -1129,6 +1136,12 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
     await execute(
       db,
       `ALTER TABLE app_settings ADD COLUMN time_source TEXT NOT NULL DEFAULT '${DEFAULT_TIME_SOURCE}'`,
+    );
+  }
+  if (!(await columnExists(db, "app_settings", "workspace_location"))) {
+    await execute(
+      db,
+      `ALTER TABLE app_settings ADD COLUMN workspace_location TEXT NOT NULL DEFAULT '${DEFAULT_WORKSPACE_LOCATION}'`,
     );
   }
   if (!(await columnExists(db, "app_settings", "report_print_template_json"))) {
@@ -1676,6 +1689,7 @@ interface ActivityRow {
 
 interface SettingsRow {
   company_name: string;
+  workspace_location: string;
   currency: string;
   timezone: string;
   time_source: TimeSource;
@@ -2171,7 +2185,7 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
     ),
     first<SettingsRow>(
       db,
-        "SELECT company_name, currency, timezone, time_source, low_stock_threshold, expiry_alert_days, enable_offline, enable_realtime, enable_barcode, strict_fefo, report_print_template_json, notification_settings_json FROM app_settings LIMIT 1",
+        "SELECT company_name, workspace_location, currency, timezone, time_source, low_stock_threshold, expiry_alert_days, enable_offline, enable_realtime, enable_barcode, strict_fefo, report_print_template_json, notification_settings_json FROM app_settings LIMIT 1",
     ),
   ]);
 
@@ -2364,8 +2378,9 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
     notifications: parseNotificationRows(notificationRows),
     settings: {
       companyName: settingsRow?.company_name ?? "OmniStock",
-      currency: settingsRow?.currency ?? "PKR",
-      timezone: settingsRow?.timezone ?? "Asia/Karachi",
+      workspaceLocation: settingsRow?.workspace_location ?? DEFAULT_WORKSPACE_LOCATION,
+      currency: settingsRow?.currency ?? DEFAULT_CURRENCY,
+      timezone: settingsRow?.timezone ?? DEFAULT_TIMEZONE,
       timeSource: settingsRow?.time_source === "browser" ? "browser" : DEFAULT_TIME_SOURCE,
       lowStockThreshold: Number(settingsRow?.low_stock_threshold ?? 1),
       expiryAlertDays: Number(settingsRow?.expiry_alert_days ?? 14),
@@ -2380,7 +2395,10 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
             : undefined;
           return validateEnvironmentSettings(
             {
-              timezone: settingsRow?.timezone ?? "Asia/Karachi",
+              workspaceLocation:
+                settingsRow?.workspace_location ?? DEFAULT_WORKSPACE_LOCATION,
+              currency: settingsRow?.currency ?? DEFAULT_CURRENCY,
+              timezone: settingsRow?.timezone ?? DEFAULT_TIMEZONE,
               timeSource: settingsRow?.time_source === "browser" ? "browser" : DEFAULT_TIME_SOURCE,
               lowStockThreshold: Number(settingsRow?.low_stock_threshold ?? 1),
               expiryAlertDays: Number(settingsRow?.expiry_alert_days ?? 14),
@@ -4137,6 +4155,8 @@ export async function updateSettingsInD1(
   }
   const nextSettings = validateEnvironmentSettings(input, snapshot.settings.companyName);
   const environmentChanged =
+    snapshot.settings.workspaceLocation !== nextSettings.workspaceLocation ||
+    snapshot.settings.currency !== nextSettings.currency ||
     snapshot.settings.timezone !== nextSettings.timezone ||
     snapshot.settings.timeSource !== nextSettings.timeSource ||
     snapshot.settings.lowStockThreshold !== nextSettings.lowStockThreshold ||
@@ -4170,7 +4190,9 @@ export async function updateSettingsInD1(
   await execute(
     db,
     `UPDATE app_settings
-      SET timezone = ?,
+      SET workspace_location = ?,
+          currency = ?,
+          timezone = ?,
           time_source = ?,
           low_stock_threshold = ?,
           expiry_alert_days = ?,
@@ -4183,6 +4205,8 @@ export async function updateSettingsInD1(
           updated_at = ?
       WHERE id = ?`,
     [
+      nextSettings.workspaceLocation,
+      nextSettings.currency,
       nextSettings.timezone,
       nextSettings.timeSource,
       nextSettings.lowStockThreshold,
@@ -5664,6 +5688,8 @@ export async function initializeSystemInD1(
     throw new Error("Company name is required to initialize OmniStock.");
   }
   const initialSettings = validateEnvironmentSettings({
+    workspaceLocation: input.workspaceLocation,
+    currency: input.currency,
     timezone: input.timezone,
     timeSource: input.timeSource ?? DEFAULT_TIME_SOURCE,
     lowStockThreshold: input.lowStockThreshold,
@@ -5777,12 +5803,13 @@ export async function initializeSystemInD1(
 
   await execute(
     db,
-    "INSERT INTO app_settings (id, sequence_no, company_name, currency, timezone, time_source, low_stock_threshold, expiry_alert_days, enable_offline, enable_realtime, enable_barcode, strict_fefo, report_print_template_json, notification_settings_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO app_settings (id, sequence_no, company_name, workspace_location, currency, timezone, time_source, low_stock_threshold, expiry_alert_days, enable_offline, enable_realtime, enable_barcode, strict_fefo, report_print_template_json, notification_settings_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       SETTINGS_ID,
       numberPart(SETTINGS_ID),
       companyName,
-      input.currency,
+      initialSettings.workspaceLocation,
+      initialSettings.currency,
       initialSettings.timezone,
       initialSettings.timeSource,
       initialSettings.lowStockThreshold,

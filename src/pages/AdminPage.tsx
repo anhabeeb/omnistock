@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
+  DEFAULT_CURRENCY,
+  DEFAULT_TIMEZONE,
+  DEFAULT_WORKSPACE_LOCATION,
+} from "../../shared/defaults";
+import {
   MODULE_ACCESS,
   MODULES,
   PERMISSION_CATALOG,
@@ -67,6 +72,7 @@ type UserDialogMode = "create" | "edit" | "access" | "password" | "remove";
 
 const FALLBACK_TIMEZONES = [
   "UTC",
+  DEFAULT_TIMEZONE,
   "Asia/Karachi",
   "Asia/Dubai",
   "Asia/Riyadh",
@@ -80,6 +86,20 @@ const FALLBACK_TIMEZONES = [
   "America/Denver",
   "America/Los_Angeles",
   "Australia/Sydney",
+] as const;
+
+const CURRENCY_OPTIONS = [
+  { code: DEFAULT_CURRENCY, label: "MVR - Rufiyaa" },
+  { code: "USD", label: "USD - US Dollar" },
+  { code: "AED", label: "AED - UAE Dirham" },
+  { code: "SAR", label: "SAR - Saudi Riyal" },
+  { code: "PKR", label: "PKR - Pakistani Rupee" },
+] as const;
+const LOCATION_OPTIONS = [
+  { value: DEFAULT_WORKSPACE_LOCATION, label: "Maldives" },
+  { value: "Pakistan", label: "Pakistan" },
+  { value: "United Arab Emirates", label: "United Arab Emirates" },
+  { value: "Saudi Arabia", label: "Saudi Arabia" },
 ] as const;
 
 const ADMIN_SECTIONS = [
@@ -178,6 +198,8 @@ function permissionCountLabel(permissions: PermissionKey[]): string {
 
 function buildSettingsState(snapshot: InventorySnapshot): SettingsFormState {
   return {
+    workspaceLocation: snapshot.settings.workspaceLocation,
+    currency: snapshot.settings.currency,
     timezone: snapshot.settings.timezone,
     timeSource: snapshot.settings.timeSource,
     lowStockThreshold: snapshot.settings.lowStockThreshold,
@@ -719,35 +741,53 @@ export function AdminPage({
           </table>
         </div>
 
-        <div className="page-stack">
+        <div className="permission-role-groups">
           {PERMISSION_GROUPS.map((group) => (
-            <div key={`${role}-${group.key}`} className="page-stack" style={{ gap: "10px" }}>
-              <div>
+            <section key={`${role}-${group.key}`} className="permission-group-card">
+              <div className="permission-group-header">
                 <strong>{group.label}</strong>
+                <span className="status-chip neutral">
+                  {group.permissions.length} permission{group.permissions.length === 1 ? "" : "s"}
+                </span>
               </div>
-              <div className="stack-list">
-                {group.permissions.map((permission) => (
-                  <label key={`${role}-${permission.code}`} className="list-row">
-                    <div>
+              <div className="permission-card-grid">
+                {group.permissions.map((permission) => {
+                  const isEnabled = effectivePermissions.includes(permission.code);
+                  const isLocked =
+                    !canEditRolePermissions ||
+                    isLockedRole ||
+                    ((permission.code === "admin.permissions.edit" ||
+                      permission.code === "admin.permissions.manage") &&
+                      !canDelegatePermissionAccess);
+
+                  return (
+                    <label
+                      key={`${role}-${permission.code}`}
+                      className={`permission-card${isEnabled ? " is-selected" : ""}${
+                        isLocked ? " is-locked" : ""
+                      }`}
+                    >
+                      <div className="permission-card-copy">
                       <strong>{permission.label}</strong>
                       <p>{permission.description}</p>
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={effectivePermissions.includes(permission.code)}
-                      disabled={
-                        !canEditRolePermissions ||
-                        isLockedRole ||
-                        ((permission.code === "admin.permissions.edit" ||
-                          permission.code === "admin.permissions.manage") &&
-                          !canDelegatePermissionAccess)
-                      }
-                      onChange={() => toggleRolePermission(role, permission.code)}
-                    />
-                  </label>
-                ))}
+                        <small>{permission.code}</small>
+                      </div>
+                      <div className="permission-card-control">
+                        <span className={`status-chip ${isEnabled ? "positive" : "neutral"}`}>
+                          {isEnabled ? "Allowed" : "Blocked"}
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={isEnabled}
+                          disabled={isLocked}
+                          onChange={() => toggleRolePermission(role, permission.code)}
+                        />
+                      </div>
+                    </label>
+                  );
+                })}
               </div>
-            </div>
+            </section>
           ))}
         </div>
 
@@ -1543,10 +1583,38 @@ export function AdminPage({
                   barcode workflows, FEFO enforcement, alert thresholds, and which clock source
                   OmniStock should trust.
                 </p>
-                <div className="settings-fields-grid">
-                  <label className="settings-field-card">
-                    <span className="settings-field-label">Timezone</span>
-                    <select
+                  <div className="settings-fields-grid">
+                    <label className="settings-field-card">
+                      <span className="settings-field-label">Workspace Location</span>
+                      <select
+                        value={settingsForm.workspaceLocation}
+                        disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                        onChange={(event) => patchSettings("workspaceLocation", event.target.value)}
+                      >
+                        {LOCATION_OPTIONS.map((locationOption) => (
+                          <option key={locationOption.value} value={locationOption.value}>
+                            {locationOption.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="settings-field-card">
+                      <span className="settings-field-label">Currency</span>
+                      <select
+                        value={settingsForm.currency}
+                        disabled={!canEditEnvironmentSettings || submitting === "settings"}
+                        onChange={(event) => patchSettings("currency", event.target.value)}
+                      >
+                        {CURRENCY_OPTIONS.map((currencyOption) => (
+                          <option key={currencyOption.code} value={currencyOption.code}>
+                            {currencyOption.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="settings-field-card">
+                      <span className="settings-field-label">Timezone</span>
+                      <select
                       value={settingsForm.timezone}
                       disabled={!canEditEnvironmentSettings || submitting === "settings"}
                       onChange={(event) => patchSettings("timezone", event.target.value)}

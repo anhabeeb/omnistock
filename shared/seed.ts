@@ -725,8 +725,9 @@ const movementLedger: MovementLedgerEntry[] = [
 
 const settings: AppSettings = {
   companyName: "OmniStock Demo Holdings",
-  currency: "PKR",
-  timezone: "Asia/Karachi",
+  workspaceLocation: "Maldives",
+  currency: "MVR",
+  timezone: "Indian/Maldives",
   timeSource: DEFAULT_TIME_SOURCE,
   lowStockThreshold: 1,
   expiryAlertDays: 14,
@@ -856,8 +857,9 @@ export function createEmptySnapshot(): InventorySnapshot {
     },
     settings: {
       companyName: "OmniStock",
-      currency: "PKR",
-      timezone: "Asia/Karachi",
+      workspaceLocation: "Maldives",
+      currency: "MVR",
+      timezone: "Indian/Maldives",
       timeSource: DEFAULT_TIME_SOURCE,
       lowStockThreshold: 5,
       expiryAlertDays: 14,

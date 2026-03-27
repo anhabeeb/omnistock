@@ -14,6 +14,21 @@ import type {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+function localeForCurrency(currency: string): string {
+  switch (currency.trim().toUpperCase()) {
+    case "MVR":
+      return "en-MV";
+    case "PKR":
+      return "en-PK";
+    case "AED":
+      return "en-AE";
+    case "SAR":
+      return "ar-SA";
+    default:
+      return "en-US";
+  }
+}
+
 function setupUser(): User {
   return {
     id: "usr-setup",
@@ -280,7 +295,7 @@ export function dashboardMetrics(snapshot: InventorySnapshot): DashboardMetric[]
   return [
     {
       label: "Inventory Value",
-      value: new Intl.NumberFormat("en-PK", {
+      value: new Intl.NumberFormat(localeForCurrency(snapshot.settings.currency), {
         style: "currency",
         currency: snapshot.settings.currency,
         maximumFractionDigits: 0,

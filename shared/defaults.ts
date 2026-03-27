@@ -14,6 +14,9 @@ import type {
 } from "./types";
 
 export const DEFAULT_TIME_SOURCE: TimeSource = "system";
+export const DEFAULT_WORKSPACE_LOCATION = "Maldives";
+export const DEFAULT_CURRENCY = "MVR";
+export const DEFAULT_TIMEZONE = "Indian/Maldives";
 export const DEFAULT_PRINT_PAPER_SIZE: PrintPaperSize = "a4";
 export const DEFAULT_PRINT_ORIENTATION: PrintOrientation = "portrait";
 export const DEFAULT_PRINT_DENSITY: PrintDensity = "comfortable";
