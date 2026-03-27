@@ -1996,25 +1996,14 @@ export function AdminPage({
                   </div>
                 </div>
 
-                <div className="button-row" style={{ justifyContent: "flex-start" }}>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={
-                      !canEditNotificationSettings ||
-                      submitting === "telegram-test" ||
-                      !settingsForm.notificationSettings.telegramEnabled ||
-                      !settingsForm.notificationSettings.telegramChatId.trim()
-                    }
-                    onClick={() => void handleSendTelegramTest()}
-                  >
-                    {submitting === "telegram-test"
-                      ? "Sending..."
-                      : "Send Telegram Test"}
-                  </button>
-                </div>
-
-                <div className="stack-list">
+                <div className="settings-pane-card notification-rules-card">
+                  <div className="panel-heading compact-heading">
+                    <div>
+                      <p className="eyebrow">Delivery Rules</p>
+                      <h3>Alert channels and schedule</h3>
+                    </div>
+                  </div>
+                  <div className="stack-list">
                   {[
                     ["lowStock", "Low stock"],
                     ["nearExpiry", "Near expiry"],
@@ -2147,6 +2136,7 @@ export function AdminPage({
                       </label>
                     </div>
                   </div>
+                </div>
                 </div>
 
                 {settingsFeedback ? <p className="feedback-copy">{settingsFeedback}</p> : null}

@@ -1842,7 +1842,7 @@ textarea {
 
 .settings-dual-pane {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  grid-template-columns: minmax(320px, 0.92fr) minmax(0, 1.08fr);
   gap: 18px;
   align-items: start;
 }
@@ -1855,6 +1855,8 @@ textarea {
   border-radius: var(--radius-lg);
   background: rgba(15, 23, 42, 0.42);
   box-shadow: var(--shadow-sm);
+  min-width: 0;
+  overflow: hidden;
 }
 
 :root[data-theme="light"] .settings-pane-card {
@@ -1863,7 +1865,7 @@ textarea {
 
 .notification-template-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 14px;
 }
 
@@ -1883,6 +1885,10 @@ textarea {
 
 .notification-template-card strong {
   text-transform: capitalize;
+}
+
+.notification-rules-card .stack-list {
+  gap: 12px;
 }
 
 .print-designer-shell {
