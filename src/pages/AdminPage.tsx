@@ -636,6 +636,12 @@ export function AdminPage({
     if (!canEditNotificationSettings) {
       return;
     }
+    if (settingsDirty) {
+      setSettingsFeedback(
+        "Save notification settings first so OmniStock can test the latest Telegram configuration.",
+      );
+      return;
+    }
     if (pendingTelegramTokenInput || settingsForm.clearTelegramBotToken) {
       setSettingsFeedback(
         "Save notification settings first so OmniStock can use the latest stored Telegram token.",
@@ -2011,6 +2017,7 @@ export function AdminPage({
                         disabled={
                           !canEditNotificationSettings ||
                           submitting === "telegram-test" ||
+                          settingsDirty ||
                           Boolean(pendingTelegramTokenInput) ||
                           Boolean(settingsForm.clearTelegramBotToken) ||
                           !settingsForm.notificationSettings.telegramEnabled ||

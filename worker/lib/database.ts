@@ -3531,6 +3531,10 @@ export async function sendTestTelegramNotificationInD1(
       "Save a Telegram bot token in Settings before sending a Telegram test message.",
     );
   }
+  const customMessage = input.message?.trim();
+  const messageText =
+    customMessage ||
+    `${snapshot.settings.companyName} - Telegram setup test\nTriggered by ${actor.name} from OmniStock Settings.`;
 
   const response = await fetch(`https://api.telegram.org/bot${configuredToken}/sendMessage`, {
     method: "POST",
@@ -3542,7 +3546,7 @@ export async function sendTestTelegramNotificationInD1(
       ...(settings.telegramThreadId.trim()
         ? { message_thread_id: Number(settings.telegramThreadId.trim()) }
         : {}),
-      text: `${snapshot.settings.companyName} - Telegram setup test\nTriggered by ${actor.name} from OmniStock Settings.`,
+      text: messageText,
     }),
   });
   const payload = (await response.json()) as { ok?: boolean; description?: string };
