@@ -173,13 +173,26 @@ export function AppNotificationCenter({
                     : "No active notifications"}
                 </Typography>
               </Box>
-              <Button
-                size="small"
-                onClick={() => void onMarkAllRead()}
-                disabled={unreadCount === 0}
-              >
-                Mark all read
-              </Button>
+              <Stack direction="row" spacing={1}>
+                {!pageMode && onOpenPage ? (
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      closePopover();
+                      onOpenPage();
+                    }}
+                  >
+                    Open center
+                  </Button>
+                ) : null}
+                <Button
+                  size="small"
+                  onClick={() => void onMarkAllRead()}
+                  disabled={unreadCount === 0}
+                >
+                  Mark all read
+                </Button>
+              </Stack>
             </Stack>
 
             <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">

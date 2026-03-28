@@ -23,12 +23,14 @@ import type {
   InventorySnapshot,
   PermissionKey,
   RequestKind,
+  RequestAttachmentInput,
   ShiftKey,
   User,
   WasteReason,
 } from "../../shared/types";
 import { DeleteIcon, EditIcon, ReverseIcon, ViewIcon } from "../components/AppIcons";
 import { BarcodeScanModal } from "../components/BarcodeScanModal";
+import { RequestEvidenceList, RequestEvidenceUploader } from "../components/RequestEvidence";
 import { formatDateTime } from "../lib/format";
 import { SAFE_MUI_SELECT_PROPS } from "../lib/muiFocus";
 import { getDateInputValueForWorkspace } from "../lib/time";
@@ -61,6 +63,7 @@ interface FormState {
   wasteReason: WasteReason;
   wasteShift: ShiftKey;
   wasteStation: string;
+  attachments: RequestAttachmentInput[];
 }
 
 type InventoryDialogMode = "create" | "view" | "edit" | "delete" | "reverse";
@@ -111,6 +114,7 @@ function defaultForm(snapshot: InventorySnapshot, currentUser: User, kind: Reque
     wasteShift: "morning",
     wasteStation:
       snapshot.locations.find((location) => location.id === fallbackLocation)?.name ?? "",
+    attachments: [],
   };
 }
 
@@ -177,6 +181,7 @@ export function MobileInventoryOpsPage({
   const capturesBatchMetadata =
     form.kind === "grn" || form.kind === "adjustment" || form.kind === "stock-count";
   const capturesWasteMetadata = form.kind === "wastage";
+  const capturesEvidence = form.kind === "adjustment" || form.kind === "wastage";
 
   const visibleItems = useMemo(() => {
     const value = deferredItemSearch.trim().toLowerCase();
@@ -293,6 +298,12 @@ export function MobileInventoryOpsPage({
         wasteReason: request.wasteReason ?? "spoilage",
         wasteShift: request.wasteShift ?? "morning",
         wasteStation: request.wasteStation ?? request.fromLocationName ?? "",
+        attachments: request.attachments.map((attachment) => ({
+          fileName: attachment.fileName,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          dataUrl: attachment.dataUrl,
+        })),
       });
       setItemSearch(request.itemName);
     }
@@ -325,6 +336,7 @@ export function MobileInventoryOpsPage({
         wasteReason: capturesWasteMetadata ? form.wasteReason : undefined,
         wasteShift: capturesWasteMetadata ? form.wasteShift : undefined,
         wasteStation: capturesWasteMetadata ? form.wasteStation : undefined,
+        attachments: capturesEvidence ? form.attachments : undefined,
       });
         setFeedback(
           created.status === "submitted"
@@ -366,6 +378,7 @@ export function MobileInventoryOpsPage({
         wasteReason: capturesWasteMetadata ? form.wasteReason : undefined,
         wasteShift: capturesWasteMetadata ? form.wasteShift : undefined,
         wasteStation: capturesWasteMetadata ? form.wasteStation : undefined,
+        attachments: capturesEvidence ? form.attachments : undefined,
       });
       setFeedback(updated ? `${selectedRequest.reference} corrected through ${updated.reference}.` : `${selectedRequest.reference} corrected.`);
       closeDialog();
@@ -594,6 +607,20 @@ export function MobileInventoryOpsPage({
                   </Typography>
                 </Paper>
               ))}
+              {(selectedRequest.attachments.length > 0 || selectedRequest.decisionAttachments.length > 0) ? (
+                <div className="detail-evidence-grid">
+                  <RequestEvidenceList
+                    title="Request evidence"
+                    attachments={selectedRequest.attachments}
+                    emptyLabel="No request evidence attached."
+                  />
+                  <RequestEvidenceList
+                    title="Approval evidence"
+                    attachments={selectedRequest.decisionAttachments}
+                    emptyLabel="No approval evidence attached."
+                  />
+                </div>
+              ) : null}
             </Stack>
           ) : (
             <Stack spacing={1.5} sx={{ pt: 0.5 }}>
@@ -747,6 +774,16 @@ export function MobileInventoryOpsPage({
               ) : null}
 
               <TextField label="Note / reason" multiline minRows={4} value={form.note} onChange={(event) => patch("note", event.target.value)} />
+
+              {capturesEvidence ? (
+                <RequestEvidenceUploader
+                  title="Operational evidence"
+                  hint="Attach photo or PDF proof for this adjustment or wastage entry."
+                  attachments={form.attachments}
+                  onChange={(attachments) => patch("attachments", attachments)}
+                  disabled={submitting}
+                />
+              ) : null}
 
               {dialogMode === "edit" ? (
                 <TextField

@@ -89,6 +89,7 @@ export type PriceCategory =
   | "dry-goods"
   | "oil";
 export type BarcodeType = "primary" | "secondary" | "packaging";
+export type RequestAttachmentScope = "request" | "decision";
 export type WasteReason =
   | "spoilage"
   | "expiry"
@@ -144,6 +145,7 @@ export interface DailySummaryNotificationSettings extends NotificationRuleSettin
 export interface NotificationSettings {
   telegramEnabled: boolean;
   telegramChatId: string;
+  telegramTokenConfigured: boolean;
   lowStock: NotificationRuleSettings;
   nearExpiry: NotificationRuleSettings;
   expired: NotificationRuleSettings;
@@ -219,6 +221,22 @@ export interface ItemUnitConversion {
   unitName: string;
   quantityInBase: number;
   createdAt: string;
+}
+
+export interface RequestAttachmentInput {
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  dataUrl: string;
+}
+
+export interface RequestAttachment extends RequestAttachmentInput {
+  id: string;
+  requestId: string;
+  scope: RequestAttachmentScope;
+  uploadedBy: string;
+  uploadedByName: string;
+  uploadedAt: string;
 }
 
 export interface Item {
@@ -311,6 +329,8 @@ export interface InventoryRequest {
   wasteShift?: ShiftKey;
   wasteStation?: string;
   note: string;
+  attachments: RequestAttachment[];
+  decisionAttachments: RequestAttachment[];
   requestedBy: string;
   requestedByName: string;
   requestedAt: string;
@@ -467,6 +487,7 @@ export interface MutationPayload {
   itemId: string;
   quantity: number;
   note: string;
+  attachments?: RequestAttachmentInput[];
   barcode?: string;
   quantityUnit?: string;
   supplierId?: string;
@@ -796,6 +817,8 @@ export interface UpdateSettingsRequest {
   strictFefo: boolean;
   reportPrintTemplate: ReportPrintTemplate;
   notificationSettings: NotificationSettings;
+  telegramBotTokenInput?: string;
+  clearTelegramBotToken?: boolean;
 }
 
 export interface SettingsResponse {
@@ -844,11 +867,13 @@ export interface ReverseInventoryRequest {
 export interface ApproveInventoryRequest {
   requestId: string;
   note?: string;
+  attachments?: RequestAttachmentInput[];
 }
 
 export interface RejectInventoryRequest {
   requestId: string;
   reason: string;
+  attachments?: RequestAttachmentInput[];
 }
 
 export interface DeleteInventoryRequest {
@@ -861,6 +886,7 @@ export interface EditInventoryRequest {
   itemId: string;
   quantity: number;
   note: string;
+  attachments?: RequestAttachmentInput[];
   barcode?: string;
   quantityUnit?: string;
   supplierId?: string;

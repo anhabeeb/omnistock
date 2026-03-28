@@ -216,6 +216,7 @@ export function createDefaultNotificationSettings(): NotificationSettings {
   return {
     telegramEnabled: false,
     telegramChatId: "",
+    telegramTokenConfigured: false,
     lowStock: createNotificationRuleSettings(),
     nearExpiry: createNotificationRuleSettings(),
     expired: createNotificationRuleSettings({ telegram: true }),

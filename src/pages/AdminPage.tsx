@@ -70,6 +70,13 @@ interface CreateFormState {
 type SettingsFormState = UpdateSettingsRequest;
 type SettingsTabKey = "environment" | "notifications" | "print" | "permissions";
 type UserDialogMode = "create" | "edit" | "access" | "password" | "remove";
+type NotificationRuleKey =
+  | "lowStock"
+  | "nearExpiry"
+  | "expired"
+  | "approvalRequests"
+  | "failedSync"
+  | "wastageThresholdExceeded";
 
 const FALLBACK_TIMEZONES = [
   "UTC",
@@ -211,6 +218,8 @@ function buildSettingsState(snapshot: InventorySnapshot): SettingsFormState {
     strictFefo: snapshot.settings.strictFefo,
     reportPrintTemplate: { ...snapshot.settings.reportPrintTemplate },
     notificationSettings: structuredClone(snapshot.settings.notificationSettings),
+    telegramBotTokenInput: "",
+    clearTelegramBotToken: false,
   };
 }
 
@@ -438,10 +447,7 @@ export function AdminPage({
   }
 
   function patchNotificationRule(
-    key: Exclude<
-      keyof SettingsFormState["notificationSettings"],
-      "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
-    >,
+    key: NotificationRuleKey,
     field: "enabled" | "inApp" | "telegram",
     value: boolean,
   ) {
@@ -597,6 +603,15 @@ export function AdminPage({
 
   const settingsDirty =
     JSON.stringify(settingsForm) !== JSON.stringify(buildSettingsState(snapshot));
+  const pendingTelegramTokenInput = settingsForm.telegramBotTokenInput?.trim() ?? "";
+  const telegramTokenConfigured = settingsForm.notificationSettings.telegramTokenConfigured;
+  const telegramStatusLabel = pendingTelegramTokenInput
+    ? "Ready to save"
+    : settingsForm.clearTelegramBotToken
+      ? "Clears on save"
+      : telegramTokenConfigured
+        ? "Stored token ready"
+        : "Token needed";
 
   async function handleSaveSettings() {
     if (!canEditEnvironmentSettings && !canEditNotificationSettings) {
@@ -619,6 +634,12 @@ export function AdminPage({
 
   async function handleSendTelegramTest() {
     if (!canEditNotificationSettings) {
+      return;
+    }
+    if (pendingTelegramTokenInput || settingsForm.clearTelegramBotToken) {
+      setSettingsFeedback(
+        "Save notification settings first so OmniStock can use the latest stored Telegram token.",
+      );
       return;
     }
 
@@ -1782,16 +1803,15 @@ export function AdminPage({
                         <h3>Bot and chat connection</h3>
                       </div>
                       <span className="status-chip neutral">
-                        {settingsForm.notificationSettings.telegramEnabled &&
-                        settingsForm.notificationSettings.telegramChatId.trim()
-                          ? "Channel configured"
-                          : "Needs setup"}
+                        {telegramStatusLabel}
                       </span>
                     </div>
                     <p className="helper-text">
-                      Keep the bot token in the Worker secret for production, then connect the
-                      target group or channel here with a chat ID like <code>-1001234567890</code>{" "}
-                      or a channel username like <code>@omnistock_alerts</code>.
+                      Paste a Telegram bot token to save or rotate it. OmniStock encrypts the
+                      token before writing it to the database and never shows the saved value
+                      again. Connect the target group or channel with a chat ID like{" "}
+                      <code>-1001234567890</code> or a channel username like{" "}
+                      <code>@omnistock_alerts</code>.
                     </p>
                     <div className="settings-fields-grid">
                       <label className="settings-field-card">
@@ -1821,12 +1841,39 @@ export function AdminPage({
                           placeholder="-1001234567890"
                         />
                       </label>
-                      <div className="settings-field-card">
-                        <span className="settings-field-label">Bot Token Source</span>
-                        <strong>Worker secret</strong>
+                      <label className="settings-field-card">
+                        <span className="settings-field-label">Bot Token</span>
+                        <input
+                          type="password"
+                          autoComplete="new-password"
+                          value={settingsForm.telegramBotTokenInput ?? ""}
+                          disabled={!canEditNotificationSettings || submitting === "settings"}
+                          onChange={(event) =>
+                            setSettingsForm((current) => ({
+                              ...current,
+                              telegramBotTokenInput: event.target.value,
+                              clearTelegramBotToken: false,
+                            }))
+                          }
+                          placeholder={
+                            telegramTokenConfigured
+                              ? "Paste a new token to rotate the stored one"
+                              : "Paste Telegram bot token"
+                          }
+                        />
                         <p className="helper-text" style={{ marginTop: "8px" }}>
-                          Configure <code>TELEGRAM_BOT_TOKEN</code> with Wrangler. The bot token
-                          is no longer stored in OmniStock settings or the database.
+                          Leave blank to keep the current saved token. Save the form after pasting
+                          a new token. OmniStock also needs a workspace encryption key configured
+                          once by the deployment owner.
+                        </p>
+                      </label>
+                      <div className="settings-field-card">
+                        <span className="settings-field-label">Stored Token</span>
+                        <strong>{telegramTokenConfigured ? "Encrypted and ready" : "Not stored yet"}</strong>
+                        <p className="helper-text" style={{ marginTop: "8px" }}>
+                          {telegramTokenConfigured
+                            ? "The token is stored encrypted in OmniStock and can be rotated or cleared."
+                            : "No encrypted Telegram token is stored yet for this workspace."}
                         </p>
                       </div>
                       <label className="settings-field-card">
@@ -1874,6 +1921,26 @@ export function AdminPage({
                         </select>
                       </label>
                     </div>
+                    <label className="settings-toggle-card">
+                      <div>
+                        <strong>Clear Stored Bot Token</strong>
+                        <p>Remove the encrypted Telegram token on the next save.</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(settingsForm.clearTelegramBotToken)}
+                        disabled={!canEditNotificationSettings || submitting === "settings"}
+                        onChange={(event) =>
+                          setSettingsForm((current) => ({
+                            ...current,
+                            clearTelegramBotToken: event.target.checked,
+                            telegramBotTokenInput: event.target.checked
+                              ? ""
+                              : current.telegramBotTokenInput,
+                          }))
+                        }
+                      />
+                    </label>
                     <div className="settings-fields-grid compact-grid">
                       <label className="settings-field-card">
                         <span className="settings-field-label">Telegram Header</span>
@@ -1928,6 +1995,8 @@ export function AdminPage({
                         disabled={
                           !canEditNotificationSettings ||
                           submitting === "telegram-test" ||
+                          Boolean(pendingTelegramTokenInput) ||
+                          Boolean(settingsForm.clearTelegramBotToken) ||
                           !settingsForm.notificationSettings.telegramEnabled ||
                           !settingsForm.notificationSettings.telegramChatId.trim()
                         }
@@ -2038,10 +2107,7 @@ export function AdminPage({
                               disabled={!canEditNotificationSettings || submitting === "settings"}
                               onChange={(event) =>
                                 patchNotificationRule(
-                                  key as Exclude<
-                                    keyof SettingsFormState["notificationSettings"],
-                                    "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
-                                  >,
+                                  key as NotificationRuleKey,
                                   "enabled",
                                   event.target.checked,
                                 )
@@ -2056,10 +2122,7 @@ export function AdminPage({
                               disabled={!canEditNotificationSettings || submitting === "settings"}
                               onChange={(event) =>
                                 patchNotificationRule(
-                                  key as Exclude<
-                                    keyof SettingsFormState["notificationSettings"],
-                                    "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
-                                  >,
+                                  key as NotificationRuleKey,
                                   "inApp",
                                   event.target.checked,
                                 )
@@ -2074,10 +2137,7 @@ export function AdminPage({
                               disabled={!canEditNotificationSettings || submitting === "settings"}
                               onChange={(event) =>
                                 patchNotificationRule(
-                                  key as Exclude<
-                                    keyof SettingsFormState["notificationSettings"],
-                                    "telegramEnabled" | "telegramChatId" | "wastageCostThreshold" | "dailySummary"
-                                  >,
+                                  key as NotificationRuleKey,
                                   "telegram",
                                   event.target.checked,
                                 )

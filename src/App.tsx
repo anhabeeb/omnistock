@@ -39,6 +39,7 @@ import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 import { MODULES, ROLE_PRESETS, can, canAccessModule } from "../shared/permissions";
 import { AppNotificationCenter } from "./components/AppNotificationCenter";
 import {
+  AlertIcon,
   ActivityIcon,
   AdminIcon,
   DashboardIcon,
@@ -64,6 +65,9 @@ import { LoginPage } from "./pages/LoginPage";
 
 const AdminPage = lazy(() =>
   import("./pages/AdminPage").then((module) => ({ default: module.AdminPage })),
+);
+const AlertsPage = lazy(() =>
+  import("./pages/AlertsPage").then((module) => ({ default: module.AlertsPage })),
 );
 const DashboardPage = lazy(() =>
   import("./pages/DashboardPage").then((module) => ({ default: module.DashboardPage })),
@@ -129,7 +133,7 @@ const SEARCH_VIEW = {
 };
 const ALERTS_VIEW = {
   label: "Alerts & Approvals",
-  description: "Review notifications and submitted approval requests in a mobile-focused inbox.",
+  description: "Review active notifications and submitted inventory approval requests in one inbox.",
 };
 
 const MODULE_ICONS = {
@@ -441,6 +445,11 @@ export default function App() {
         second: "2-digit",
       }, "en-US");
       const utilityLinks = [
+        {
+          label: "Approvals",
+          to: ALERTS_ROUTE,
+          icon: <AlertIcon size={18} />,
+        },
         {
           label: "Settings",
           to: canViewSettings ? "/administration/settings" : "/profile",
@@ -1109,14 +1118,25 @@ export default function App() {
                 <Route
                   path={ALERTS_ROUTE}
                   element={
-                    <MobileAlertsPage
-                      snapshot={snapshot}
-                      currentUser={currentUser}
-                      onMarkRead={markNotificationAsRead}
-                      onMarkAllRead={markEveryNotificationAsRead}
-                      onApproveRequest={approveInventoryRequest}
-                      onRejectRequest={rejectInventoryRequest}
-                    />
+                    isTabletOrMobile ? (
+                      <MobileAlertsPage
+                        snapshot={snapshot}
+                        currentUser={currentUser}
+                        onMarkRead={markNotificationAsRead}
+                        onMarkAllRead={markEveryNotificationAsRead}
+                        onApproveRequest={approveInventoryRequest}
+                        onRejectRequest={rejectInventoryRequest}
+                      />
+                    ) : (
+                      <AlertsPage
+                        snapshot={snapshot}
+                        currentUser={currentUser}
+                        onMarkRead={markNotificationAsRead}
+                        onMarkAllRead={markEveryNotificationAsRead}
+                        onApproveRequest={approveInventoryRequest}
+                        onRejectRequest={rejectInventoryRequest}
+                      />
+                    )
                   }
                 />
                 <Route

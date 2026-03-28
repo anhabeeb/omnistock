@@ -848,10 +848,28 @@ export function applyMutation(
         ? mutation.payload.wasteStation?.trim() || fromLocation?.name
         : undefined,
     note,
+    attachments: (mutation.payload.attachments ?? []).map((attachment) => ({
+      id: makeId("att"),
+      requestId: "",
+      scope: "request",
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      dataUrl: attachment.dataUrl,
+      uploadedBy: actor.id,
+      uploadedByName: actor.name,
+      uploadedAt: now,
+    })),
+    decisionAttachments: [],
     requestedBy: actor.id,
     requestedByName: actor.name,
     requestedAt: now,
   };
+
+  request.attachments = request.attachments.map((attachment) => ({
+    ...attachment,
+    requestId: request.id,
+  }));
 
   if (wasteEntry) {
     wasteEntry.requestId = request.id;

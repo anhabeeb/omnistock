@@ -71,6 +71,9 @@ import type {
   PrintLayoutBlock,
   PullResponse,
   PushResponse,
+  RequestAttachment,
+  RequestAttachmentInput,
+  RequestAttachmentScope,
   RequestKind,
   ReportSyncFailureRequest,
   ReportPrintTemplate,
@@ -110,6 +113,10 @@ type D1Value = string | number | null;
 type LegacyNotificationSettingsInput = NotificationSettings & {
   telegramBotToken?: string;
 };
+type NotificationSecretContext = {
+  appSecretsKey?: string;
+  legacyTelegramBotToken?: string;
+};
 
 const SETTINGS_ID = "stg-00001";
 const SEQUENCE_DEFAULT_WIDTH = 5;
@@ -117,13 +124,20 @@ const DOCUMENT_SEQUENCE_START = 1001;
 const PASSWORD_ITERATIONS = 100_000;
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 const DAILY_SUMMARY_STATE_PREFIX = "daily_summary_sent_on:";
+const MAX_REQUEST_ATTACHMENT_COUNT = 4;
+const MAX_REQUEST_ATTACHMENT_BYTES = 450_000;
+const MAX_TOTAL_REQUEST_ATTACHMENT_BYTES = 1_200_000;
 const textEncoder = new TextEncoder();
 
 const NOTIFICATION_TYPE_TO_SETTINGS_KEY: Record<
   Exclude<NotificationType, "daily-summary">,
   keyof Omit<
     NotificationSettings,
-    "telegramEnabled" | "telegramChatId" | "dailySummary" | "wastageCostThreshold"
+    | "telegramEnabled"
+    | "telegramChatId"
+    | "telegramTokenConfigured"
+    | "dailySummary"
+    | "wastageCostThreshold"
   >
 > = {
   "low-stock": "lowStock",
@@ -180,12 +194,16 @@ function bytesToHex(bytes: Uint8Array): string {
   return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+function hexToBytes(hex: string): Uint8Array {
   const output = new Uint8Array(hex.length / 2);
   for (let index = 0; index < output.length; index += 1) {
     output[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
   }
-  return new Uint8Array(output.buffer.slice(0));
+  return output;
 }
 
 function randomHex(byteLength: number): string {
@@ -274,7 +292,7 @@ async function derivePasswordHash(
   const derived = await crypto.subtle.deriveBits(
     {
       name: "PBKDF2",
-      salt: hexToBytes(saltHex),
+      salt: toArrayBuffer(hexToBytes(saltHex)),
       iterations,
       hash: "SHA-256",
     },
@@ -563,6 +581,207 @@ function sanitizeRequestedPermissions(
   return normalized.sort();
 }
 
+function sanitizeAttachmentInputs(
+  attachments?: RequestAttachmentInput[],
+): RequestAttachmentInput[] {
+  const sanitized = (attachments ?? [])
+    .slice(0, MAX_REQUEST_ATTACHMENT_COUNT)
+    .map((attachment) => ({
+      fileName: attachment.fileName.trim(),
+      mimeType: attachment.mimeType.trim().toLowerCase(),
+      sizeBytes: Number(attachment.sizeBytes),
+      dataUrl: attachment.dataUrl.trim(),
+    }))
+    .filter((attachment) => attachment.fileName && attachment.mimeType && attachment.dataUrl);
+
+  const totalBytes = sanitized.reduce((sum, attachment) => sum + attachment.sizeBytes, 0);
+  if (sanitized.length > MAX_REQUEST_ATTACHMENT_COUNT) {
+    throw new Error(`Only ${MAX_REQUEST_ATTACHMENT_COUNT} evidence files can be attached to a request.`);
+  }
+  if (totalBytes > MAX_TOTAL_REQUEST_ATTACHMENT_BYTES) {
+    throw new Error("The combined evidence files are too large for this request.");
+  }
+
+  for (const attachment of sanitized) {
+    if (!attachment.mimeType.startsWith("image/") && attachment.mimeType !== "application/pdf") {
+      throw new Error(`Attachment ${attachment.fileName} must be an image or PDF evidence file.`);
+    }
+    if (
+      !attachment.dataUrl.startsWith(`data:${attachment.mimeType};base64,`) &&
+      !attachment.dataUrl.startsWith(`data:${attachment.mimeType},`)
+    ) {
+      throw new Error(`Attachment ${attachment.fileName} has an invalid encoded payload.`);
+    }
+    if (!Number.isFinite(attachment.sizeBytes) || attachment.sizeBytes <= 0) {
+      throw new Error(`Attachment ${attachment.fileName} has an invalid file size.`);
+    }
+    if (attachment.sizeBytes > MAX_REQUEST_ATTACHMENT_BYTES) {
+      throw new Error(`Attachment ${attachment.fileName} is too large.`);
+    }
+  }
+
+  return sanitized;
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const value of bytes) {
+    binary += String.fromCharCode(value);
+  }
+  return btoa(binary);
+}
+
+function decodeBase64(value: string): Uint8Array {
+  const binary = atob(value);
+  const output = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    output[index] = binary.charCodeAt(index);
+  }
+  return output;
+}
+
+async function importSecretsKey(appSecretsKey: string): Promise<CryptoKey> {
+  const material = await crypto.subtle.digest(
+    "SHA-256",
+    textEncoder.encode(appSecretsKey.trim()),
+  );
+  return crypto.subtle.importKey("raw", material, "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+
+async function encryptSecretValue(
+  value: string,
+  appSecretsKey?: string,
+): Promise<{ ciphertext: string; iv: string }> {
+  const trimmedKey = appSecretsKey?.trim() ?? "";
+  if (!trimmedKey) {
+    throw new Error("Configure the APP_SECRETS_KEY Worker secret before saving encrypted bot tokens.");
+  }
+
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await importSecretsKey(trimmedKey);
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    textEncoder.encode(value),
+  );
+
+  return {
+    ciphertext: encodeBase64(new Uint8Array(encrypted)),
+    iv: encodeBase64(iv),
+  };
+}
+
+async function decryptSecretValue(
+  ciphertext: string,
+  iv: string,
+  appSecretsKey?: string,
+): Promise<string> {
+  const trimmedKey = appSecretsKey?.trim() ?? "";
+  if (!trimmedKey) {
+    throw new Error("Configure the APP_SECRETS_KEY Worker secret before using encrypted bot tokens.");
+  }
+
+  const key = await importSecretsKey(trimmedKey);
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: toArrayBuffer(decodeBase64(iv)) },
+    key,
+    toArrayBuffer(decodeBase64(ciphertext)),
+  );
+
+  return new TextDecoder().decode(decrypted);
+}
+
+async function resolveTelegramBotToken(
+  db: D1Database,
+  secretContext: NotificationSecretContext = {},
+): Promise<string> {
+  const row = await first<{
+    telegram_token_ciphertext: string | null;
+    telegram_token_iv: string | null;
+  }>(
+    db,
+    "SELECT telegram_token_ciphertext, telegram_token_iv FROM app_settings WHERE id = ? LIMIT 1",
+    [SETTINGS_ID],
+  );
+
+  if (row?.telegram_token_ciphertext && row.telegram_token_iv) {
+    try {
+      return await decryptSecretValue(
+        row.telegram_token_ciphertext,
+        row.telegram_token_iv,
+        secretContext.appSecretsKey,
+      );
+    } catch (error) {
+      const fallbackToken = secretContext.legacyTelegramBotToken?.trim() ?? "";
+      if (fallbackToken) {
+        return fallbackToken;
+      }
+      throw error;
+    }
+  }
+
+  return secretContext.legacyTelegramBotToken?.trim() ?? "";
+}
+
+async function persistRequestAttachments(
+  db: D1Database,
+  requestId: string,
+  scope: RequestAttachmentScope,
+  attachments: RequestAttachmentInput[] | undefined,
+  uploadedBy: string,
+  uploadedByName: string,
+  uploadedAt: string,
+  replaceExisting = false,
+): Promise<RequestAttachment[]> {
+  const sanitized = sanitizeAttachmentInputs(attachments);
+
+  if (replaceExisting) {
+    await execute(
+      db,
+      "DELETE FROM inventory_request_attachments WHERE request_id = ? AND scope = ?",
+      [requestId, scope],
+    );
+  }
+
+  const persisted: RequestAttachment[] = [];
+  for (const attachment of sanitized) {
+    const id = await reserveNextId(db, "inventory_request_attachments", "rat");
+    await execute(
+      db,
+      "INSERT INTO inventory_request_attachments (id, sequence_no, request_id, scope, file_name, mime_type, size_bytes, data_url, uploaded_by, uploaded_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        id,
+        numberPart(id),
+        requestId,
+        scope,
+        attachment.fileName,
+        attachment.mimeType,
+        attachment.sizeBytes,
+        attachment.dataUrl,
+        uploadedBy,
+        uploadedAt,
+        uploadedAt,
+        uploadedAt,
+      ],
+    );
+
+    persisted.push({
+      id,
+      requestId,
+      scope,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      dataUrl: attachment.dataUrl,
+      uploadedBy,
+      uploadedByName,
+      uploadedAt,
+    });
+  }
+
+  return persisted;
+}
+
 function permissionsDifferFromRoleDefaults(
   roleDefaults: PermissionKey[],
   permissions: PermissionKey[],
@@ -657,6 +876,7 @@ function validateNotificationSettings(
   const normalized: NotificationSettings = {
     telegramEnabled: Boolean(safeInput.telegramEnabled),
     telegramChatId: String(safeInput.telegramChatId ?? "").trim(),
+    telegramTokenConfigured: Boolean(safeInput.telegramTokenConfigured),
     lowStock: normalizeNotificationRule(safeInput.lowStock, fallback.lowStock),
     nearExpiry: normalizeNotificationRule(safeInput.nearExpiry, fallback.nearExpiry),
     expired: normalizeNotificationRule(safeInput.expired, fallback.expired),
@@ -875,6 +1095,10 @@ function validateEnvironmentSettings(
     strictFefo: Boolean(input.strictFefo),
     reportPrintTemplate,
     notificationSettings,
+    telegramBotTokenInput:
+      typeof input.telegramBotTokenInput === "string" ? input.telegramBotTokenInput.trim() : "",
+    clearTelegramBotToken:
+      !input.telegramBotTokenInput?.trim() && Boolean(input.clearTelegramBotToken),
   };
 }
 
@@ -1154,6 +1378,29 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
   if (!(await columnExists(db, "inventory_requests", "deleted_by"))) {
     await execute(db, "ALTER TABLE inventory_requests ADD COLUMN deleted_by TEXT");
   }
+  if (!(await tableExists(db, "inventory_request_attachments"))) {
+    await executeScript(
+      db,
+      `
+      CREATE TABLE IF NOT EXISTS inventory_request_attachments (
+        id TEXT PRIMARY KEY,
+        sequence_no INTEGER NOT NULL UNIQUE,
+        request_id TEXT NOT NULL,
+        scope TEXT NOT NULL CHECK (scope IN ('request', 'decision')),
+        file_name TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        data_url TEXT NOT NULL,
+        uploaded_by TEXT NOT NULL,
+        uploaded_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (request_id) REFERENCES inventory_requests(id) ON DELETE CASCADE,
+        FOREIGN KEY (uploaded_by) REFERENCES users(id)
+      ) STRICT;
+      `,
+    );
+  }
   if (!(await columnExists(db, "movement_ledger", "allocation_summary"))) {
     await execute(db, "ALTER TABLE movement_ledger ADD COLUMN allocation_summary TEXT");
   }
@@ -1191,6 +1438,18 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
     await execute(
       db,
       "ALTER TABLE app_settings ADD COLUMN notification_settings_json TEXT NOT NULL DEFAULT '{}'",
+    );
+  }
+  if (!(await columnExists(db, "app_settings", "telegram_token_ciphertext"))) {
+    await execute(
+      db,
+      "ALTER TABLE app_settings ADD COLUMN telegram_token_ciphertext TEXT",
+    );
+  }
+  if (!(await columnExists(db, "app_settings", "telegram_token_iv"))) {
+    await execute(
+      db,
+      "ALTER TABLE app_settings ADD COLUMN telegram_token_iv TEXT",
     );
   }
 
@@ -1367,6 +1626,10 @@ async function ensureLatestSchema(db: D1Database): Promise<void> {
   await execute(
     db,
     "CREATE INDEX IF NOT EXISTS idx_inventory_request_lines_waste_reason ON inventory_request_lines(waste_reason)",
+  );
+  await execute(
+    db,
+    "CREATE INDEX IF NOT EXISTS idx_inventory_request_attachments_request_scope ON inventory_request_attachments(request_id, scope, uploaded_at DESC)",
   );
   await execute(
     db,
@@ -1625,6 +1888,19 @@ interface RequestRow {
   requested_at: string;
 }
 
+interface RequestAttachmentRow {
+  id: string;
+  request_id: string;
+  scope: RequestAttachmentScope;
+  file_name: string;
+  mime_type: string;
+  size_bytes: number;
+  data_url: string;
+  uploaded_by: string;
+  uploaded_by_name: string;
+  uploaded_at: string;
+}
+
 interface InventoryRequestActionRow {
   id: string;
   line_id: string;
@@ -1740,6 +2016,8 @@ interface SettingsRow {
   strict_fefo: number;
   report_print_template_json: string;
   notification_settings_json: string;
+  telegram_token_ciphertext: string | null;
+  telegram_token_iv: string | null;
 }
 
 interface NotificationRow {
@@ -1776,6 +2054,34 @@ function mapBatchBarcodesByBatch(batchBarcodeRows: BatchBarcodeRow[]): Map<strin
       createdAt: row.created_at,
     });
     map.set(row.batch_id, current);
+  }
+  return map;
+}
+
+function mapRequestAttachmentsByRequest(
+  attachmentRows: RequestAttachmentRow[],
+): Map<string, { request: RequestAttachment[]; decision: RequestAttachment[] }> {
+  const map = new Map<string, { request: RequestAttachment[]; decision: RequestAttachment[] }>();
+  for (const row of attachmentRows) {
+    const current = map.get(row.request_id) ?? { request: [], decision: [] };
+    const attachment: RequestAttachment = {
+      id: row.id,
+      requestId: row.request_id,
+      scope: row.scope,
+      fileName: row.file_name,
+      mimeType: row.mime_type,
+      sizeBytes: Number(row.size_bytes),
+      dataUrl: row.data_url,
+      uploadedBy: row.uploaded_by,
+      uploadedByName: row.uploaded_by_name,
+      uploadedAt: row.uploaded_at,
+    };
+    if (row.scope === "decision") {
+      current.decision.push(attachment);
+    } else {
+      current.request.push(attachment);
+    }
+    map.set(row.request_id, current);
   }
   return map;
 }
@@ -1931,9 +2237,19 @@ function parseNotificationSettings(settingsRow: SettingsRow | null): Notificatio
     const parsed = settingsRow?.notification_settings_json
       ? (JSON.parse(settingsRow.notification_settings_json) as NotificationSettings)
       : undefined;
-    return validateNotificationSettings(parsed);
+    return {
+      ...validateNotificationSettings(parsed),
+      telegramTokenConfigured: Boolean(
+        settingsRow?.telegram_token_ciphertext && settingsRow.telegram_token_iv,
+      ),
+    };
   } catch {
-    return createDefaultNotificationSettings();
+    return {
+      ...createDefaultNotificationSettings(),
+      telegramTokenConfigured: Boolean(
+        settingsRow?.telegram_token_ciphertext && settingsRow.telegram_token_iv,
+      ),
+    };
   }
 }
 
@@ -2000,6 +2316,7 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
     overrideRows,
     assignmentRows,
     requestRows,
+    attachmentRows,
     marketPriceRows,
     wasteEntryRows,
     ledgerRows,
@@ -2099,6 +2416,23 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
       WHERE r.deleted_at IS NULL
       ORDER BY r.requested_at DESC, r.sequence_no DESC
       LIMIT 160`,
+    ),
+    all<RequestAttachmentRow>(
+      db,
+      `SELECT
+        att.id,
+        att.request_id,
+        att.scope,
+        att.file_name,
+        att.mime_type,
+        att.size_bytes,
+        att.data_url,
+        att.uploaded_by,
+        u.name AS uploaded_by_name,
+        att.uploaded_at
+      FROM inventory_request_attachments att
+      JOIN users u ON u.id = att.uploaded_by
+      ORDER BY att.uploaded_at ASC, att.sequence_no ASC`,
     ),
     all<MarketPriceRow>(
       db,
@@ -2224,7 +2558,7 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
     ),
     first<SettingsRow>(
       db,
-        "SELECT company_name, workspace_location, currency, timezone, time_source, low_stock_threshold, expiry_alert_days, enable_offline, enable_realtime, enable_barcode, strict_fefo, report_print_template_json, notification_settings_json FROM app_settings LIMIT 1",
+        "SELECT company_name, workspace_location, currency, timezone, time_source, low_stock_threshold, expiry_alert_days, enable_offline, enable_realtime, enable_barcode, strict_fefo, report_print_template_json, notification_settings_json, telegram_token_ciphertext, telegram_token_iv FROM app_settings LIMIT 1",
     ),
   ]);
 
@@ -2236,6 +2570,7 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
   const stockMap = mapStocksByItem(stockRows, batchMap);
   const rolePermissionMap = loadRolePermissionMapFromRows(rolePermissionRows);
   const notificationSettings = parseNotificationSettings(settingsRow);
+  const requestAttachmentMap = mapRequestAttachmentsByRequest(attachmentRows);
   const assignmentMap = groupValues(
     assignmentRows.map((row) => ({ user_id: row.user_id, value: row.location_id })),
   );
@@ -2382,6 +2717,8 @@ export async function loadSnapshot(db: D1Database): Promise<InventorySnapshot> {
       toLocationId: row.to_location_id ?? undefined,
       toLocationName: row.to_location_name ?? undefined,
       note: row.note,
+      attachments: requestAttachmentMap.get(row.id)?.request ?? [],
+      decisionAttachments: requestAttachmentMap.get(row.id)?.decision ?? [],
       requestedBy: row.requested_by,
       requestedByName: row.requested_by_name,
       requestedAt: row.requested_at,
@@ -2615,10 +2952,24 @@ async function deliverNotificationToTelegram(
   companyName: string,
   settings: NotificationSettings,
   notification: NotificationInput,
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
 ): Promise<void> {
   const chatId = settings.telegramChatId.trim();
-  const configuredToken = telegramBotToken?.trim() || "";
+  let configuredToken = "";
+  try {
+    configuredToken = await resolveTelegramBotToken(db, secretContext);
+  } catch (error) {
+    await recordNotificationDelivery(
+      db,
+      notificationId,
+      "telegram",
+      chatId || "unconfigured",
+      "failed",
+      error instanceof Error ? error.message : "Telegram bot token could not be decrypted.",
+    );
+    return;
+  }
+
   if (!configuredToken || !chatId) {
     await recordNotificationDelivery(
       db,
@@ -2627,7 +2978,7 @@ async function deliverNotificationToTelegram(
       chatId || "unconfigured",
       "skipped",
       !configuredToken
-        ? "Worker secret TELEGRAM_BOT_TOKEN is not configured."
+        ? "Telegram bot token is not configured yet."
         : "Telegram chat ID is not configured yet.",
     );
     return;
@@ -2691,7 +3042,7 @@ async function upsertNotification(
   db: D1Database,
   snapshot: InventorySnapshot,
   input: NotificationInput,
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
 ): Promise<void> {
   const existing = await first<{
     id: string;
@@ -2804,7 +3155,7 @@ async function upsertNotification(
       snapshot.settings.companyName,
       snapshot.settings.notificationSettings,
       input,
-      telegramBotToken,
+      secretContext,
     );
   }
 }
@@ -2837,11 +3188,11 @@ async function synchronizeNotificationSet(
   snapshot: InventorySnapshot,
   type: NotificationType,
   inputs: NotificationInput[],
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
 ): Promise<void> {
   const activeKeys = new Set(inputs.map((entry) => entry.dedupeKey));
   for (const entry of inputs) {
-    await upsertNotification(db, snapshot, entry, telegramBotToken);
+    await upsertNotification(db, snapshot, entry, secretContext);
   }
   await resolveMissingNotifications(db, type, activeKeys);
 }
@@ -3024,7 +3375,7 @@ function buildStateNotifications(snapshot: InventorySnapshot): NotificationInput
 async function synchronizeStateNotifications(
   db: D1Database,
   snapshot: InventorySnapshot,
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
 ): Promise<void> {
   const grouped = new Map<NotificationType, NotificationInput[]>();
   for (const notification of buildStateNotifications(snapshot)) {
@@ -3045,7 +3396,7 @@ async function synchronizeStateNotifications(
       snapshot,
       type,
       grouped.get(type) ?? [],
-      telegramBotToken,
+      secretContext,
     );
   }
 }
@@ -3054,9 +3405,9 @@ async function createSingleNotification(
   db: D1Database,
   snapshot: InventorySnapshot,
   input: NotificationInput,
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
 ): Promise<void> {
-  await upsertNotification(db, snapshot, input, telegramBotToken);
+  await upsertNotification(db, snapshot, input, secretContext);
 }
 
 export async function markNotificationReadInD1(
@@ -3108,7 +3459,7 @@ export async function reportSyncFailureInD1(
   db: D1Database,
   actorId: string,
   input: ReportSyncFailureRequest,
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
 ): Promise<NotificationActionResponse> {
   await ensureDatabaseReady(db);
   const snapshot = await loadSnapshot(db);
@@ -3144,7 +3495,7 @@ export async function reportSyncFailureInD1(
         actorId: actor.id,
       },
     },
-    telegramBotToken,
+    secretContext,
   );
 
   return { snapshot: await loadSnapshot(db) };
@@ -3154,7 +3505,7 @@ export async function sendTestTelegramNotificationInD1(
   db: D1Database,
   actorId: string,
   input: TestTelegramNotificationRequest,
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
 ): Promise<TestTelegramNotificationResponse> {
   await ensureDatabaseReady(db);
   const snapshot = await loadSnapshot(db);
@@ -3171,10 +3522,10 @@ export async function sendTestTelegramNotificationInD1(
   if (!settings.telegramChatId.trim()) {
     throw new Error("Enter a valid Telegram chat ID before sending a test message.");
   }
-  const configuredToken = telegramBotToken?.trim() || "";
+  const configuredToken = await resolveTelegramBotToken(db, secretContext);
   if (!configuredToken) {
     throw new Error(
-      "Configure the TELEGRAM_BOT_TOKEN Worker secret before sending a Telegram test message.",
+      "Save a Telegram bot token in Settings before sending a Telegram test message.",
     );
   }
 
@@ -3201,7 +3552,7 @@ export async function sendTestTelegramNotificationInD1(
 
 export async function sendDueDailySummariesInD1(
   db: D1Database,
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
 ): Promise<void> {
   await ensureDatabaseReady(db);
   const snapshot = await loadSnapshot(db);
@@ -3275,7 +3626,7 @@ export async function sendDueDailySummariesInD1(
           date: todayKey,
         },
       },
-      telegramBotToken,
+      secretContext,
     );
   }
 
@@ -4205,7 +4556,7 @@ export async function updateSettingsInD1(
   db: D1Database,
   actorId: string,
   input: UpdateSettingsRequest,
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
 ): Promise<SettingsResponse> {
   await ensureDatabaseReady(db);
   const snapshot = await loadSnapshot(db);
@@ -4230,6 +4581,8 @@ export async function updateSettingsInD1(
   const notificationChanged =
     JSON.stringify(snapshot.settings.notificationSettings) !==
     JSON.stringify(nextSettings.notificationSettings);
+  const tokenInputProvided = Boolean(nextSettings.telegramBotTokenInput?.trim());
+  const clearStoredToken = Boolean(nextSettings.clearTelegramBotToken);
 
   if (environmentChanged) {
     requirePermission(
@@ -4245,7 +4598,41 @@ export async function updateSettingsInD1(
       "You do not have permission to edit notification settings.",
     );
   }
+  if (tokenInputProvided || clearStoredToken) {
+    requirePermission(
+      actor,
+      "admin.notifications.edit",
+      "You do not have permission to edit notification settings.",
+    );
+  }
   const now = new Date().toISOString();
+  const currentTokenRow = await first<{
+    telegram_token_ciphertext: string | null;
+    telegram_token_iv: string | null;
+  }>(
+    db,
+    "SELECT telegram_token_ciphertext, telegram_token_iv FROM app_settings WHERE id = ? LIMIT 1",
+    [SETTINGS_ID],
+  );
+  let nextCiphertext = currentTokenRow?.telegram_token_ciphertext ?? null;
+  let nextIv = currentTokenRow?.telegram_token_iv ?? null;
+
+  if (tokenInputProvided) {
+    const encrypted = await encryptSecretValue(
+      nextSettings.telegramBotTokenInput!.trim(),
+      secretContext?.appSecretsKey,
+    );
+    nextCiphertext = encrypted.ciphertext;
+    nextIv = encrypted.iv;
+  } else if (clearStoredToken) {
+    nextCiphertext = null;
+    nextIv = null;
+  }
+
+  const persistedNotificationSettings = {
+    ...nextSettings.notificationSettings,
+    telegramTokenConfigured: Boolean(nextCiphertext && nextIv),
+  };
 
   await execute(
     db,
@@ -4262,6 +4649,8 @@ export async function updateSettingsInD1(
           strict_fefo = ?,
           report_print_template_json = ?,
           notification_settings_json = ?,
+          telegram_token_ciphertext = ?,
+          telegram_token_iv = ?,
           updated_at = ?
       WHERE id = ?`,
     [
@@ -4276,7 +4665,9 @@ export async function updateSettingsInD1(
       nextSettings.enableBarcode ? 1 : 0,
       nextSettings.strictFefo ? 1 : 0,
       JSON.stringify(nextSettings.reportPrintTemplate),
-      JSON.stringify(nextSettings.notificationSettings),
+      JSON.stringify(persistedNotificationSettings),
+      nextCiphertext,
+      nextIv,
       now,
       SETTINGS_ID,
     ],
@@ -4292,7 +4683,7 @@ export async function updateSettingsInD1(
   await synchronizeStateNotifications(
     db,
     await loadSnapshot(db),
-    telegramBotToken,
+    secretContext,
   );
 
   return { snapshot: await loadSnapshot(db) };
@@ -4663,6 +5054,16 @@ async function persistMutationResult(
     ],
   );
 
+  await persistRequestAttachments(
+    db,
+    request.id,
+    "request",
+    mutation.payload.attachments,
+    request.requestedBy,
+    request.requestedByName,
+    request.requestedAt,
+  );
+
   await persistInventoryArtifacts(db, event, lineId);
 }
 
@@ -4760,7 +5161,7 @@ async function recordInventoryMutation(
   db: D1Database,
   snapshot: InventorySnapshot,
   mutation: MutationEnvelope,
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
   requestStatus: Extract<InventoryRequest["status"], "posted" | "submitted"> = "posted",
 ): Promise<MutationResult> {
   const nextSeq = snapshot.syncCursor + 1;
@@ -4786,7 +5187,7 @@ async function recordInventoryMutation(
 
   await persistMutationResult(db, mutation, result.event, context);
   const latestSnapshot = await loadSnapshot(db);
-  await synchronizeStateNotifications(db, latestSnapshot, telegramBotToken);
+  await synchronizeStateNotifications(db, latestSnapshot, secretContext);
   return {
     ...result,
     snapshot: await loadSnapshot(db),
@@ -6065,7 +6466,7 @@ export async function approveInventoryRequestInD1(
   db: D1Database,
   actorId: string,
   input: ApproveInventoryRequest,
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
 ): Promise<InventoryActionResponse> {
   await ensureDatabaseReady(db);
 
@@ -6083,9 +6484,25 @@ export async function approveInventoryRequestInD1(
     "inventory.approve",
     "You do not have permission to approve inventory requests.",
   );
+  const existingRequest =
+    snapshot.requests.find((entry) => entry.id === request.id);
   const requesterName =
     snapshot.users.find((user) => user.id === request.requested_by)?.name ?? "Unknown user";
   const approvalNote = input.note?.trim() || "Approved for posting.";
+  const decisionUploadTime = new Date().toISOString();
+  const decisionInputs = sanitizeAttachmentInputs(input.attachments);
+  const decisionAttachments = decisionInputs.map((attachment) => ({
+    id: `att-${crypto.randomUUID().slice(0, 8)}`,
+    requestId: request.id,
+    scope: "decision" as const,
+    fileName: attachment.fileName,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+    dataUrl: attachment.dataUrl,
+    uploadedBy: actor.id,
+    uploadedByName: actor.name,
+    uploadedAt: decisionUploadTime,
+  }));
   const mutation = buildApprovalMutation(actor.id, request);
   const nextSeq = snapshot.syncCursor + 1;
   const previewCounters = new Map<string, number>();
@@ -6116,6 +6533,8 @@ export async function approveInventoryRequestInD1(
     ...result.event.request,
     id: request.id,
     reference: request.reference,
+    attachments: existingRequest?.attachments ?? [],
+    decisionAttachments,
     requestedBy: request.requested_by,
     requestedByName: requesterName,
     requestedAt: request.requested_at,
@@ -6131,8 +6550,18 @@ export async function approveInventoryRequestInD1(
   result.snapshot.requests = [mergedRequest, ...result.snapshot.requests.filter((entry) => entry.id !== request.id)];
 
   await persistApprovedMutationResult(db, mutation, result.event, context);
+  await persistRequestAttachments(
+    db,
+    request.id,
+    "decision",
+    decisionInputs,
+    actor.id,
+    actor.name,
+    decisionUploadTime,
+    true,
+  );
   const latestSnapshot = await loadSnapshot(db);
-  await synchronizeStateNotifications(db, latestSnapshot, telegramBotToken);
+  await synchronizeStateNotifications(db, latestSnapshot, secretContext);
 
   return {
     snapshot: latestSnapshot,
@@ -6144,7 +6573,7 @@ export async function rejectInventoryRequestInD1(
   db: D1Database,
   actorId: string,
   input: RejectInventoryRequest,
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
 ): Promise<InventoryActionResponse> {
   await ensureDatabaseReady(db);
 
@@ -6163,12 +6592,24 @@ export async function rejectInventoryRequestInD1(
     "You do not have permission to reject inventory requests.",
   );
   const reason = input.reason.trim();
+  const decisionUploadTime = new Date().toISOString();
+  const decisionInputs = sanitizeAttachmentInputs(input.attachments);
   if (!reason) {
     throw new Error("Provide a reason before rejecting an inventory request.");
   }
 
   const updatedNote = buildInventoryActionNote(request.note, "Rejected", actor.name, reason);
   await markInventoryRequestRejected(db, request.id, updatedNote);
+  await persistRequestAttachments(
+    db,
+    request.id,
+    "decision",
+    decisionInputs,
+    actor.id,
+    actor.name,
+    decisionUploadTime,
+    true,
+  );
   await appendActivity(
     db,
     actor.id,
@@ -6180,7 +6621,7 @@ export async function rejectInventoryRequestInD1(
   );
 
   const latestSnapshot = await loadSnapshot(db);
-  await synchronizeStateNotifications(db, latestSnapshot, telegramBotToken);
+  await synchronizeStateNotifications(db, latestSnapshot, secretContext);
   const rejectedRequest = latestSnapshot.requests.find((entry) => entry.id === request.id);
 
   return {
@@ -6193,7 +6634,7 @@ export async function reverseInventoryRequestInD1(
   db: D1Database,
   actorId: string,
   input: ReverseInventoryRequest,
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
 ): Promise<InventoryActionResponse> {
   await ensureDatabaseReady(db);
 
@@ -6223,7 +6664,7 @@ export async function reverseInventoryRequestInD1(
     db,
     snapshot,
     reversalMutation,
-    telegramBotToken,
+    secretContext,
   );
   snapshot = reversalResult.snapshot;
 
@@ -6249,7 +6690,7 @@ export async function editInventoryRequestInD1(
   db: D1Database,
   actorId: string,
   input: EditInventoryRequest,
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
 ): Promise<InventoryActionResponse> {
   await ensureDatabaseReady(db);
 
@@ -6279,7 +6720,7 @@ export async function editInventoryRequestInD1(
     db,
     snapshot,
     reversalMutation,
-    telegramBotToken,
+    secretContext,
   );
   snapshot = reversalResult.snapshot;
 
@@ -6292,6 +6733,7 @@ export async function editInventoryRequestInD1(
       itemId: input.itemId,
       quantity: Number(input.quantity),
       note: input.note.trim(),
+      attachments: sanitizeAttachmentInputs(input.attachments),
       barcode: input.barcode?.trim() || undefined,
       quantityUnit: input.quantityUnit?.trim() || undefined,
       supplierId: input.supplierId?.trim() || undefined,
@@ -6316,7 +6758,7 @@ export async function editInventoryRequestInD1(
     db,
     snapshot,
     correctedMutation,
-    telegramBotToken,
+    secretContext,
   );
 
   await markInventoryRequestRejected(
@@ -6342,7 +6784,7 @@ export async function deleteInventoryRequestInD1(
   db: D1Database,
   actorId: string,
   input: DeleteInventoryRequest,
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
 ): Promise<InventoryActionResponse> {
   await ensureDatabaseReady(db);
 
@@ -6372,7 +6814,7 @@ export async function deleteInventoryRequestInD1(
       db,
       snapshot,
       reversalMutation,
-      telegramBotToken,
+      secretContext,
     );
     snapshot = reversalResult.snapshot;
     reversalRequest = reversalResult.event.request;
@@ -6400,7 +6842,7 @@ export async function deleteInventoryRequestInD1(
 export async function applyMutationsToD1(
   db: D1Database,
   mutations: MutationEnvelope[],
-  telegramBotToken?: string,
+  secretContext?: NotificationSecretContext,
 ): Promise<PushResponse> {
   await ensureDatabaseReady(db);
 
@@ -6432,7 +6874,7 @@ export async function applyMutationsToD1(
           db,
           snapshot,
           mutation,
-          telegramBotToken,
+          secretContext,
           requestStatus,
         );
         snapshot = result.snapshot;

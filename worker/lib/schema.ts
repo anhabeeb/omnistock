@@ -237,6 +237,23 @@ CREATE TABLE IF NOT EXISTS inventory_request_lines (
   FOREIGN KEY (item_id) REFERENCES items(id)
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS inventory_request_attachments (
+  id TEXT PRIMARY KEY,
+  sequence_no INTEGER NOT NULL UNIQUE,
+  request_id TEXT NOT NULL,
+  scope TEXT NOT NULL CHECK (scope IN ('request', 'decision')),
+  file_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  data_url TEXT NOT NULL,
+  uploaded_by TEXT NOT NULL,
+  uploaded_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (request_id) REFERENCES inventory_requests(id) ON DELETE CASCADE,
+  FOREIGN KEY (uploaded_by) REFERENCES users(id)
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS movement_ledger (
   id TEXT PRIMARY KEY,
   sequence_no INTEGER NOT NULL UNIQUE,
@@ -336,6 +353,8 @@ CREATE TABLE IF NOT EXISTS waste_entries (
     strict_fefo INTEGER NOT NULL CHECK (strict_fefo IN (0, 1)),
     report_print_template_json TEXT NOT NULL DEFAULT '{}',
     notification_settings_json TEXT NOT NULL DEFAULT '{}',
+    telegram_token_ciphertext TEXT,
+    telegram_token_iv TEXT,
     updated_at TEXT NOT NULL
   ) STRICT;
 
@@ -415,6 +434,7 @@ CREATE INDEX IF NOT EXISTS idx_inventory_requests_requested_at ON inventory_requ
 CREATE INDEX IF NOT EXISTS idx_inventory_requests_kind_status ON inventory_requests(kind, status);
 CREATE INDEX IF NOT EXISTS idx_inventory_request_lines_item_id ON inventory_request_lines(item_id);
 CREATE INDEX IF NOT EXISTS idx_inventory_request_lines_waste_reason ON inventory_request_lines(waste_reason);
+CREATE INDEX IF NOT EXISTS idx_inventory_request_attachments_request_scope ON inventory_request_attachments(request_id, scope, uploaded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_movement_ledger_item_id ON movement_ledger(item_id);
 CREATE INDEX IF NOT EXISTS idx_movement_ledger_location_id_created_at ON movement_ledger(location_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_logs_created_at ON activity_logs(created_at DESC);

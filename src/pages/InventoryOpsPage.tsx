@@ -8,12 +8,14 @@ import type {
   InventorySnapshot,
   PermissionKey,
   RequestKind,
+  RequestAttachmentInput,
   ShiftKey,
   User,
   WasteReason,
 } from "../../shared/types";
 import { DeleteIcon, EditIcon, ReverseIcon, ViewIcon } from "../components/AppIcons";
 import { BarcodeScanModal } from "../components/BarcodeScanModal";
+import { RequestEvidenceList, RequestEvidenceUploader } from "../components/RequestEvidence";
 import {
   DATE_FILTER_OPTIONS,
   type DateFilterPreset,
@@ -50,6 +52,7 @@ interface FormState {
   wasteReason: WasteReason;
   wasteShift: ShiftKey;
   wasteStation: string;
+  attachments: RequestAttachmentInput[];
 }
 
 type InventoryDialogMode = "create" | "view" | "edit" | "delete" | "reverse";
@@ -144,6 +147,7 @@ function defaultForm(snapshot: InventorySnapshot, currentUser: User, kind: Reque
     wasteShift: "morning",
     wasteStation:
       snapshot.locations.find((location) => location.id === fallbackLocation)?.name ?? "",
+    attachments: [],
   };
 }
 
@@ -223,6 +227,7 @@ export function InventoryOpsPage({
   const capturesBatchMetadata =
     form.kind === "grn" || form.kind === "adjustment" || form.kind === "stock-count";
   const capturesWasteMetadata = form.kind === "wastage";
+  const capturesEvidence = form.kind === "adjustment" || form.kind === "wastage";
   const sectionRequests = snapshot.requests
     .filter((request) => {
       const matchesKind = request.kind === activeSection.kind;
@@ -374,6 +379,12 @@ export function InventoryOpsPage({
       wasteReason: request.wasteReason ?? "spoilage",
       wasteShift: request.wasteShift ?? "morning",
       wasteStation: request.wasteStation ?? request.fromLocationName ?? "",
+      attachments: request.attachments.map((attachment) => ({
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        dataUrl: attachment.dataUrl,
+      })),
     });
     setSearchTerm(request.itemName);
   }
@@ -434,6 +445,7 @@ export function InventoryOpsPage({
         wasteReason: capturesWasteMetadata ? form.wasteReason : undefined,
         wasteShift: capturesWasteMetadata ? form.wasteShift : undefined,
         wasteStation: capturesWasteMetadata ? form.wasteStation : undefined,
+        attachments: capturesEvidence ? form.attachments : undefined,
       });
 
       setFeedback(
@@ -456,6 +468,7 @@ export function InventoryOpsPage({
         wasteStation:
           snapshot.locations.find((locationEntry) => locationEntry.id === current.fromLocationId)?.name ??
           "",
+        attachments: [],
       }));
       setSearchTerm("");
       closeDialog(true);
@@ -504,6 +517,7 @@ export function InventoryOpsPage({
         wasteReason: capturesWasteMetadata ? form.wasteReason : undefined,
         wasteShift: capturesWasteMetadata ? form.wasteShift : undefined,
         wasteStation: capturesWasteMetadata ? form.wasteStation : undefined,
+        attachments: capturesEvidence ? form.attachments : undefined,
       });
 
       setFeedback(
@@ -815,28 +829,44 @@ export function InventoryOpsPage({
             </div>
 
             {dialogMode === "view" && selectedRequest ? (
-              <dl className="detail-list">
-                <div><dt>ID</dt><dd>{selectedRequest.id}</dd></div>
-                <div><dt>Reference</dt><dd>{selectedRequest.reference}</dd></div>
-                <div><dt>Status</dt><dd>{selectedRequest.status}</dd></div>
-                <div><dt>Item</dt><dd>{selectedRequest.itemName}</dd></div>
-                <div><dt>Barcode</dt><dd>{selectedRequest.barcode || "No barcode"}</dd></div>
-                <div><dt>Quantity</dt><dd>{selectedRequest.quantity} {selectedRequest.unit}</dd></div>
-                <div><dt>Base Quantity</dt><dd>{selectedRequest.baseQuantity} {selectedRequest.baseUnit}</dd></div>
-                <div><dt>Unit Factor</dt><dd>{selectedRequest.unitFactor}x</dd></div>
-                <div><dt>Supplier</dt><dd>{selectedRequest.supplierName ?? "Not set"}</dd></div>
-                <div><dt>From</dt><dd>{selectedRequest.fromLocationName ?? "Not set"}</dd></div>
-                <div><dt>To</dt><dd>{selectedRequest.toLocationName ?? "Not set"}</dd></div>
-                <div><dt>Lot Code</dt><dd>{selectedRequest.lotCode ?? "Not set"}</dd></div>
-                <div><dt>Batch Barcode</dt><dd>{selectedRequest.batchBarcode ?? "Not set"}</dd></div>
-                <div><dt>Received</dt><dd>{selectedRequest.receivedDate ?? "Not set"}</dd></div>
-                <div><dt>Expiry</dt><dd>{selectedRequest.expiryDate ?? "Not set"}</dd></div>
-                <div><dt>Waste</dt><dd>{selectedRequest.wasteReason ? `${selectedRequest.wasteReason} / ${selectedRequest.wasteShift} / ${selectedRequest.wasteStation}` : "Not a wastage entry"}</dd></div>
-                <div><dt>Logged By</dt><dd>{selectedRequest.requestedByName}</dd></div>
-                <div><dt>Logged At</dt><dd>{formatDateTime(selectedRequest.requestedAt)}</dd></div>
-                <div className="detail-list-wide"><dt>Allocation</dt><dd>{selectedRequest.allocationSummary ?? "No allocation summary recorded."}</dd></div>
-                <div className="detail-list-wide"><dt>Note</dt><dd>{selectedRequest.note || "No note provided."}</dd></div>
-              </dl>
+              <div className="detail-stack">
+                <dl className="detail-list">
+                  <div><dt>ID</dt><dd>{selectedRequest.id}</dd></div>
+                  <div><dt>Reference</dt><dd>{selectedRequest.reference}</dd></div>
+                  <div><dt>Status</dt><dd>{selectedRequest.status}</dd></div>
+                  <div><dt>Item</dt><dd>{selectedRequest.itemName}</dd></div>
+                  <div><dt>Barcode</dt><dd>{selectedRequest.barcode || "No barcode"}</dd></div>
+                  <div><dt>Quantity</dt><dd>{selectedRequest.quantity} {selectedRequest.unit}</dd></div>
+                  <div><dt>Base Quantity</dt><dd>{selectedRequest.baseQuantity} {selectedRequest.baseUnit}</dd></div>
+                  <div><dt>Unit Factor</dt><dd>{selectedRequest.unitFactor}x</dd></div>
+                  <div><dt>Supplier</dt><dd>{selectedRequest.supplierName ?? "Not set"}</dd></div>
+                  <div><dt>From</dt><dd>{selectedRequest.fromLocationName ?? "Not set"}</dd></div>
+                  <div><dt>To</dt><dd>{selectedRequest.toLocationName ?? "Not set"}</dd></div>
+                  <div><dt>Lot Code</dt><dd>{selectedRequest.lotCode ?? "Not set"}</dd></div>
+                  <div><dt>Batch Barcode</dt><dd>{selectedRequest.batchBarcode ?? "Not set"}</dd></div>
+                  <div><dt>Received</dt><dd>{selectedRequest.receivedDate ?? "Not set"}</dd></div>
+                  <div><dt>Expiry</dt><dd>{selectedRequest.expiryDate ?? "Not set"}</dd></div>
+                  <div><dt>Waste</dt><dd>{selectedRequest.wasteReason ? `${selectedRequest.wasteReason} / ${selectedRequest.wasteShift} / ${selectedRequest.wasteStation}` : "Not a wastage entry"}</dd></div>
+                  <div><dt>Logged By</dt><dd>{selectedRequest.requestedByName}</dd></div>
+                  <div><dt>Logged At</dt><dd>{formatDateTime(selectedRequest.requestedAt)}</dd></div>
+                  <div className="detail-list-wide"><dt>Allocation</dt><dd>{selectedRequest.allocationSummary ?? "No allocation summary recorded."}</dd></div>
+                  <div className="detail-list-wide"><dt>Note</dt><dd>{selectedRequest.note || "No note provided."}</dd></div>
+                </dl>
+                {(selectedRequest.attachments.length > 0 || selectedRequest.decisionAttachments.length > 0) ? (
+                  <div className="detail-evidence-grid">
+                    <RequestEvidenceList
+                      title="Request evidence"
+                      attachments={selectedRequest.attachments}
+                      emptyLabel="No request evidence attached."
+                    />
+                    <RequestEvidenceList
+                      title="Approval evidence"
+                      attachments={selectedRequest.decisionAttachments}
+                      emptyLabel="No approval evidence attached."
+                    />
+                  </div>
+                ) : null}
+              </div>
             ) : null}
 
             {dialogMode === "reverse" ? (
@@ -1114,6 +1144,18 @@ export function InventoryOpsPage({
                   placeholder="Explain the movement, discrepancy, or receiving context."
                 />
               </label>
+
+              {capturesEvidence ? (
+                <div className="field field-wide field-panel">
+                  <RequestEvidenceUploader
+                    title="Operational evidence"
+                    hint="Attach photo or PDF proof for this adjustment or wastage entry."
+                    attachments={form.attachments}
+                    onChange={(attachments) => patch("attachments", attachments)}
+                    disabled={submitting}
+                  />
+                </div>
+              ) : null}
 
               {dialogMode === "edit" ? (
                 <label className="field field-wide">

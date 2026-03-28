@@ -21,11 +21,13 @@ import type {
   InventorySnapshot,
   NotificationRecord,
   NotificationType,
+  RequestAttachmentInput,
   RejectInventoryRequest,
   User,
 } from "../../shared/types";
 import { can } from "../../shared/permissions";
 import { AlertIcon, ClockIcon, InventoryIcon } from "../components/AppIcons";
+import { RequestEvidenceList, RequestEvidenceUploader } from "../components/RequestEvidence";
 import { formatDateTime } from "../lib/format";
 
 interface Props {
@@ -94,6 +96,7 @@ export function MobileAlertsPage({
   const [decisionMode, setDecisionMode] = useState<DecisionMode>(null);
   const [decisionRequestId, setDecisionRequestId] = useState<string>();
   const [decisionNote, setDecisionNote] = useState("");
+  const [decisionAttachments, setDecisionAttachments] = useState<RequestAttachmentInput[]>([]);
   const [decisionBusy, setDecisionBusy] = useState(false);
   const [decisionError, setDecisionError] = useState<string>();
 
@@ -129,6 +132,7 @@ export function MobileAlertsPage({
     setDecisionMode(mode);
     setDecisionRequestId(request.id);
     setDecisionNote("");
+    setDecisionAttachments([]);
     setDecisionError(undefined);
   }
 
@@ -139,6 +143,7 @@ export function MobileAlertsPage({
     setDecisionMode(null);
     setDecisionRequestId(undefined);
     setDecisionNote("");
+    setDecisionAttachments([]);
     setDecisionError(undefined);
   }
 
@@ -160,11 +165,13 @@ export function MobileAlertsPage({
         await onApproveRequest({
           requestId: selectedApproval.id,
           note,
+          attachments: decisionAttachments,
         });
       } else {
         await onRejectRequest({
           requestId: selectedApproval.id,
           reason: note,
+          attachments: decisionAttachments,
         });
       }
       closeDecision();
@@ -355,6 +362,13 @@ export function MobileAlertsPage({
                         </Typography>
                       ) : null}
 
+                      {request.attachments.length > 0 ? (
+                        <Typography variant="caption" color="text.secondary">
+                          {request.attachments.length} request evidence file
+                          {request.attachments.length === 1 ? "" : "s"} attached.
+                        </Typography>
+                      ) : null}
+
                       <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                         {canApproveRequests ? (
                           <>
@@ -437,6 +451,20 @@ export function MobileAlertsPage({
                 minRows={3}
                 autoFocus
                 required={decisionMode === "reject"}
+              />
+
+              <RequestEvidenceList
+                title="Submitted evidence"
+                attachments={selectedApproval.attachments}
+                emptyLabel="No evidence was attached to the submitted request."
+              />
+
+              <RequestEvidenceUploader
+                title={decisionMode === "approve" ? "Approval evidence" : "Rejection evidence"}
+                hint="Attach photos or PDFs to support this approval decision."
+                attachments={decisionAttachments}
+                onChange={setDecisionAttachments}
+                disabled={decisionBusy}
               />
 
               {decisionError ? (

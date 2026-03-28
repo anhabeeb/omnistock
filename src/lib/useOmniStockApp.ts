@@ -121,6 +121,11 @@ function normalizePayload(nextPayload: BootstrapPayload): BootstrapPayload {
       marketPrices: nextPayload.snapshot.marketPrices ?? [],
       wasteEntries: nextPayload.snapshot.wasteEntries ?? [],
       notifications: nextPayload.snapshot.notifications ?? [],
+      requests: (nextPayload.snapshot.requests ?? []).map((request) => ({
+        ...request,
+        attachments: request.attachments ?? [],
+        decisionAttachments: request.decisionAttachments ?? [],
+      })),
     },
     initialization: nextPayload.initialization ?? {
       required: (nextPayload.snapshot.users ?? []).length === 0,

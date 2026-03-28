@@ -83,6 +83,7 @@ export interface Env {
   ASSETS: Fetcher;
   OMNISTOCK_DB: D1Database;
   OMNISTOCK_HUB: DurableObjectNamespace<OmniStockHub>;
+  APP_SECRETS_KEY?: string;
   TELEGRAM_BOT_TOKEN?: string;
 }
 
@@ -178,7 +179,10 @@ export default {
   ) {
     try {
       await ensureDatabaseReady(env.OMNISTOCK_DB);
-      await sendDueDailySummariesInD1(env.OMNISTOCK_DB, env.TELEGRAM_BOT_TOKEN);
+      await sendDueDailySummariesInD1(env.OMNISTOCK_DB, {
+        appSecretsKey: env.APP_SECRETS_KEY,
+        legacyTelegramBotToken: env.TELEGRAM_BOT_TOKEN,
+      });
     } catch (error) {
       console.error("OmniStock scheduled notification run failed:", error);
     }
@@ -201,6 +205,13 @@ export class OmniStockHub extends DurableObject<Env> {
     await ensureDatabaseReady(this.env.OMNISTOCK_DB);
     this.latestCursor = await loadCurrentCursor(this.env.OMNISTOCK_DB);
     this.initialized = true;
+  }
+
+  private notificationSecrets() {
+    return {
+      appSecretsKey: this.env.APP_SECRETS_KEY,
+      legacyTelegramBotToken: this.env.TELEGRAM_BOT_TOKEN,
+    };
   }
 
   private broadcast(message: RealtimeMessage) {
@@ -266,7 +277,7 @@ export class OmniStockHub extends DurableObject<Env> {
       applyMutationsToD1(
         this.env.OMNISTOCK_DB,
         body.mutations ?? [],
-        this.env.TELEGRAM_BOT_TOKEN,
+        this.notificationSecrets(),
       ),
     );
     this.latestCursor = response.cursor;
@@ -565,7 +576,7 @@ export class OmniStockHub extends DurableObject<Env> {
         this.env.OMNISTOCK_DB,
         actorId,
         body,
-        this.env.TELEGRAM_BOT_TOKEN,
+        this.notificationSecrets(),
       ),
     );
 
@@ -592,7 +603,7 @@ export class OmniStockHub extends DurableObject<Env> {
         this.env.OMNISTOCK_DB,
         actorId,
         body,
-        this.env.TELEGRAM_BOT_TOKEN,
+        this.notificationSecrets(),
       ),
     );
 
@@ -619,7 +630,7 @@ export class OmniStockHub extends DurableObject<Env> {
         this.env.OMNISTOCK_DB,
         actorId,
         body,
-        this.env.TELEGRAM_BOT_TOKEN,
+        this.notificationSecrets(),
       ),
     );
 
@@ -646,7 +657,7 @@ export class OmniStockHub extends DurableObject<Env> {
         this.env.OMNISTOCK_DB,
         actorId,
         body,
-        this.env.TELEGRAM_BOT_TOKEN,
+        this.notificationSecrets(),
       ),
     );
 
@@ -673,7 +684,7 @@ export class OmniStockHub extends DurableObject<Env> {
         this.env.OMNISTOCK_DB,
         actorId,
         body,
-        this.env.TELEGRAM_BOT_TOKEN,
+        this.notificationSecrets(),
       ),
     );
 
@@ -836,7 +847,7 @@ export class OmniStockHub extends DurableObject<Env> {
           this.env.OMNISTOCK_DB,
           actorId,
           body,
-          this.env.TELEGRAM_BOT_TOKEN,
+          this.notificationSecrets(),
         ),
       ),
     );
@@ -888,7 +899,7 @@ export class OmniStockHub extends DurableObject<Env> {
           this.env.OMNISTOCK_DB,
           actorId,
           body,
-          this.env.TELEGRAM_BOT_TOKEN,
+          this.notificationSecrets(),
         ),
       ),
     );
@@ -909,7 +920,7 @@ export class OmniStockHub extends DurableObject<Env> {
           this.env.OMNISTOCK_DB,
           actorId,
           body,
-          this.env.TELEGRAM_BOT_TOKEN,
+          this.notificationSecrets(),
         ),
       ),
     );
