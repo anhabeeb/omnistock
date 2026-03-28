@@ -84,7 +84,6 @@ export interface Env {
   OMNISTOCK_DB: D1Database;
   OMNISTOCK_HUB: DurableObjectNamespace<OmniStockHub>;
   APP_SECRETS_KEY?: string;
-  TELEGRAM_BOT_TOKEN?: string;
 }
 
 const SESSION_COOKIE = "omnistock_session";
@@ -181,7 +180,6 @@ export default {
       await ensureDatabaseReady(env.OMNISTOCK_DB);
       await sendDueDailySummariesInD1(env.OMNISTOCK_DB, {
         appSecretsKey: env.APP_SECRETS_KEY,
-        legacyTelegramBotToken: env.TELEGRAM_BOT_TOKEN,
       });
     } catch (error) {
       console.error("OmniStock scheduled notification run failed:", error);
@@ -210,7 +208,6 @@ export class OmniStockHub extends DurableObject<Env> {
   private notificationSecrets() {
     return {
       appSecretsKey: this.env.APP_SECRETS_KEY,
-      legacyTelegramBotToken: this.env.TELEGRAM_BOT_TOKEN,
     };
   }
 

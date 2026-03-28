@@ -145,6 +145,7 @@ export interface DailySummaryNotificationSettings extends NotificationRuleSettin
 export interface NotificationSettings {
   telegramEnabled: boolean;
   telegramChatId: string;
+  telegramThreadId: string;
   telegramTokenConfigured: boolean;
   lowStock: NotificationRuleSettings;
   nearExpiry: NotificationRuleSettings;

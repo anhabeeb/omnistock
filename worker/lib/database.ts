@@ -115,7 +115,6 @@ type LegacyNotificationSettingsInput = NotificationSettings & {
 };
 type NotificationSecretContext = {
   appSecretsKey?: string;
-  legacyTelegramBotToken?: string;
 };
 
 const SETTINGS_ID = "stg-00001";
@@ -135,6 +134,7 @@ const NOTIFICATION_TYPE_TO_SETTINGS_KEY: Record<
     NotificationSettings,
     | "telegramEnabled"
     | "telegramChatId"
+    | "telegramThreadId"
     | "telegramTokenConfigured"
     | "dailySummary"
     | "wastageCostThreshold"
@@ -705,22 +705,14 @@ async function resolveTelegramBotToken(
   );
 
   if (row?.telegram_token_ciphertext && row.telegram_token_iv) {
-    try {
-      return await decryptSecretValue(
-        row.telegram_token_ciphertext,
-        row.telegram_token_iv,
-        secretContext.appSecretsKey,
-      );
-    } catch (error) {
-      const fallbackToken = secretContext.legacyTelegramBotToken?.trim() ?? "";
-      if (fallbackToken) {
-        return fallbackToken;
-      }
-      throw error;
-    }
+    return decryptSecretValue(
+      row.telegram_token_ciphertext,
+      row.telegram_token_iv,
+      secretContext.appSecretsKey,
+    );
   }
 
-  return secretContext.legacyTelegramBotToken?.trim() ?? "";
+  return "";
 }
 
 async function persistRequestAttachments(
@@ -876,6 +868,7 @@ function validateNotificationSettings(
   const normalized: NotificationSettings = {
     telegramEnabled: Boolean(safeInput.telegramEnabled),
     telegramChatId: String(safeInput.telegramChatId ?? "").trim(),
+    telegramThreadId: String(safeInput.telegramThreadId ?? "").trim(),
     telegramTokenConfigured: Boolean(safeInput.telegramTokenConfigured),
     lowStock: normalizeNotificationRule(safeInput.lowStock, fallback.lowStock),
     nearExpiry: normalizeNotificationRule(safeInput.nearExpiry, fallback.nearExpiry),
@@ -928,6 +921,14 @@ function validateNotificationSettings(
   ) {
     throw new Error(
       "Telegram chat ID must be a numeric chat ID like -1001234567890 or a channel username like @omnistock_alerts.",
+    );
+  }
+  if (
+    normalized.telegramThreadId &&
+    !/^\d+$/.test(normalized.telegramThreadId)
+  ) {
+    throw new Error(
+      "Telegram topic ID must be a numeric message thread id like 2 or 15.",
     );
   }
 
@@ -2955,6 +2956,7 @@ async function deliverNotificationToTelegram(
   secretContext?: NotificationSecretContext,
 ): Promise<void> {
   const chatId = settings.telegramChatId.trim();
+  const threadId = settings.telegramThreadId.trim();
   let configuredToken = "";
   try {
     configuredToken = await resolveTelegramBotToken(db, secretContext);
@@ -2994,6 +2996,7 @@ async function deliverNotificationToTelegram(
         },
         body: JSON.stringify({
           chat_id: chatId,
+          ...(threadId ? { message_thread_id: Number(threadId) } : {}),
           text: formatTelegramMessage(companyName, settings, notification),
         }),
       },
@@ -3536,6 +3539,9 @@ export async function sendTestTelegramNotificationInD1(
     },
     body: JSON.stringify({
       chat_id: settings.telegramChatId.trim(),
+      ...(settings.telegramThreadId.trim()
+        ? { message_thread_id: Number(settings.telegramThreadId.trim()) }
+        : {}),
       text: `${snapshot.settings.companyName} - Telegram setup test\nTriggered by ${actor.name} from OmniStock Settings.`,
     }),
   });

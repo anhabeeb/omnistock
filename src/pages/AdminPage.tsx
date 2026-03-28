@@ -1811,7 +1811,8 @@ export function AdminPage({
                       token before writing it to the database and never shows the saved value
                       again. Connect the target group or channel with a chat ID like{" "}
                       <code>-1001234567890</code> or a channel username like{" "}
-                      <code>@omnistock_alerts</code>.
+                      <code>@omnistock_alerts</code>. If you use Telegram topics, enter the
+                      topic id separately.
                     </p>
                     <div className="settings-fields-grid">
                       <label className="settings-field-card">
@@ -1840,6 +1841,21 @@ export function AdminPage({
                           }
                           placeholder="-1001234567890"
                         />
+                      </label>
+                      <label className="settings-field-card">
+                        <span className="settings-field-label">Telegram Topic ID</span>
+                        <input
+                          value={settingsForm.notificationSettings.telegramThreadId}
+                          disabled={!canEditNotificationSettings || submitting === "settings"}
+                          onChange={(event) =>
+                            patchNotificationSettings("telegramThreadId", event.target.value)
+                          }
+                          placeholder="2"
+                        />
+                        <p className="helper-text" style={{ marginTop: "8px" }}>
+                          Optional. Use this when the bot should post inside a specific Telegram
+                          topic/thread.
+                        </p>
                       </label>
                       <label className="settings-field-card">
                         <span className="settings-field-label">Bot Token</span>

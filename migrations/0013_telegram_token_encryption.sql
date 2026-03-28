@@ -1,2 +1,4 @@
-ALTER TABLE app_settings ADD COLUMN telegram_token_ciphertext TEXT;
-ALTER TABLE app_settings ADD COLUMN telegram_token_iv TEXT;
+-- Telegram token encryption columns are created by the runtime schema upgrader
+-- in worker/lib/database.ts to avoid duplicate-column failures on databases that
+-- were already upgraded before this migration runs.
+SELECT 1;
